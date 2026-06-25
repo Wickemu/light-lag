@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createWorld } from "./world.ts";
 import { Simulation } from "./sim.ts";
 import { spawnShip, sendBurn, defaultDesign, planTransfer } from "../app/commands.ts";
-import { shipOsculatingElements, totalMass, shipWorldState, applyImpulsiveDv, dvRemaining } from "./ships.ts";
+import { shipOsculatingElements, totalMass, shipWorldState, applyImpulsiveDv, dvRemaining, shipThermalState } from "./ships.ts";
 import { summarizeOrbit } from "./orbit.ts";
 import { exhaustVelocity, propellantForDv } from "./propulsion.ts";
 import { computePorkchop } from "./maneuver/porkchop.ts";
@@ -280,6 +280,33 @@ describe("Phase 5: light-lag command", () => {
     const fine = run(30);
     expect(Math.abs(big.a - fine.a)).toBeLessThan(50); // metres
     expect(Math.abs(big.e - fine.e)).toBeLessThan(1e-5);
+  });
+});
+
+describe("Phase 6: ship thermal & detection model", () => {
+  it("a thrusting drive spikes the signature but does NOT cook the hull", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+
+    const coast = shipThermalState(ship, 0);
+    expect(coast.hullTempK).toBeGreaterThan(250); // ~1 AU equilibrium
+    expect(coast.hullTempK).toBeLessThan(360);
+    expect(coast.reflectedSignatureW).toBeGreaterThan(0); // reflected-sunlight channel exists
+    expect(coast.driveWasteW).toBe(0);
+    expect(coast.detectionRangeM).toBeGreaterThan(0); // even cold, you glow
+
+    sim.sendCommand(id, { type: "burn", dv: 500, dir: "prograde" });
+    let g = 0;
+    while (ship.mode !== "thrust" && g++ < 50) sim.step(1);
+    const burn = shipThermalState(ship, sim.world.t);
+
+    // Hull temperature is set by the passive load, not the drive — no vaporizing.
+    expect(burn.hullTempK).toBeLessThan(360);
+    expect(burn.driveWasteW).toBeGreaterThan(0);
+    expect(burn.radiatorAreaM2).toBeGreaterThan(0); // a real radiator burden
+    // A burning drive is a far brighter beacon than a coasting hull.
+    expect(burn.detectionRangeM).toBeGreaterThan(coast.detectionRangeM * 5);
   });
 });
 

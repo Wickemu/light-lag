@@ -17,7 +17,7 @@ import {
 import { bodyState } from "./ephemeris.ts";
 import { BODY_BY_ID } from "./constants.ts";
 import { add, addScaled, length } from "./math/vec3.ts";
-import { solarFlux, hullArea, equilibriumTemp, detectionRange } from "./thermal.ts";
+import { solarFlux, hullArea, equilibriumTemp, detectionRange, radiatorArea } from "./thermal.ts";
 
 /** GM of the body this ship orbits. */
 export function primaryMu(ship: Ship): number {
@@ -118,14 +118,15 @@ export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
 
 // ── Thermal / power / detection ──────────────────────────────────────────────
 
-/** Default material/sensor parameters. Material values are physical; the sensor
- *  is a good space IR telescope — its NEP/aperture set the detection SCALE (the
- *  only tunable here), while the 1/r² and T⁴ physics are exact. */
+/** Material parameters are physical. The sensor (NEP/aperture) and the plume
+ *  radiated-fraction set only the detection SCALE — a documented calibration —
+ *  while the 1/r², T⁴, and √-power relationships are exact. */
 const THERMAL_PARAMS = {
-  emissivity: 0.9,
-  absorptivity: 0.9,
-  housekeepingW: 2000, // baseline onboard electrical load
-  driveEfficiency: 0.6, // electrical→jet; the rest is waste heat
+  emissivity: 0.9, // hull IR emissivity
+  absorptivity: 0.9, // solar absorptivity (albedo = 1 − absorptivity)
+  housekeepingW: 2000, // baseline onboard electrical load → radiated by the hull
+  driveEfficiency: 0.6, // useful jet fraction; (1−η)/η of the jet is waste heat to reject
+  radiatorTempK: 1000, // assumed drive-radiator operating temperature
 };
 const SENSOR = { apertureM2: 1, nepW: 1e-15 };
 
@@ -133,47 +134,68 @@ export interface ShipThermal {
   distanceFromSun: number; // m
   solarFlux: number; // W/m² at the ship
   hullArea: number; // m²
-  absorbedSolarW: number; // re-radiated sunlight (even a cold hull glows)
-  internalW: number; // housekeeping + (thrusting) drive thermal load
-  signatureW: number; // total radiated power — what a sensor sees
-  hullTempK: number;
+  hullTempK: number; // passive equilibrium temperature (NOT driven by thrust)
+  thermalSignatureW: number; // hull thermal IR
+  reflectedSignatureW: number; // reflected sunlight (the dominant cold-hull channel)
+  driveWasteW: number; // drive waste heat that must be radiated (0 when coasting)
+  radiatorAreaM2: number; // radiator area to reject driveWaste at radiatorTempK
+  signatureW: number; // total detectable emission (thermal + reflected + drive)
   detectionRangeM: number;
   thrusting: boolean;
 }
 
 /**
- * The ship's thermodynamic + detection state right now. Energy balance: in
- * steady state everything absorbed/generated must be radiated, so the IR
- * signature equals absorbed sunlight plus internal power. A burning drive adds
- * its (large) input power as heat, spiking the signature — there is no stealth.
+ * The ship's thermodynamic + detection state. Three independent emitters, not
+ * one algebraic identity:
+ *  - the HULL radiates its passive load (absorbed sunlight + housekeeping) at an
+ *    equilibrium temperature the drive does NOT change (a burning engine does not
+ *    cook the hull to thousands of K — its energy leaves elsewhere);
+ *  - the hull REFLECTS sunlight (the channel that actually gives away a cold,
+ *    shiny hull at 1 AU — so low emissivity is no stealth, it just trades IR for
+ *    glint);
+ *  - a thrusting DRIVE rejects (1−η)/η of its jet power as waste heat from
+ *    radiators (and a bright plume), a separate, large signature.
+ * Detection range is set by the total. There is no stealth in space.
  */
 export function shipThermalState(ship: Ship, t: number): ShipThermal {
+  const { emissivity, absorptivity, housekeepingW, driveEfficiency, radiatorTempK } = THERMAL_PARAMS;
   const r = length(shipWorldState(ship, t).r); // heliocentric distance (Sun at origin)
   const flux = solarFlux(r);
   const A = hullArea(totalMass(ship));
-  const absorbed = flux * (A / 4) * THERMAL_PARAMS.absorptivity; // mean cross-section = A/4
+  const cross = A / 4; // mean sun-facing cross-section of a sphere
 
-  let internal = THERMAL_PARAMS.housekeepingW;
-  const thrusting = ship.mode === "thrust";
-  if (thrusting) {
+  // Passive hull balance: absorbed sunlight + housekeeping, radiated over the
+  // full hull area. The drive is deliberately excluded.
+  const absorbed = flux * cross * absorptivity;
+  const hullInput = absorbed + housekeepingW;
+  const hullTempK = equilibriumTemp(hullInput, emissivity, A);
+  const thermalSignatureW = hullInput; // steady state: radiated = absorbed + generated
+
+  // Reflected sunlight — the optical channel that dominates cold-hull detection.
+  const reflectedSignatureW = flux * cross * (1 - absorptivity);
+
+  // Drive waste heat (radiators + plume), only while thrusting.
+  let driveWasteW = 0;
+  if (ship.mode === "thrust") {
     const stage = activeStage(ship);
     if (stage) {
-      const ve = exhaustVelocity(stage.isp);
-      const jet = 0.5 * stage.thrust * ve; // jet power ½·F·vₑ
-      internal += jet / THERMAL_PARAMS.driveEfficiency; // input power → heat (and a bright plume)
+      const jet = 0.5 * stage.thrust * exhaustVelocity(stage.isp); // ½·F·vₑ
+      driveWasteW = (jet * (1 - driveEfficiency)) / driveEfficiency;
     }
   }
 
-  const signature = absorbed + internal;
+  const signatureW = thermalSignatureW + reflectedSignatureW + driveWasteW;
   return {
     distanceFromSun: r,
     solarFlux: flux,
     hullArea: A,
-    absorbedSolarW: absorbed,
-    internalW: internal,
-    signatureW: signature,
-    hullTempK: equilibriumTemp(signature, THERMAL_PARAMS.emissivity, A),
-    detectionRangeM: detectionRange(signature, SENSOR.apertureM2, SENSOR.nepW),
-    thrusting,
+    hullTempK,
+    thermalSignatureW,
+    reflectedSignatureW,
+    driveWasteW,
+    radiatorAreaM2: driveWasteW > 0 ? radiatorArea(driveWasteW, radiatorTempK) : 0,
+    signatureW,
+    detectionRangeM: detectionRange(signatureW, SENSOR.apertureM2, SENSOR.nepW),
+    thrusting: ship.mode === "thrust",
   };
 }

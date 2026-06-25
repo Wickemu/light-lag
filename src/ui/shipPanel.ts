@@ -403,6 +403,10 @@ export class ShipPanel {
     lines.push(kv("Hull temp", `${th.hullTempK.toFixed(0)} K`));
     lines.push(kv("IR signature", fmtPower(th.signatureW) + (th.thrusting ? " — drive HOT" : "")));
     lines.push(kv("Detectable to", fmtRange(th.detectionRangeM)));
+    if (th.thrusting) {
+      lines.push(kv("Drive waste heat", fmtPower(th.driveWasteW)));
+      lines.push(kv("Radiator needed", `${Math.round(th.radiatorAreaM2).toLocaleString("en-US")} m²`));
+    }
 
     if (ship.mode === "thrust" && ship.burn) {
       const pct = (100 * ship.burn.dvDone) / ship.burn.dvTarget;
