@@ -29,7 +29,8 @@ import {
   primaryMu,
 } from "../core/ships.ts";
 import { summarizeOrbit } from "../core/orbit.ts";
-import { BODY_BY_ID } from "../core/constants.ts";
+import { BODY_BY_ID, AU, DAY } from "../core/constants.ts";
+import { formatDate } from "../core/time.ts";
 import { length } from "../core/math/vec3.ts";
 
 const DIRS: BurnDir[] = ["prograde", "retrograde", "radial-out", "radial-in", "normal", "antinormal"];
@@ -56,11 +57,13 @@ export class ShipPanel {
   private dvInput!: HTMLInputElement;
   private dirRow!: HTMLElement;
   private executeBtn!: HTMLButtonElement;
+  private planBtn!: HTMLButtonElement;
 
   constructor(
     private root: HTMLElement,
     private sim: Simulation,
     private sm: SceneManager,
+    private onPlanTransfer?: (shipId: string) => void,
   ) {
     this.build();
   }
@@ -104,6 +107,12 @@ export class ShipPanel {
     this.flightEl = el("div", "flight");
     this.readoutEl = el("div", "flight-readout");
     this.flightEl.appendChild(this.readoutEl);
+
+    this.planBtn = button("Plan transfer ▸", () => {
+      if (this.selectedId && this.onPlanTransfer) this.onPlanTransfer(this.selectedId);
+    });
+    this.planBtn.className = "wide-btn";
+    this.flightEl.appendChild(this.planBtn);
 
     const burnControls = el("div", "burn-controls");
     burnControls.appendChild(el("div", "panel-label", "MANEUVER"));
@@ -233,17 +242,41 @@ export class ShipPanel {
     const mu = primaryMu(ship);
     const primary = BODY_BY_ID.get(ship.primary)!;
     const el = shipOsculatingElements(ship, t);
-    const sum = summarizeOrbit(el, mu, primary.radius);
-    const speed = length(shipRelativeState(ship, t).v);
+    const rel = shipRelativeState(ship, t);
+    const speed = length(rel.v);
 
     const lines: string[] = [];
-    lines.push(kv("Orbiting", primary.name));
-    lines.push(kv("Periapsis alt", `${(sum.periapsisAlt / 1000).toFixed(0)} km`));
-    lines.push(kv("Apoapsis alt", sum.bound ? `${(sum.apoapsisAlt / 1000).toFixed(0)} km` : "escape"));
-    lines.push(kv("Period", sum.bound ? formatDur(sum.period) : "—"));
+    if (ship.primary === "sun") {
+      // Heliocentric (in/after a transfer): show distance from the Sun, not an
+      // altitude above the Sun's surface.
+      lines.push(kv("Frame", "heliocentric"));
+      lines.push(kv("Distance from Sun", `${(length(rel.r) / AU).toFixed(3)} AU`));
+    } else {
+      const sum = summarizeOrbit(el, mu, primary.radius);
+      lines.push(kv("Orbiting", primary.name));
+      lines.push(kv("Periapsis alt", `${(sum.periapsisAlt / 1000).toFixed(0)} km`));
+      lines.push(kv("Apoapsis alt", sum.bound ? `${(sum.apoapsisAlt / 1000).toFixed(0)} km` : "escape"));
+      lines.push(kv("Period", sum.bound ? formatDur(sum.period) : "—"));
+    }
     lines.push(kv("Speed", `${(speed / 1000).toFixed(3)} km/s`));
     lines.push(kv("Mass", `${(totalMass(ship) / 1000).toFixed(2)} t`));
     lines.push(kv("Δv remaining", `${(dvRemaining(ship) / 1000).toFixed(2)} km/s`));
+
+    // Transfer status.
+    const tr = ship.transfer;
+    if (tr) {
+      const tName = BODY_BY_ID.get(tr.targetId)?.name ?? tr.targetId;
+      if (!tr.departed) {
+        lines.push(kv("Transfer", `→ ${tName}, depart ${formatDate(tr.tDepart)}`));
+      } else if (!tr.arrived) {
+        lines.push(kv("In transit", `→ ${tName}, arrive in ${((tr.tArrive - t) / DAY).toFixed(0)} d`));
+        lines.push(kv("Capture Δv", `${(tr.dvArrive / 1000).toFixed(2)} km/s`));
+      } else {
+        lines.push(kv("Arrived", `${tName} (flyby) · capture Δv ${(tr.dvArrive / 1000).toFixed(2)} km/s`));
+      }
+    }
+    // A transfer can only be planned from a planet (not mid-flight).
+    this.planBtn.disabled = ship.primary === "sun" || (!!tr && tr.departed);
 
     if (ship.mode === "thrust" && ship.burn) {
       const pct = (100 * ship.burn.dvDone) / ship.burn.dvTarget;

@@ -15,6 +15,7 @@ import { BodyViews } from "../render/bodyViews.ts";
 import { ShipViews } from "../render/shipViews.ts";
 import { Hud } from "../ui/hud.ts";
 import { ShipPanel } from "../ui/shipPanel.ts";
+import { TransferPanel } from "../ui/transferPanel.ts";
 import * as commands from "./commands.ts";
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
@@ -27,7 +28,8 @@ const sm = new SceneManager(canvas);
 const views = new BodyViews(sm);
 const shipViews = new ShipViews(sm, uiRoot);
 const hud = new Hud(uiRoot, sim, sm);
-const shipPanel = new ShipPanel(uiRoot, sim, sm);
+const transferPanel = new TransferPanel(uiRoot, sim, sm);
+const shipPanel = new ShipPanel(uiRoot, sim, sm, (shipId) => transferPanel.open(shipId));
 
 // Open on a gentle warp so the planets are visibly in motion immediately.
 sim.setWarpIndex(6); // 1 day/s
@@ -70,6 +72,7 @@ if (import.meta.env.DEV) {
     shipViews,
     hud,
     shipPanel,
+    transferPanel,
     commands,
     renderOnce,
     /** Advance sim by `s` seconds and redraw — lets tools drive frames without rAF. */

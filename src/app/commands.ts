@@ -12,7 +12,10 @@ import { type Ship, type BurnDir } from "../core/world.ts";
 import { type Stage } from "../core/propulsion.ts";
 import { circularOrbit } from "../core/orbit.ts";
 import { shipRelativeState } from "../core/ships.ts";
-import { BODY_BY_ID, DEG } from "../core/constants.ts";
+import { bodyState } from "../core/ephemeris.ts";
+import { lambert } from "../core/maneuver/lambert.ts";
+import { length, sub } from "../core/math/vec3.ts";
+import { BODY_BY_ID, DEG, MU_SUN } from "../core/constants.ts";
 
 export interface ShipDesign {
   name: string;
@@ -81,4 +84,47 @@ export function startBurn(sim: Simulation, shipId: string, dvTarget: number, dir
   // Make the burn watchable: unpause and settle to a moderate warp.
   sim.paused = false;
   sim.setWarpIndex(Math.min(sim.warpIndex, 2)); // <= 60x
+}
+
+export interface TransferPlan {
+  dvDepart: number;
+  dvArrive: number;
+  tof: number;
+}
+
+/**
+ * Plan and schedule an interplanetary transfer: solve the Lambert leg from the
+ * ship's current primary (e.g. Earth) to `targetId` for the chosen departure and
+ * arrival times, record it on the ship, and queue the departure. The injection
+ * executes when the clock reaches tDepart (see Simulation.executeDeparture).
+ */
+export function planTransfer(
+  sim: Simulation,
+  shipId: string,
+  targetId: string,
+  tDepart: number,
+  tArrive: number,
+): TransferPlan | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || tArrive <= tDepart) return null;
+  const depBody = BODY_BY_ID.get(ship.primary);
+  const target = BODY_BY_ID.get(targetId);
+  if (!depBody || !target) return null;
+
+  const depState = bodyState(depBody, tDepart);
+  const arrState = bodyState(target, tArrive);
+  const sol = lambert(depState.r, arrState.r, tArrive - tDepart, MU_SUN, true);
+  if (!sol) return null;
+
+  const dvDepart = length(sub(sol.v1, depState.v));
+  const dvArrive = length(sub(sol.v2, arrState.v));
+  ship.transfer = { targetId, tDepart, tArrive, dvDepart, dvArrive, departed: false, arrived: false };
+  sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
+  return { dvDepart, dvArrive, tof: tArrive - tDepart };
+}
+
+/** Forget a planned transfer (a stale scheduled departure is ignored later). */
+export function cancelTransfer(sim: Simulation, shipId: string): void {
+  const ship = sim.world.ships.get(shipId);
+  if (ship) ship.transfer = undefined;
 }

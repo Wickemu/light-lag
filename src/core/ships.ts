@@ -6,7 +6,7 @@
  */
 
 import { type Ship } from "./world.ts";
-import { type Stage, deltaVBudget } from "./propulsion.ts";
+import { type Stage, deltaVBudget, exhaustVelocity } from "./propulsion.ts";
 import {
   type State,
   type KeplerElements,
@@ -63,6 +63,37 @@ export function shipWorldState(ship: Ship, t: number): State {
   const body = BODY_BY_ID.get(ship.primary)!;
   const primary = bodyState(body, t);
   return { r: add(primary.r, rel.r), v: add(primary.v, rel.v) };
+}
+
+/**
+ * Apply an impulsive Δv (m/s), consuming propellant per the rocket equation and
+ * staging across empty tanks as needed. Returns false if the ship cannot afford
+ * the full Δv. Used for interplanetary injections, where the burn is short
+ * relative to the months-long transfer and the impulsive idealization is
+ * standard (the porkchop Δv is itself an impulsive metric).
+ */
+export function applyImpulsiveDv(ship: Ship, dv: number): boolean {
+  let remaining = dv;
+  while (remaining > 1e-9) {
+    const stage = activeStage(ship);
+    if (!stage || stage.propMass <= 0) {
+      if (stage) ship.activeStage += 1;
+      if (!activeStage(ship)) return false;
+      continue;
+    }
+    const ve = exhaustVelocity(stage.isp);
+    const m0 = totalMass(ship);
+    const stageCapacity = ve * Math.log(m0 / (m0 - stage.propMass));
+    if (stageCapacity >= remaining) {
+      stage.propMass -= m0 * (1 - Math.exp(-remaining / ve));
+      remaining = 0;
+    } else {
+      remaining -= stageCapacity;
+      stage.propMass = 0;
+      ship.activeStage += 1;
+    }
+  }
+  return true;
 }
 
 /** The osculating Keplerian orbit the ship is on right now (about its primary). */

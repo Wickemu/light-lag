@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { createWorld } from "./world.ts";
 import { Simulation } from "./sim.ts";
-import { spawnShip, startBurn, defaultDesign } from "../app/commands.ts";
-import { shipOsculatingElements, totalMass } from "./ships.ts";
+import { spawnShip, startBurn, defaultDesign, planTransfer } from "../app/commands.ts";
+import { shipOsculatingElements, totalMass, shipWorldState } from "./ships.ts";
 import { summarizeOrbit } from "./orbit.ts";
 import { exhaustVelocity, propellantForDv } from "./propulsion.ts";
-import { BODY_BY_ID } from "./constants.ts";
+import { computePorkchop } from "./maneuver/porkchop.ts";
+import { bodyState } from "./ephemeris.ts";
+import { distance } from "./math/vec3.ts";
+import { BODY_BY_ID, DAY } from "./constants.ts";
 
 const MU_EARTH = BODY_BY_ID.get("earth")!.mu;
 const R_EARTH = BODY_BY_ID.get("earth")!.radius;
@@ -110,6 +113,39 @@ describe("determinism of powered flight", () => {
     const coarse = run(7); // non-grid-aligned chunk
     const fine = run(0.5);
     expect(Math.abs(coarse.a - fine.a)).toBeLessThan(50); // metres
+  });
+});
+
+describe("interplanetary transfer execution", () => {
+  it("departs on the heliocentric leg and arrives at Mars", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+
+    // Pick the cheapest window from a porkchop over one synodic period.
+    const pork = computePorkchop({
+      fromId: "earth", toId: "mars",
+      depStart: 0, depEnd: 800 * DAY, depN: 60,
+      tofMin: 120 * DAY, tofMax: 330 * DAY, tofN: 44,
+    });
+    const best = pork.best!;
+    const plan = planTransfer(sim, id, "mars", best.depT, best.arrT);
+    expect(plan).not.toBeNull();
+    expect(ship.primary).toBe("earth"); // not yet departed
+
+    // Fast-forward past departure: the injection fires from the event queue.
+    sim.step(best.depT + DAY);
+    expect(ship.transfer!.departed).toBe(true);
+    expect(ship.primary).toBe("sun"); // now on the heliocentric transfer
+
+    // Fast-forward to arrival.
+    sim.step(best.arrT - sim.world.t + DAY);
+    expect(ship.transfer!.arrived).toBe(true);
+
+    // The ship should be essentially at Mars at the arrival instant.
+    const shipPos = shipWorldState(ship, best.arrT).r;
+    const marsPos = bodyState(BODY_BY_ID.get("mars")!, best.arrT).r;
+    expect(distance(shipPos, marsPos)).toBeLessThan(1e8); // < 100,000 km
   });
 });
 

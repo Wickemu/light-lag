@@ -31,6 +31,17 @@ export interface ShipBurn {
   dvDone: number; // m/s delivered so far (integrated ∫ F/m dt)
 }
 
+/** A planned/active interplanetary transfer (Lambert leg to another body). */
+export interface ShipTransfer {
+  targetId: string;
+  tDepart: number; // s since J2000
+  tArrive: number;
+  dvDepart: number; // injection Δv (m/s)
+  dvArrive: number; // estimated arrival/capture Δv (m/s)
+  departed: boolean;
+  arrived: boolean;
+}
+
 /**
  * A spacecraft. Coasting ships are an analytic conic about `primary` (evaluated
  * from `elements` at any time, like a natural body); thrusting ships carry an
@@ -55,6 +66,8 @@ export interface Ship {
   activeStage: number;
   /** Present only while mode === "thrust". */
   burn?: ShipBurn;
+  /** A planned or in-progress interplanetary transfer. */
+  transfer?: ShipTransfer;
   /** Accumulated proper time (s). Equal to coordinate time in-system; kept so an
    *  eventual relativistic expansion stays consistent. */
   tau: number;

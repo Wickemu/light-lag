@@ -424,3 +424,65 @@ button:disabled {
   color: var(--accent);
   font-weight: 700;
 }
+
+/* ── Transfer planner (centred porkchop) ────────────────────────────────── */
+.transfer-panel {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 340px;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 20;
+}
+.transfer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.target-sel {
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--btn-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 5px;
+  padding: 3px 6px;
+}
+.porkchop {
+  width: 300px;
+  height: 210px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: #0a0e16;
+  cursor: crosshair;
+  align-self: center;
+  image-rendering: pixelated;
+}
+.pork-axis {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+}
+.transfer-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.transfer-readout .ok {
+  color: #5fd08a;
+  font-size: 12px;
+  margin-top: 3px;
+}
+.transfer-readout .warn {
+  color: var(--warn);
+  font-size: 12px;
+  margin-top: 3px;
+}
+.transfer-btns {
+  display: flex;
+  gap: 6px;
+}
+.transfer-btns button {
+  flex: 1 1 0;
+}

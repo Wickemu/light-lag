@@ -22,11 +22,13 @@ import { type WorldState, type Ship } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
 import { orbitFrame } from "./orbit.ts";
-import { activeStage } from "./ships.ts";
+import { activeStage, applyImpulsiveDv } from "./ships.ts";
 import { exhaustVelocity } from "./propulsion.ts";
 import { stateToElements } from "./math/kepler.ts";
-import { BODY_BY_ID } from "./constants.ts";
-import { type Vec3 } from "./math/vec3.ts";
+import { bodyState } from "./ephemeris.ts";
+import { lambert } from "./maneuver/lambert.ts";
+import { BODY_BY_ID, MU_SUN } from "./constants.ts";
+import { type Vec3, sub, length } from "./math/vec3.ts";
 
 /** Sub-step grid spacing during powered flight (s). LEO period is ~5500 s, so a
  *  2 s grid keeps RK4 trajectory error negligible. */
@@ -239,8 +241,60 @@ export class Simulation {
     ship.burn = undefined;
   }
 
-  /** Event dispatch. Scheduled burns / SOI / messages attach here in later phases. */
-  private handleEvent(_ev: SimEvent): void {
-    // Intentionally empty until later phases.
+  /** Event dispatch. */
+  private handleEvent(ev: SimEvent): void {
+    switch (ev.kind) {
+      case "transfer-depart": {
+        const ship = ev.entityId ? this.world.ships.get(ev.entityId) : undefined;
+        if (ship) this.executeDeparture(ship, ev.t);
+        break;
+      }
+      case "transfer-arrive": {
+        const ship = ev.entityId ? this.world.ships.get(ev.entityId) : undefined;
+        if (ship && ship.transfer && Math.abs(ev.t - ship.transfer.tArrive) < 1) {
+          ship.transfer.arrived = true;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Execute a scheduled interplanetary departure: solve the Lambert leg afresh
+   * at the true departure instant, pay the injection Δv (impulsive, propellant
+   * deducted per the rocket equation), and place the ship on the heliocentric
+   * transfer to its target. A flyby/intercept for now — capture is Phase 4.
+   */
+  private executeDeparture(ship: Ship, evT: number): void {
+    const tr = ship.transfer;
+    if (!tr || tr.departed) return;
+    if (Math.abs(evT - tr.tDepart) > 1) return; // stale event from a re-plan
+
+    const depBody = BODY_BY_ID.get(ship.primary);
+    const target = BODY_BY_ID.get(tr.targetId);
+    if (!depBody || !target) return;
+
+    const t = this.world.t; // == tr.tDepart
+    const depState = bodyState(depBody, t);
+    const arrState = bodyState(target, tr.tArrive);
+    const sol = lambert(depState.r, arrState.r, tr.tArrive - t, MU_SUN, true);
+    tr.departed = true;
+    if (!sol) return; // degenerate geometry; abort the injection
+
+    const dv = length(sub(sol.v1, depState.v));
+    applyImpulsiveDv(ship, dv);
+    tr.dvDepart = dv;
+
+    // Onto the heliocentric transfer, starting at the departure body's position.
+    ship.primary = "sun";
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = stateToElements(depState.r, sol.v1, MU_SUN);
+    ship.epoch = t;
+
+    this.events.push({ t: tr.tArrive, kind: "transfer-arrive", entityId: ship.id });
   }
 }

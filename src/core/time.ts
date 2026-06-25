@@ -42,7 +42,9 @@ export type SimEventKind =
   | "burn-cutoff"
   | "soi-crossing"
   | "message-arrival"
-  | "window-open";
+  | "window-open"
+  | "transfer-depart"
+  | "transfer-arrive";
 
 export interface SimEvent {
   t: number; // absolute sim time the event fires (s since J2000)
