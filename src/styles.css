@@ -1,0 +1,243 @@
+/* LIGHTLAG HUD — overlaid on the WebGL canvas. Themed via [data-theme] on <html>
+   so both light and dark stay legible over space. */
+
+:root {
+  --font: "SF Mono", "JetBrains Mono", "Consolas", ui-monospace, monospace;
+  --accent: #4fd1e0;
+  --warn: #ffb454;
+}
+
+:root[data-theme="dark"] {
+  --panel-bg: rgba(10, 16, 28, 0.62);
+  --panel-border: rgba(120, 160, 210, 0.18);
+  --text: #d7e3f4;
+  --text-dim: #8294ad;
+  --label: #aebfd6;
+  --label-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
+  --btn-bg: rgba(40, 60, 90, 0.5);
+  --btn-bg-hover: rgba(70, 100, 150, 0.7);
+  --active: #4fd1e0;
+}
+
+:root[data-theme="light"] {
+  --panel-bg: rgba(245, 249, 255, 0.78);
+  --panel-border: rgba(40, 80, 130, 0.22);
+  --text: #14233a;
+  --text-dim: #5a6b85;
+  --label: #1f3350;
+  --label-shadow: 0 0 6px rgba(255, 255, 255, 0.95);
+  --btn-bg: rgba(210, 224, 244, 0.85);
+  --btn-bg-hover: rgba(180, 205, 240, 0.95);
+  --active: #1488a8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #05070d;
+  font-family: var(--font);
+  color: var(--text);
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+#ui-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none; /* let drags reach the canvas; panels re-enable below */
+  z-index: 10;
+}
+
+.panel {
+  position: absolute;
+  pointer-events: auto;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+}
+
+.header {
+  top: 16px;
+  left: 16px;
+}
+.title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  color: var(--text);
+}
+.subtitle {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+.theme-toggle {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  pointer-events: auto;
+}
+
+.clock {
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  min-width: 260px;
+}
+.date {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.warp-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.warp {
+  font-size: 12px;
+  color: var(--accent);
+  min-width: 86px;
+  text-align: left;
+}
+
+.body-list {
+  top: 96px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 132px;
+}
+.panel-label {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.body-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+  text-align: left;
+}
+.body-btn.active {
+  outline: 1px solid var(--active);
+  color: var(--active);
+}
+.swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.focus {
+  bottom: 16px;
+  left: 16px;
+  min-width: 250px;
+}
+.focus-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+  color: var(--accent);
+}
+.kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  padding: 2px 0;
+}
+.kv .k {
+  color: var(--text-dim);
+}
+.kv .v {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.foot {
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.fps {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--btn-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+button:hover {
+  background: var(--btn-bg-hover);
+}
+.icon-btn {
+  font-size: 16px;
+  width: 34px;
+  height: 34px;
+  line-height: 1;
+}
+
+/* Floating body labels */
+.label-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.body-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate(-9999px, -9999px);
+  margin: 10px 0 0 10px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--label);
+  text-shadow: var(--label-shadow);
+  white-space: nowrap;
+  will-change: transform;
+}
+.body-label.focused {
+  color: var(--accent);
+  font-weight: 700;
+}
