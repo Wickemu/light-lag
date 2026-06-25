@@ -22,13 +22,13 @@ import { type WorldState, type Ship } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius } from "./orbit.ts";
-import { activeStage, applyImpulsiveDv, shipOsculatingElements } from "./ships.ts";
+import { activeStage, applyImpulsiveDv, shipOsculatingElements, shipRelativeState } from "./ships.ts";
 import { exhaustVelocity } from "./propulsion.ts";
-import { stateToElements } from "./math/kepler.ts";
+import { stateToElements, meanMotion } from "./math/kepler.ts";
 import { bodyState } from "./ephemeris.ts";
-import { lambert } from "./maneuver/lambert.ts";
-import { BODY_BY_ID, MU_SUN } from "./constants.ts";
-import { type Vec3, sub, length } from "./math/vec3.ts";
+import { aimArrival } from "./maneuver/arrival.ts";
+import { BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
+import { type Vec3, sub, scale, normalize, length } from "./math/vec3.ts";
 
 /** Sub-step grid spacing during powered flight (s). LEO period is ~5500 s, so a
  *  2 s grid keeps RK4 trajectory error negligible. */
@@ -243,29 +243,22 @@ export class Simulation {
 
   /** Event dispatch. */
   private handleEvent(ev: SimEvent): void {
+    const ship = ev.entityId ? this.world.ships.get(ev.entityId) : undefined;
+    if (!ship) return;
     switch (ev.kind) {
-      case "transfer-depart": {
-        const ship = ev.entityId ? this.world.ships.get(ev.entityId) : undefined;
-        if (ship) this.executeDeparture(ship, ev.t);
-        break;
-      }
-      case "transfer-arrive": {
-        const ship = ev.entityId ? this.world.ships.get(ev.entityId) : undefined;
-        if (ship && ship.transfer && Math.abs(ev.t - ship.transfer.tArrive) < 1) {
-          ship.transfer.arrived = true;
-        }
-        break;
-      }
-      default:
-        break;
+      case "transfer-depart": this.executeDeparture(ship, ev.t); break;
+      case "soi-crossing": this.enterSoi(ship); break;
+      case "capture": this.captureAtPeriapsis(ship); break;
+      default: break;
     }
   }
 
   /**
-   * Execute a scheduled interplanetary departure: solve the Lambert leg afresh
-   * at the true departure instant, pay the injection Δv (impulsive, propellant
-   * deducted per the rocket equation), and place the ship on the heliocentric
-   * transfer to its target. A flyby/intercept for now — capture is Phase 4.
+   * Execute a scheduled interplanetary departure: aim the arrival so the
+   * approach hyperbola clears the target (B-plane targeting, evaluated at the
+   * true SOI-entry state), pay the Oberth-aware injection from the parking
+   * orbit, place the ship on the heliocentric leg, and schedule its
+   * sphere-of-influence crossing.
    */
   private executeDeparture(ship: Ship, evT: number): void {
     const tr = ship.transfer;
@@ -278,29 +271,86 @@ export class Simulation {
 
     const t = this.world.t; // == tr.tDepart
     const depState = bodyState(depBody, t);
-    const arrState = bodyState(target, tr.tArrive);
-    const sol = lambert(depState.r, arrState.r, tr.tArrive - t, MU_SUN, true);
+    const rCapture = target.radius + DEFAULT_CAPTURE_ALT;
+    const aim = aimArrival(depBody, target, t, tr.tArrive, rCapture);
     tr.departed = true;
-    if (!sol) return; // degenerate geometry; abort the injection
+    if (!aim) return; // degenerate geometry; abort the injection
 
-    // Charge the Oberth-aware injection from the current parking orbit — the
-    // ship is bound there at v_park, not co-moving with Earth — so the energy
-    // bookkeeping matches placing it on the transfer at the full heliocentric v1.
-    const vInf = length(sub(sol.v1, depState.v));
+    // Oberth-aware injection from the current parking orbit (see Phase-3 audit).
+    const vInf = length(sub(aim.v1, depState.v));
     const parkEl = shipOsculatingElements(ship, t);
     const rPark = periapsisRadius(parkEl.a, parkEl.e);
     const dv = hyperbolicBurnDv(vInf, depBody.mu, rPark);
     applyImpulsiveDv(ship, dv);
     tr.dvDepart = dv;
 
-    // Onto the heliocentric transfer, starting at the departure body's position.
+    // Onto the heliocentric transfer toward the aim point.
     ship.primary = "sun";
     ship.mode = "coast";
     ship.r = undefined;
     ship.v = undefined;
-    ship.elements = stateToElements(depState.r, sol.v1, MU_SUN);
+    ship.elements = stateToElements(depState.r, aim.v1, MU_SUN);
     ship.epoch = t;
 
-    this.events.push({ t: tr.tArrive, kind: "transfer-arrive", entityId: ship.id });
+    this.events.push({ t: aim.tSoi, kind: "soi-crossing", entityId: ship.id });
+  }
+
+  /**
+   * Sphere-of-influence crossing: switch the reference body using the CONTINUOUS
+   * state vector (never interpolated elements), re-derive the now-hyperbolic
+   * orbit about the target, and schedule the capture burn at its periapsis.
+   */
+  private enterSoi(ship: Ship): void {
+    const tr = ship.transfer;
+    if (!tr || tr.inSoi) return;
+    const target = BODY_BY_ID.get(tr.targetId);
+    if (!target) return;
+
+    const t = this.world.t;
+    const shipHelio = shipRelativeState(ship, t);
+    const tgt = bodyState(target, t);
+    const rRel = sub(shipHelio.r, tgt.r);
+    const vRel = sub(shipHelio.v, tgt.v);
+
+    ship.primary = tr.targetId;
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = stateToElements(rRel, vRel, target.mu);
+    ship.epoch = t;
+    tr.inSoi = true;
+
+    // Schedule the capture at periapsis (time-to-periapsis = −M/n for M < 0).
+    const el = ship.elements;
+    const n = meanMotion(el.a, target.mu);
+    const tPeri = el.M < 0 ? t + -el.M / n : t;
+    this.events.push({ t: tPeri, kind: "capture", entityId: ship.id });
+  }
+
+  /**
+   * Capture burn at periapsis: an impulsive retrograde burn (the patched-conic
+   * idealization, Oberth-efficient at periapsis) circularizing the hyperbolic
+   * approach into a bound orbit at the periapsis radius.
+   */
+  private captureAtPeriapsis(ship: Ship): void {
+    const tr = ship.transfer;
+    if (!tr || tr.arrived) return;
+    const body = BODY_BY_ID.get(ship.primary);
+    if (!body) return;
+
+    const t = this.world.t;
+    const st = shipRelativeState(ship, t); // at periapsis (coast about target)
+    const r = length(st.r);
+    const vMag = length(st.v);
+    const vCirc = Math.sqrt(body.mu / r);
+    const captureDv = vMag - vCirc;
+    if (captureDv > 0) applyImpulsiveDv(ship, captureDv);
+
+    const newV = scale(normalize(st.v), vCirc);
+    ship.elements = stateToElements(st.r, newV, body.mu);
+    ship.epoch = t;
+    ship.mode = "coast";
+    tr.arrived = true;
+    tr.dvArrive = Math.max(captureDv, 0);
   }
 }

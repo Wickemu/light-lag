@@ -19,6 +19,16 @@ export function circularSpeed(mu: number, r: number): number {
 }
 
 /**
+ * Laplace sphere-of-influence radius of a body: a·(m/M_parent)^(2/5), the
+ * distance within which the body's gravity dominates the parent's. Patched
+ * conics switch the reference body at this boundary. Uses GM ratios (= mass
+ * ratios). a = the body's semi-major axis about its parent (m).
+ */
+export function soiRadius(a: number, mu: number, parentMu: number): number {
+  return a * Math.pow(mu / parentMu, 0.4);
+}
+
+/**
  * The impulsive Δv connecting a circular parking orbit (radius rPark about a
  * body of GM mu) and a hyperbolic trajectory of excess speed vInf — i.e. the
  * Oberth-aware injection burn at periapsis (and, symmetrically, the capture

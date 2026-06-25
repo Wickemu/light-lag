@@ -123,7 +123,7 @@ export function planTransfer(
   const rParkTo = target.radius + DEFAULT_CAPTURE_ALT;
   const dvDepart = hyperbolicBurnDv(length(sub(sol.v1, depState.v)), depBody.mu, rParkFrom);
   const dvArrive = hyperbolicBurnDv(length(sub(sol.v2, arrState.v)), target.mu, rParkTo);
-  ship.transfer = { targetId, tDepart, tArrive, dvDepart, dvArrive, departed: false, arrived: false };
+  ship.transfer = { targetId, tDepart, tArrive, dvDepart, dvArrive, departed: false, inSoi: false, arrived: false };
   sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
   return { dvDepart, dvArrive, tof: tArrive - tDepart };
 }

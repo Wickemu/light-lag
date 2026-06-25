@@ -151,6 +151,41 @@ describe("interplanetary transfer execution", () => {
   });
 });
 
+describe("Phase 4: SOI patched conics and Mars capture", () => {
+  it("crosses Mars's SOI and captures into a bound orbit above the surface", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+    const mars = BODY_BY_ID.get("mars")!;
+
+    const pork = computePorkchop({
+      fromId: "earth", toId: "mars",
+      depStart: 0, depEnd: 800 * DAY, depN: 60,
+      tofMin: 120 * DAY, tofMax: 330 * DAY, tofN: 44,
+      rParkFrom: R_EARTH + 4e5,
+      rParkTo: mars.radius + 4e5,
+    });
+    const best = pork.best!;
+    planTransfer(sim, id, "mars", best.depT, best.arrT);
+
+    // Fly the entire transfer in one jump; the event cascade (depart → SOI
+    // crossing → capture) all fires inside the analytic fast path.
+    sim.step(best.arrT - sim.world.t + 5 * DAY);
+
+    expect(ship.transfer!.departed).toBe(true);
+    expect(ship.transfer!.inSoi).toBe(true);
+    expect(ship.transfer!.arrived).toBe(true);
+    expect(ship.primary).toBe("mars");
+
+    const el = shipOsculatingElements(ship, sim.world.t);
+    expect(el.e).toBeLessThan(1); // captured into a bound orbit
+    expect(el.a).toBeGreaterThan(0);
+    const peri = el.a * (1 - el.e);
+    expect(peri).toBeGreaterThan(mars.radius); // clears the surface
+    expect(peri).toBeLessThan(mars.radius + 3e6); // a low-ish Mars orbit
+  });
+});
+
 describe("staging", () => {
   it("drops the spent stage and keeps delivering Δv from the next", () => {
     const sim = new Simulation(createWorld(1, 0));

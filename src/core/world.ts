@@ -39,7 +39,8 @@ export interface ShipTransfer {
   dvDepart: number; // injection Δv (m/s)
   dvArrive: number; // estimated arrival/capture Δv (m/s)
   departed: boolean;
-  arrived: boolean;
+  inSoi: boolean; // entered the target's sphere of influence
+  arrived: boolean; // captured into orbit at the target
 }
 
 /**

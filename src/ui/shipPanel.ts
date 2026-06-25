@@ -268,11 +268,13 @@ export class ShipPanel {
       const tName = BODY_BY_ID.get(tr.targetId)?.name ?? tr.targetId;
       if (!tr.departed) {
         lines.push(kv("Transfer", `→ ${tName}, depart ${formatDate(tr.tDepart)}`));
-      } else if (!tr.arrived) {
+      } else if (tr.arrived) {
+        lines.push(kv("Captured", `${tName} orbit · capture Δv ${(tr.dvArrive / 1000).toFixed(2)} km/s`));
+      } else if (tr.inSoi) {
+        lines.push(kv("Arrival", `in ${tName} SOI — capturing`));
+      } else {
         lines.push(kv("In transit", `→ ${tName}, arrive in ${((tr.tArrive - t) / DAY).toFixed(0)} d`));
         lines.push(kv("Capture Δv", `${(tr.dvArrive / 1000).toFixed(2)} km/s`));
-      } else {
-        lines.push(kv("Arrived", `${tName} (flyby) · capture Δv ${(tr.dvArrive / 1000).toFixed(2)} km/s`));
       }
     }
     // A transfer can only be planned from a planet (not mid-flight).

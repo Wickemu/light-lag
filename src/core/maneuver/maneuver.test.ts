@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { lambert, stumpffC, stumpffS } from "./lambert.ts";
 import { hohmann, synodicPeriod } from "./hohmann.ts";
 import { computePorkchop } from "./porkchop.ts";
+import { soiRadius } from "../orbit.ts";
 import { elementsToState, propagate, period } from "../math/kepler.ts";
 import { length, distance } from "../math/vec3.ts";
 import { BODY_BY_ID, MU_SUN, AU, DAY } from "../constants.ts";
@@ -64,6 +65,15 @@ describe("Hohmann transfer (Earth → Mars, heliocentric)", () => {
     const tM = period(bodyElements(BODY_BY_ID.get("mars")!, 0)!.a, MU_SUN);
     expect(synodicPeriod(tE, tM) / DAY).toBeGreaterThan(770);
     expect(synodicPeriod(tE, tM) / DAY).toBeLessThan(790);
+  });
+});
+
+describe("Sphere of influence", () => {
+  it("Mars's SOI radius is ~577,000 km", () => {
+    const a = bodyElements(BODY_BY_ID.get("mars")!, 0)!.a;
+    const r = soiRadius(a, BODY_BY_ID.get("mars")!.mu, MU_SUN) / 1000;
+    expect(r).toBeGreaterThan(550_000);
+    expect(r).toBeLessThan(600_000);
   });
 });
 
