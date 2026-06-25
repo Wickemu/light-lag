@@ -12,13 +12,21 @@
 
 import { type Simulation } from "../core/sim.ts";
 import { type SceneManager } from "../render/SceneManager.ts";
-import { type BurnDir } from "../core/world.ts";
+import { type BurnDir, type Ship } from "../core/world.ts";
 import {
   type ShipDesign,
   defaultDesign,
   spawnShip,
   sendBurn,
+  landShip,
+  launchShip,
+  shipSurfaceParams,
 } from "../app/commands.ts";
+import {
+  ascentBudget,
+  descentBudget,
+  surfaceManeuverCost,
+} from "../core/surface.ts";
 import {
   type ShipPreset,
   PRESETS_BY_ID,
@@ -35,7 +43,7 @@ import {
   shipThermalState,
   primaryMu,
 } from "../core/ships.ts";
-import { summarizeOrbit } from "../core/orbit.ts";
+import { summarizeOrbit, periapsisRadius } from "../core/orbit.ts";
 import { bodyPosition } from "../core/ephemeris.ts";
 import { retardedTime } from "../core/comms.ts";
 import { BODY_BY_ID, AU, DAY } from "../core/constants.ts";
@@ -73,6 +81,11 @@ export class ShipPanel {
   private dirRow!: HTMLElement;
   private executeBtn!: HTMLButtonElement;
   private planBtn!: HTMLButtonElement;
+  private surfaceEl!: HTMLElement;
+  private surfaceReadout!: HTMLElement;
+  private surfaceAltInput!: HTMLInputElement;
+  private landBtn!: HTMLButtonElement;
+  private launchBtn!: HTMLButtonElement;
 
   constructor(
     private root: HTMLElement,
@@ -157,6 +170,25 @@ export class ShipPanel {
     });
     this.planBtn.className = "wide-btn";
     this.flightEl.appendChild(this.planBtn);
+
+    // Surface ops — landing & takeoff Δv budgeting (shown only when the ship is
+    // coasting in the SOI of a body with a surface, or already landed).
+    this.surfaceEl = el("div", "surface-ops");
+    this.surfaceEl.appendChild(el("div", "panel-label", "SURFACE OPS"));
+    this.surfaceReadout = el("div", "surface-readout");
+    this.surfaceEl.appendChild(this.surfaceReadout);
+    const surfRow = el("div", "dv-row");
+    this.surfaceAltInput = document.createElement("input");
+    this.surfaceAltInput.type = "number";
+    this.surfaceAltInput.value = "200";
+    this.surfaceAltInput.min = "0";
+    this.surfaceAltInput.className = "dv-input";
+    surfRow.append(el("span", "dv-label", "orbit (km)"), this.surfaceAltInput);
+    this.landBtn = button("⬇ Land", () => this.doLand());
+    this.launchBtn = button("⬆ Launch", () => this.doLaunch());
+    surfRow.append(this.landBtn, this.launchBtn);
+    this.surfaceEl.appendChild(surfRow);
+    this.flightEl.appendChild(this.surfaceEl);
 
     const burnControls = el("div", "burn-controls");
     burnControls.appendChild(el("div", "panel-label", "MANEUVER"));
@@ -408,6 +440,8 @@ export class ShipPanel {
       lines.push(kv("Radiator needed", `${Math.round(th.radiatorAreaM2).toLocaleString("en-US")} m²`));
     }
 
+    if (ship.landed) lines.unshift(kv("Surface", `landed on ${BODY_BY_ID.get(ship.landed.bodyId)?.name ?? ship.landed.bodyId}`));
+
     if (ship.mode === "thrust" && ship.burn) {
       const pct = (100 * ship.burn.dvDone) / ship.burn.dvTarget;
       lines.push(kv("BURNING", `${ship.burn.dvDone.toFixed(0)} / ${ship.burn.dvTarget.toFixed(0)} m/s (${pct.toFixed(0)}%)`));
@@ -418,7 +452,62 @@ export class ShipPanel {
       this.executeBtn.textContent = "Execute burn";
     }
 
+    this.updateSurfaceOps(ship);
     this.readoutEl.innerHTML = lines.join("");
+  }
+
+  /** Landing/takeoff Δv budget for the selected ship, shown only when it is
+   *  coasting in the SOI of a body with a surface (or already landed there). */
+  private updateSurfaceOps(ship: Ship): void {
+    const landed = ship.landed;
+    const body = landed ? BODY_BY_ID.get(landed.bodyId) : BODY_BY_ID.get(ship.primary);
+    const inTransfer = !!ship.transfer && ship.transfer.departed && !ship.transfer.arrived;
+    const showable =
+      !!body && body.hasSurface !== false && ship.primary !== "sun" && ship.mode === "coast" && !inTransfer;
+    if (!showable || !body) {
+      this.surfaceEl.style.display = "none";
+      return;
+    }
+    this.surfaceEl.style.display = "block";
+    const remaining = ship.stages.slice(ship.activeStage);
+
+    if (landed) {
+      const altKm = Math.max(0, Number(this.surfaceAltInput.value) || 0);
+      const asc = ascentBudget(body, shipSurfaceParams(ship, body, altKm * 1000))!;
+      const cost = surfaceManeuverCost(remaining, ship.payloadMass, asc.dvTotal);
+      const feasible = cost.feasible >= 0 && asc.converged;
+      this.surfaceReadout.innerHTML =
+        kv("Status", `landed on ${body.name}`) +
+        kv("Ascent Δv", `${(asc.dvTotal / 1000).toFixed(2)} km/s${asc.converged ? "" : " (impractical)"}`) +
+        kv("  gravity / drag loss", `${(asc.gravityLoss / 1000).toFixed(2)} / ${(asc.dragLoss / 1000).toFixed(2)} km/s`) +
+        kv("Propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
+        (feasible ? `<div class="ok">✓ can reach ${altKm} km orbit</div>` : `<div class="warn">✗ insufficient Δv</div>`);
+      this.landBtn.disabled = true;
+      this.launchBtn.disabled = !feasible;
+    } else {
+      const orbEl = shipOsculatingElements(ship, this.sim.world.t);
+      const alt = Math.max(0, periapsisRadius(orbEl.a, orbEl.e) - body.radius);
+      const desc = descentBudget(body, shipSurfaceParams(ship, body, alt))!;
+      const cost = surfaceManeuverCost(remaining, ship.payloadMass, desc.dvTotal);
+      const canLand = cost.feasible >= 0;
+      this.surfaceReadout.innerHTML =
+        kv("Body", `${body.name} (${body.atmosphere ? "atmosphere" : "airless"})`) +
+        kv("Descent Δv", `${(desc.dvTotal / 1000).toFixed(2)} km/s`) +
+        (body.atmosphere ? kv("Aerobraking", `${(desc.aerobrakeFraction * 100).toFixed(0)}% shed for free`) : "") +
+        kv("Land propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
+        (canLand ? `<div class="ok">✓ can land</div>` : `<div class="warn">✗ insufficient Δv to land</div>`);
+      this.landBtn.disabled = !canLand;
+      this.launchBtn.disabled = true;
+    }
+  }
+
+  private doLand(): void {
+    if (this.selectedId) landShip(this.sim, this.selectedId);
+  }
+
+  private doLaunch(): void {
+    if (!this.selectedId) return;
+    launchShip(this.sim, this.selectedId, Math.max(0, Number(this.surfaceAltInput.value) || 0));
   }
 }
 

@@ -78,6 +78,7 @@ function qShip(s: Ship): Record<string, unknown> {
   if (s.v) o.v = qv(s.v);
   if (s.burn) o.burn = qBurn(s.burn);
   if (s.transfer) o.transfer = qTransfer(s.transfer);
+  if (s.landed) o.landed = { bodyId: s.landed.bodyId };
   o.stages = s.stages.map(qStage);
   return o;
 }

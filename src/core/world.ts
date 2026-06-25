@@ -69,6 +69,12 @@ export interface Ship {
   burn?: ShipBurn;
   /** A planned or in-progress interplanetary transfer. */
   transfer?: ShipTransfer;
+  /** Set when the ship has touched down on a body's surface (after paying the
+   *  descent Δv). While landed it is parked on a surface-skimming orbit as a
+   *  visual placeholder; the flag drives the UI (offer Launch, not Land) and the
+   *  semantics ("safe touchdown is implicit" — we account the Δv, not the
+   *  guidance). Cleared on launch. */
+  landed?: { bodyId: string };
   /** Accumulated proper time (s). Equal to coordinate time in-system; kept so an
    *  eventual relativistic expansion stays consistent. */
   tau: number;

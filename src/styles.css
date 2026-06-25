@@ -439,6 +439,30 @@ button:disabled {
   width: 70px;
 }
 
+.surface-ops {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border, #2a3344);
+  border-radius: 4px;
+}
+.surface-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.surface-readout .ok {
+  color: #5fd08a;
+  font-size: 12px;
+  margin-top: 3px;
+}
+.surface-readout .warn {
+  color: var(--warn);
+  font-size: 12px;
+  margin-top: 3px;
+}
+
 .ship-label-layer {
   position: absolute;
   inset: 0;
