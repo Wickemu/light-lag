@@ -16,23 +16,30 @@ import {
   type BodyDef, type StandishRow, type MoonRow, BODY_BY_ID,
 } from "./constants.ts";
 import { type State, type KeplerElements, elementsToState, wrapPi } from "./math/kepler.ts";
-import { type Vec3, add } from "./math/vec3.ts";
+import { type Vec3, add, sub, scale } from "./math/vec3.ts";
 
 /** Resolve the Standish elements of a planet at time t (s since J2000) into SI
- *  Keplerian elements (metres, radians). */
+ *  Keplerian elements (metres, radians). Uses the JPL "Approximate Positions"
+ *  1800–2050 linear element set — arc-minute class for the inner planets and a
+ *  few arc-minutes for the giants across the realistic game era (verified
+ *  against JPL Horizons in ephemeris.horizons.test.ts). Extending validity to
+ *  3000 BC–3000 AD (the giants' b,c,s,f libration terms) is a documented roadmap
+ *  option that trades a little in-window precision for range. */
 export function standishElements(row: StandishRow, t: number): KeplerElements {
   const T = t / JULIAN_CENTURY; // Julian centuries past J2000
   const a = (row.a + row.aDot * T) * AU;
   const e = row.e + row.eDot * T;
   const i = (row.i + row.iDot * T) * DEG;
-  const L = (row.L + row.LDot * T) * DEG; // mean longitude
-  const peri = (row.peri + row.periDot * T) * DEG; // longitude of perihelion ϖ
-  const node = (row.node + row.nodeDot * T) * DEG; // Ω
+  const periDeg = row.peri + row.periDot * T; // longitude of perihelion ϖ (deg)
+  const nodeDeg = row.node + row.nodeDot * T; // Ω (deg)
+  const Ldeg = row.L + row.LDot * T; // mean longitude (deg)
 
-  const omega = peri - node; // argument of periapsis ω = ϖ - Ω
-  const M = wrapPi(L - peri); // mean anomaly M = L - ϖ
-
-  return { a, e, i, Omega: node, omega, M };
+  return {
+    a, e, i,
+    Omega: nodeDeg * DEG,
+    omega: (periDeg - nodeDeg) * DEG, // ω = ϖ − Ω
+    M: wrapPi((Ldeg - periDeg) * DEG), // mean anomaly M = L − ϖ
+  };
 }
 
 /** Resolve a moon's precessing elements at time t (s since J2000) into SI
@@ -64,7 +71,22 @@ export function bodyStateRelative(body: BodyDef, t: number): State {
   // the Sun's, but for the Moon (GM_moon ≈ 1.2% of GM_earth) omitting it makes
   // the velocity ~0.5% too slow and inconsistent with the modelled motion.
   const mu = (parent ? parent.mu : MU_SUN) + body.mu;
-  return elementsToState(el, mu);
+  const state = elementsToState(el, mu);
+
+  // The Standish "earth" row is the Earth–Moon BARYCENTRE. Shift to Earth's true
+  // centre: r_earth = r_EMB − f·r_moon(rel Earth), f = μ_moon/(μ_earth+μ_moon).
+  // The Moon's own row is already relative to Earth's centre, so the parent chain
+  // then lands it at true_earth + moonRel, and the two recombine to the original
+  // EMB exactly (mass-weighted barycentre invariant preserved).
+  if (body.id === "earth") {
+    const moon = BODY_BY_ID.get("moon");
+    if (moon) {
+      const moonRel = bodyStateRelative(moon, t); // Moon relative to Earth's centre
+      const f = moon.mu / (body.mu + moon.mu);
+      return { r: sub(state.r, scale(moonRel.r, f)), v: sub(state.v, scale(moonRel.v, f)) };
+    }
+  }
+  return state;
 }
 
 /**

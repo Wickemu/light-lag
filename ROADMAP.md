@@ -48,7 +48,11 @@ locked by a permanent integration test suite before more gameplay is layered on.
   (single-rev now; B-plane solved at execution).
 - **SOI-as-point departure** (parking-orbit offset dropped) — documented
   approximation; refine if close-range nav matters.
-- **Standish outer-planet correction terms** (b,c,s,f) for validity past 1800–2050.
+- **Validity window past 1800–2050** (the giants' 3000 BC–3000 AD b,c,s,f
+  libration terms). Evaluated during the hardening pass and deferred: the JPL
+  3000 BC–3000 AD table trades in-window precision for range, and the engine's
+  era is the 21st century, where the 1800–2050 model is more accurate (confirmed
+  vs Horizons). Worth revisiting only if far-future/ancient play is prioritized.
 - **Detection model**: single-band IR + reflected; sensor NEP/aperture is a
   calibration scale (no integration time / zodiacal+CMB background floor) — fold
   in for a defensible SNR=1 range.
