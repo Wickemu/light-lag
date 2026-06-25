@@ -15,6 +15,17 @@ windows), patched-conic SOI capture, light-lag command (the thesis), and
 thermal / power / detection ("no stealth in space"). Plus parallel-session
 add-ons: a 30-craft preset catalog and keyboard controls.
 
+**Core-mechanics expansion (latest):** the full Solar System — 37 bodies, adding
+the dwarf planets (Ceres, Pluto, Eris, Haumea, Makemake), major asteroids (Vesta,
+Pallas), and the gas-giant & other moons (Galileans, Titan + six Saturnians, five
+Uranians, Triton, Phobos/Deimos, Charon), each on a JPL-validated ephemeris;
+**landing & takeoff** Δv/propellant budgeting (a calibrated gravity-turn ascent
+through real atmospheres, with aerobraking on descent); and the first
+**interstellar** layer — relativistic propulsion (rapidity rocket equation +
+constant-proper-accel brachistochrone), a ~27-system nearby-star catalog, a
+transit estimator, and an in-sim flyable flip-and-burn with crew/Earth time
+dilation.
+
 ## Now — core physics hardening (current focus)
 
 Not a feature phase. With every physics layer in place, verify them *together*:
@@ -40,9 +51,12 @@ locked by a permanent integration test suite before more gameplay is layered on.
 
 ## Backlog — known engine gaps (future layers)
 
-- **Relativistic propulsion**: torchships, >0.1c, relativistic rocket equation,
-  time dilation / proper-time divergence (catalog `PENDING_RELATIVISTIC`). The
-  comms layer is already kept 4D-consistent for this.
+- **Relativistic propulsion** — DONE (first cut): rapidity rocket equation,
+  constant-proper-accel brachistochrone, time dilation / proper-time divergence,
+  and an in-sim flyable interstellar leg; `PENDING_RELATIVISTIC` is now the flyable
+  `INTERSTELLAR_CRAFT` roster. Still to do: in-system relativistic burns (the
+  finite-thrust integrator is still classical), multi-leg coast cruises rendered
+  in-sim, and stellar proper motion.
 - **Power-limited electric thrust**: wire specific power (kW/kg) + solar 1/r² /
   reactor into the *actual* thrust (electric engines are a fixed operating point
   today; thermal is a readout). `a_max = 2ηP/(vₑ·m)`.
@@ -62,9 +76,16 @@ locked by a permanent integration test suite before more gameplay is layered on.
   background floor (range goes sky-limited once the signal noise is
   background-dominated). Still single-band with no explicit integration time or
   SNR>1 threshold — refine for a fully defensible SNR-vs-range curve.
-- **Aerobraking / aerocapture**; surface operations; landing.
-- Minor fidelity: EMB-vs-Earth-centre ~4671 km offset; Moon two-body precession
-  drift over years.
+- **Landing / takeoff** — DONE (first cut): a calibrated gravity-turn ascent Δv
+  budget through real exponential atmospheres + an aerobraking descent model, with
+  in-sim land/launch. Still to do: full aerocapture trajectories, a co-rotating
+  landed-ship position (the landed state is a surface-skimming placeholder today),
+  and atmospheric-entry heating.
+- **More bodies** — DONE: 37 bodies (dwarfs, asteroids, gas-giant & other moons)
+  on the new fixed-J2000-conic (`FixedHelioRow`) + `MoonRow` paths, Horizons-checked.
+  Still to do: irregular-moon precession, more TNOs/asteroids, and comets.
+- Minor fidelity: EMB-vs-Earth-centre ~4671 km offset; Moon & small-body two-body
+  precession drift over years; the Pluto–Charon barycentre approximation.
 
 ## Consciously-deferred audit notes (non-blocking, already judged)
 

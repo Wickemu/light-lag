@@ -30,11 +30,18 @@ that no amount of engineering can wish away.
 
 **Phase 1 complete** — a deterministic physics core and a flyable, to-scale 3D Solar System.
 
-- Real JPL Standish ephemeris for all 8 planets + the Moon; analytic Keplerian propagation that
-  is exact at any time-warp.
+- Real JPL ephemeris for **37 bodies** — the 8 planets, the dwarf planets (Ceres, Pluto, Eris,
+  Haumea, Makemake), major asteroids (Vesta, Pallas), and the gas-giant & other moons (Galileans,
+  Titan + six Saturnians, five Uranians, Triton, Phobos/Deimos, Charon); analytic Keplerian
+  propagation exact at any time-warp, cross-checked to machine precision at J2000 vs Horizons.
+- **Landing & takeoff** Δv/propellant budgeting: a calibrated gravity-turn ascent through real
+  exponential atmospheres (Earth→LEO ≈ 9.3 km/s, Moon ≈ 1.9, Mars ≈ 4.0), aerobraking on descent.
+- **Interstellar** first steps: a relativistic propulsion layer (rapidity rocket equation +
+  constant-proper-accel brachistochrone), the ~27 nearest star systems, a transit estimator, and
+  an in-sim flyable flip-and-burn where the crew clock and Earth clock visibly diverge.
 - Floating-origin + logarithmic-depth rendering for solar-system-scale precision in float32.
 - Time warp from real-time to 1 yr/s, a live calendar, body focus, and physics readouts
-  (orbital period, heliocentric speed, one-way light-time from Earth).
+  (orbital period, heliocentric speed, surface gravity/escape velocity, one-way light-time).
 
 See `docs`/the design plan for the full roadmap (ship design & the rocket equation → transfer
 planning & windows → patched conics & capture → light-lag command → thermal & detection →
