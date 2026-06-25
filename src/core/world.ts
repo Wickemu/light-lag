@@ -31,6 +31,22 @@ export interface ShipBurn {
   dvDone: number; // m/s delivered so far (integrated ∫ F/m dt)
 }
 
+/**
+ * An in-progress interstellar crossing: a constant-proper-acceleration
+ * flip-and-burn (brachistochrone) from `startPos` to a star. The trajectory is
+ * ANALYTIC (closed-form distance-vs-coordinate-time), so it is exact at any
+ * time-warp, like the planetary ephemeris. `tau` on the ship advances by the
+ * dilated PROPER time over the leg — the relativistic seam the tau field was
+ * always kept for.
+ */
+export interface InterstellarLeg {
+  targetStar: string;
+  tDepart: number; // coordinate time of departure (s since J2000)
+  tArrive: number; // coordinate time of arrival
+  properAccel: number; // constant proper acceleration a (m/s²)
+  startPos: Vec3; // departure position in the root (ecliptic-J2000) frame (m)
+}
+
 /** A planned/active interplanetary transfer (Lambert leg to another body). */
 export interface ShipTransfer {
   targetId: string;
@@ -69,6 +85,9 @@ export interface Ship {
   burn?: ShipBurn;
   /** A planned or in-progress interplanetary transfer. */
   transfer?: ShipTransfer;
+  /** An in-progress interstellar crossing. While set, the ship's position is the
+   *  analytic brachistochrone trajectory in the root frame (primary is "sun"). */
+  interstellarLeg?: InterstellarLeg;
   /** Set when the ship has touched down on a body's surface (after paying the
    *  descent Δv). While landed it is parked on a surface-skimming orbit as a
    *  visual placeholder; the flag drives the UI (offer Launch, not Land) and the

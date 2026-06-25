@@ -11,14 +11,16 @@ import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir } from "../core/world.ts";
 import { type Stage, exhaustVelocity } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
-import { shipOsculatingElements, activeStage, totalMass, applyImpulsiveDv } from "../core/ships.ts";
+import { shipOsculatingElements, shipWorldState, activeStage, totalMass, applyImpulsiveDv } from "../core/ships.ts";
+import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
+import { STAR_BY_ID } from "../core/stars.ts";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
 } from "../core/surface.ts";
 import { bodyState } from "../core/ephemeris.ts";
 import { lambert } from "../core/maneuver/lambert.ts";
 import { length, sub } from "../core/math/vec3.ts";
-import { BODY_BY_ID, DEG, MU_SUN, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
+import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 
 export interface ShipDesign {
   name: string;
@@ -141,6 +143,48 @@ export function shipSurfaceParams(ship: Ship, body: { mu: number; radius: number
   const gSurf = body.mu / (body.radius * body.radius);
   const twr = stage ? stage.thrust / (totalMass(ship) * gSurf) : 1;
   return { parkingAlt, twr, ...(ve !== undefined ? { exhaustVelocity: ve } : {}) };
+}
+
+/**
+ * Dispatch a ship on a constant-proper-acceleration interstellar crossing to a
+ * star: a flip-and-burn flown ANALYTICALLY in-sim (watch it cross over years,
+ * with the comms light-lag stretching to years too). Returns the relativistic
+ * transit estimate, or null. `exhaustVelocity` (default photon-class c) sizes the
+ * mass-ratio estimate; the propellant is NOT drawn from the classical staged
+ * economy — sustained-g torchships are the relativistic regime the catalog flags
+ * (PENDING_RELATIVISTIC), so this commits the trajectory and reports what it would
+ * physically require.
+ */
+export function dispatchInterstellar(
+  sim: Simulation,
+  shipId: string,
+  starId: string,
+  properAccel: number,
+  exhaustVelocity: number = C,
+): InterstellarTransit | null {
+  const ship = sim.world.ships.get(shipId);
+  const star = STAR_BY_ID.get(starId);
+  if (!ship || !star || ship.mode !== "coast" || ship.landed || properAccel <= 0) return null;
+  const transit = torchTransit({ exhaustVelocity, properAccel }, star);
+  if (!transit) return null;
+
+  const t = sim.world.t;
+  const startPos = shipWorldState(ship, t).r;
+  ship.interstellarLeg = {
+    targetStar: starId,
+    tDepart: t,
+    tArrive: t + transit.coordinateTimeYr * JULIAN_YEAR,
+    properAccel,
+    startPos,
+  };
+  ship.transfer = undefined;
+  ship.primary = "sun";
+  ship.mode = "coast";
+  ship.r = undefined;
+  ship.v = undefined;
+  ship.elements = undefined;
+  ship.epoch = t;
+  return transit;
 }
 
 export interface SurfaceOp {

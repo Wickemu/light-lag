@@ -10,7 +10,7 @@
  * SI throughout: mass kg, velocity m/s, thrust N, Isp s, power W.
  */
 
-import { G0 } from "./constants.ts";
+import { C, G0 } from "./constants.ts";
 
 /** A propulsion stage: its own structure (dry) and propellant, plus its engine. */
 export interface Stage {
@@ -85,4 +85,81 @@ export function initialTWR(stages: Stage[], payload: number): number {
   if (stages.length === 0) return 0;
   const wet = payload + stages.reduce((s, st) => s + st.dryMass + st.propMass, 0);
   return stages[0]!.thrust / (wet * G0);
+}
+
+// ── Relativistic propulsion ──────────────────────────────────────────────────
+//
+// At a meaningful fraction of c, classical Tsiolkovsky badly mispredicts the
+// mass ratio (and ignores time dilation). The honest relativistic forms below sit
+// ALONGSIDE the classical ones — they reduce to them exactly at v≪c, ve≪c (locked
+// by a test). Velocities add as RAPIDITIES φ = c·atanh(v/c), which is why the
+// relativistic rocket equation is Tsiolkovsky in rapidity space. Exact special
+// relativity; no approximation. All quantities are stable to v→c (built from
+// atanh/tanh/asinh, never differences of nearly-equal large numbers).
+
+/** Rapidity φ = c·atanh(v/c) (m/s-dimensioned, so it composes with vₑ). */
+export function rapidity(v: number): number {
+  return C * Math.atanh(v / C);
+}
+
+/** Velocity from a rapidity: v = c·tanh(φ/c). Always < c. */
+export function velocityFromRapidity(phi: number): number {
+  return C * Math.tanh(phi / C);
+}
+
+/** Lorentz factor γ = 1/√(1 − (v/c)²). */
+export function lorentzFactor(v: number): number {
+  return 1 / Math.sqrt(1 - (v / C) * (v / C));
+}
+
+/** Relativistic rocket equation: the mass ratio m₀/m_f to add a velocity change
+ *  of rapidity Δφ at exhaust velocity vₑ. m₀/m_f = exp(Δφ/vₑ). Reduces to the
+ *  classical e^(Δv/vₑ) when Δv ≪ c (then Δφ ≈ Δv). */
+export function relativisticMassRatio(ve: number, dvRapidity: number): number {
+  return Math.exp(dvRapidity / ve);
+}
+
+/** Velocity reached by burning from wet mass m₀ to dry mass m_f at exhaust
+ *  velocity vₑ ≤ c: v = c·tanh((vₑ/c)·ln(m₀/m_f)). Caps at c for any finite mass
+ *  ratio; the photon-rocket boundary vₑ = c is finite and sane. */
+export function relativisticBurnVelocity(ve: number, m0: number, mf: number): number {
+  return C * Math.tanh((ve / C) * Math.log(m0 / mf));
+}
+
+export interface RelAccelLeg {
+  t: number; // coordinate (rest-frame) time of the leg (s)
+  tau: number; // proper (ship-frame) time of the leg (s)
+  v: number; // speed at the end of the leg (m/s)
+  gamma: number; // Lorentz factor at the end of the leg
+}
+
+/** A single leg of constant PROPER acceleration `a` (m/s²) from rest over a
+ *  rest-frame distance `d` (m). Exact constant-acceleration SR:
+ *    t = √((d/c)² + 2d/a),  γ = 1 + a·d/c²,  v = c·√(1 − 1/γ²),  τ = (c/a)·asinh(a·t/c). */
+export function relAccelLeg(a: number, d: number): RelAccelLeg {
+  const t = Math.sqrt((d / C) * (d / C) + (2 * d) / a);
+  const gamma = 1 + (a * d) / (C * C);
+  const v = C * Math.sqrt(1 - 1 / (gamma * gamma));
+  const tau = (C / a) * Math.asinh((a * t) / C);
+  return { t, tau, v, gamma };
+}
+
+export interface Brachistochrone {
+  coordinateTime: number; // total rest-frame time (s)
+  properTime: number; // total ship-frame (crew) time (s) — < coordinateTime
+  peakVelocity: number; // speed at the midpoint flip (m/s)
+  peakLorentz: number; // γ at the midpoint
+}
+
+/** A coast-free "torchship" crossing of distance `d` at constant proper
+ *  acceleration `a`: accelerate to the midpoint, flip, decelerate to rest —
+ *  two symmetric half-distance legs. The classic 1g-to-the-stars trajectory. */
+export function brachistochrone(a: number, d: number): Brachistochrone {
+  const leg = relAccelLeg(a, d / 2);
+  return {
+    coordinateTime: 2 * leg.t,
+    properTime: 2 * leg.tau,
+    peakVelocity: leg.v,
+    peakLorentz: leg.gamma,
+  };
 }

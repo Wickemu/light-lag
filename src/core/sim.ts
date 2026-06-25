@@ -24,6 +24,7 @@ import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius } from "./orbit.ts";
 import {
   activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
+  interstellarProperTime,
 } from "./ships.ts";
 import { exhaustVelocity } from "./propulsion.ts";
 import { stateToElements, meanMotion } from "./math/kepler.ts";
@@ -98,9 +99,26 @@ export class Simulation {
   step(dtSim: number): void {
     if (dtSim <= 0) return;
 
-    // Proper time advances with coordinate time for every ship (τ ≡ t in-system;
-    // a relativistic layer would later scale this by 1/γ).
-    for (const s of this.world.ships.values()) s.tau += dtSim;
+    // Proper time advances with coordinate time for every ship (τ ≡ t in-system).
+    // A ship on an interstellar leg ages by the DILATED proper time over the part
+    // of [t, t+dt] that overlaps the leg, and by coordinate time outside it — the
+    // relativistic divergence the τ field was always kept for. This telescopes
+    // exactly across chunkings (it is a difference of an analytic function), so
+    // determinism is preserved.
+    const T0 = this.world.t, T1 = this.world.t + dtSim;
+    for (const s of this.world.ships.values()) {
+      const leg = s.interstellarLeg;
+      if (leg) {
+        const aStart = Math.max(T0, leg.tDepart);
+        const aEnd = Math.min(T1, leg.tArrive);
+        if (aEnd > aStart) {
+          const dtau = interstellarProperTime(leg, aEnd) - interstellarProperTime(leg, aStart);
+          s.tau += dtau + (aStart - T0) + (T1 - aEnd); // proper over the leg, coordinate outside
+          continue;
+        }
+      }
+      s.tau += dtSim;
+    }
 
     const target = this.world.t + dtSim;
 

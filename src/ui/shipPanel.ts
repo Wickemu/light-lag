@@ -46,7 +46,8 @@ import {
 import { summarizeOrbit, periapsisRadius } from "../core/orbit.ts";
 import { bodyPosition } from "../core/ephemeris.ts";
 import { retardedTime } from "../core/comms.ts";
-import { BODY_BY_ID, AU, DAY } from "../core/constants.ts";
+import { STAR_BY_ID } from "../core/stars.ts";
+import { BODY_BY_ID, AU, DAY, JULIAN_YEAR } from "../core/constants.ts";
 import { formatDate } from "../core/time.ts";
 import { length } from "../core/math/vec3.ts";
 
@@ -81,6 +82,7 @@ export class ShipPanel {
   private dirRow!: HTMLElement;
   private executeBtn!: HTMLButtonElement;
   private planBtn!: HTMLButtonElement;
+  private interstellarBtn!: HTMLButtonElement;
   private surfaceEl!: HTMLElement;
   private surfaceReadout!: HTMLElement;
   private surfaceAltInput!: HTMLInputElement;
@@ -92,6 +94,7 @@ export class ShipPanel {
     private sim: Simulation,
     private sm: SceneManager,
     private onPlanTransfer?: (shipId: string) => void,
+    private onPlanInterstellar?: (shipId: string) => void,
   ) {
     this.build();
   }
@@ -170,6 +173,12 @@ export class ShipPanel {
     });
     this.planBtn.className = "wide-btn";
     this.flightEl.appendChild(this.planBtn);
+
+    this.interstellarBtn = button("Interstellar ▸", () => {
+      if (this.selectedId && this.onPlanInterstellar) this.onPlanInterstellar(this.selectedId);
+    });
+    this.interstellarBtn.className = "wide-btn";
+    this.flightEl.appendChild(this.interstellarBtn);
 
     // Surface ops — landing & takeoff Δv budgeting (shown only when the ship is
     // coasting in the SOI of a body with a surface, or already landed).
@@ -426,8 +435,20 @@ export class ShipPanel {
         lines.push(kv("Capture Δv", `${(tr.dvArrive / 1000).toFixed(2)} km/s`));
       }
     }
-    // A transfer can only be planned from a planet (not mid-flight).
-    this.planBtn.disabled = ship.primary === "sun" || (!!tr && tr.departed);
+    // Interstellar leg status.
+    const leg = ship.interstellarLeg;
+    if (leg) {
+      const starName = STAR_BY_ID.get(leg.targetStar)?.name ?? leg.targetStar;
+      const arrived = t >= leg.tArrive;
+      lines.push(kv("Interstellar", arrived
+        ? `arrived at ${starName}`
+        : `→ ${starName} · ${((leg.tArrive - t) / JULIAN_YEAR).toFixed(2)} yr left (Earth frame)`));
+      lines.push(kv("Crew clock (τ)", `${(ship.tau / JULIAN_YEAR).toFixed(2)} yr elapsed`));
+    }
+
+    // A transfer can only be planned from a planet (not mid-flight or interstellar).
+    this.planBtn.disabled = ship.primary === "sun" || !!leg || (!!tr && tr.departed);
+    this.interstellarBtn.disabled = !!leg;
 
     // Thermal & detection — there is no stealth in space.
     const th = shipThermalState(ship, t);

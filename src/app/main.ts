@@ -13,10 +13,12 @@ import { Simulation } from "../core/sim.ts";
 import { SceneManager } from "../render/SceneManager.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { ShipViews } from "../render/shipViews.ts";
+import { StarViews } from "../render/starViews.ts";
 import { CommsViews } from "../render/commsViews.ts";
 import { Hud } from "../ui/hud.ts";
 import { ShipPanel } from "../ui/shipPanel.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
+import { InterstellarPanel } from "../ui/interstellarPanel.ts";
 import { KeyboardManager } from "../ui/keyboard.ts";
 import * as commands from "./commands.ts";
 
@@ -29,11 +31,17 @@ const sim = new Simulation(world);
 const sm = new SceneManager(canvas);
 const views = new BodyViews(sm);
 const shipViews = new ShipViews(sm, uiRoot);
+const starViews = new StarViews(sm, uiRoot);
 const commsViews = new CommsViews(sm);
 const hud = new Hud(uiRoot, sim, sm);
 const transferPanel = new TransferPanel(uiRoot, sim, sm);
-const shipPanel = new ShipPanel(uiRoot, sim, sm, (shipId) => transferPanel.open(shipId));
-const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel);
+const interstellarPanel = new InterstellarPanel(uiRoot, sim, sm);
+const shipPanel = new ShipPanel(
+  uiRoot, sim, sm,
+  (shipId) => transferPanel.open(shipId),
+  (shipId) => interstellarPanel.open(shipId),
+);
+const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel, interstellarPanel);
 
 // Open on a gentle warp so the planets are visibly in motion immediately.
 sim.setWarpIndex(6); // 1 day/s
@@ -47,6 +55,7 @@ let fps = 60;
 function renderOnce(): void {
   sm.updateOrigin(world.t);
   views.update(world.t);
+  starViews.update();
   shipViews.update(world, world.t);
   commsViews.update(world, world.t);
   sm.render();
@@ -76,10 +85,12 @@ if (import.meta.env.DEV) {
     sm,
     views,
     shipViews,
+    starViews,
     commsViews,
     hud,
     shipPanel,
     transferPanel,
+    interstellarPanel,
     km,
     commands,
     renderOnce,

@@ -5,7 +5,7 @@
  * currently on — coasting or mid-burn.
  */
 
-import { type Ship } from "./world.ts";
+import { type Ship, type InterstellarLeg } from "./world.ts";
 import { type Stage, deltaVBudget, exhaustVelocity } from "./propulsion.ts";
 import {
   type State,
@@ -15,8 +15,9 @@ import {
   propagate,
 } from "./math/kepler.ts";
 import { bodyState } from "./ephemeris.ts";
-import { BODY_BY_ID } from "./constants.ts";
-import { add, addScaled, length } from "./math/vec3.ts";
+import { STAR_BY_ID } from "./stars.ts";
+import { BODY_BY_ID, C } from "./constants.ts";
+import { add, addScaled, sub, scale, normalize, length, distance } from "./math/vec3.ts";
 import { solarFlux, hullArea, equilibriumTemp, detectionRange, radiatorArea } from "./thermal.ts";
 
 /** GM of the body this ship orbits. */
@@ -47,8 +48,46 @@ export function dvRemaining(ship: Ship): number {
   return deltaVBudget(remaining, ship.payloadMass).total;
 }
 
+// ── Interstellar legs (analytic relativistic trajectory) ─────────────────────
+
+/** Distance covered along a flip-and-burn at coordinate time `tc` into a leg of
+ *  total duration T over distance D at proper acceleration a (two symmetric
+ *  halves: accelerate to the midpoint, decelerate to rest). */
+function brachDistance(a: number, D: number, T: number, tc: number): number {
+  const distAt = (tt: number) => ((C * C) / a) * (Math.sqrt(1 + ((a * tt) / C) ** 2) - 1);
+  return tc <= T / 2 ? distAt(tc) : D - distAt(T - tc);
+}
+
+/** Analytic state (root ecliptic-J2000 frame) of a ship on an interstellar leg at
+ *  coordinate time t. Exact at any time-warp — no integration. */
+export function interstellarLegState(leg: InterstellarLeg, t: number): State {
+  const target = STAR_BY_ID.get(leg.targetStar);
+  if (!target) return { r: leg.startPos, v: { x: 0, y: 0, z: 0 } };
+  const D = distance(target.pos, leg.startPos);
+  const dir = D > 0 ? normalize(sub(target.pos, leg.startPos)) : { x: 1, y: 0, z: 0 };
+  const T = leg.tArrive - leg.tDepart;
+  const a = leg.properAccel;
+  const tc = Math.max(0, Math.min(t, leg.tArrive) - leg.tDepart);
+  const d = brachDistance(a, D, T, tc);
+  const speedAt = (tt: number) => (a * tt) / Math.sqrt(1 + ((a * tt) / C) ** 2);
+  const speed = tc <= T / 2 ? speedAt(tc) : speedAt(T - tc);
+  return { r: add(leg.startPos, scale(dir, d)), v: scale(dir, speed) };
+}
+
+/** Proper (crew) time elapsed since departure at coordinate time t — the dilated
+ *  clock the ship's `tau` advances by while on the leg. */
+export function interstellarProperTime(leg: InterstellarLeg, t: number): number {
+  const T = leg.tArrive - leg.tDepart;
+  const a = leg.properAccel;
+  const tc = Math.max(0, Math.min(t, leg.tArrive) - leg.tDepart);
+  const tauAt = (tt: number) => (C / a) * Math.asinh((a * tt) / C);
+  if (tc <= T / 2) return tauAt(tc);
+  return 2 * tauAt(T / 2) - tauAt(T - tc); // symmetric deceleration half
+}
+
 /** State of the ship relative to its primary (the Earth-centred frame, etc.). */
 export function shipRelativeState(ship: Ship, t: number): State {
+  if (ship.interstellarLeg) return interstellarLegState(ship.interstellarLeg, t);
   if (ship.mode === "thrust" && ship.r && ship.v) {
     // Linear extrapolation from the integrated state's valid time, so callers
     // that query a different time (the light-lag chase, retarded telemetry) get
@@ -109,8 +148,13 @@ export function applyImpulsiveDv(ship: Ship, dv: number): boolean {
   return true;
 }
 
-/** The osculating Keplerian orbit the ship is on right now (about its primary). */
+/** The osculating Keplerian orbit the ship is on right now (about its primary).
+ *  An interstellar ship is not on a closed orbit; callers should check
+ *  ship.interstellarLeg first — this returns a far placeholder to avoid crashing. */
 export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
+  if (ship.interstellarLeg) {
+    return { a: length(interstellarLegState(ship.interstellarLeg, t).r), e: 0, i: 0, Omega: 0, omega: 0, M: 0 };
+  }
   const mu = primaryMu(ship);
   if (ship.mode === "thrust" && ship.r && ship.v) {
     // Honour the requested time: linearly extrapolate the integrated state from
