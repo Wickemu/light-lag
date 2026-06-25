@@ -1,8 +1,10 @@
 # LIGHTLAG — roadmap
 
-**Status:** Phases 1–6 complete and adversarially audited. The reusable physics
-engine is `src/core/` (see [ARCHITECTURE.md](ARCHITECTURE.md)); 178 passing
-physics/sim tests.
+**Status:** Phases 1–6 complete and adversarially audited; core-physics hardening
+pass underway. The reusable physics engine is `src/core/` (see
+[ARCHITECTURE.md](ARCHITECTURE.md)); 220 passing physics/sim tests — now including
+a JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
+invariants, and a golden-state determinism hash.
 
 Built so far: real ephemeris + Keplerian orbits, the rocket equation + staging +
 RK4 powered flight, transfer planning (Lambert / Hohmann / porkchop / real launch
@@ -53,9 +55,10 @@ locked by a permanent integration test suite before more gameplay is layered on.
   3000 BC–3000 AD table trades in-window precision for range, and the engine's
   era is the 21st century, where the 1800–2050 model is more accurate (confirmed
   vs Horizons). Worth revisiting only if far-future/ancient play is prioritized.
-- **Detection model**: single-band IR + reflected; sensor NEP/aperture is a
-  calibration scale (no integration time / zodiacal+CMB background floor) — fold
-  in for a defensible SNR=1 range.
+- **Detection model**: single-band IR + reflected, now with a zodiacal+CMB
+  background floor (range goes sky-limited once the signal noise is
+  background-dominated). Still single-band with no explicit integration time or
+  SNR>1 threshold — refine for a fully defensible SNR-vs-range curve.
 - **Aerobraking / aerocapture**; surface operations; landing.
 - Minor fidelity: EMB-vs-Earth-centre ~4671 km offset; Moon two-body precession
   drift over years.

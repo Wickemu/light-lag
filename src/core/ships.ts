@@ -128,7 +128,11 @@ const THERMAL_PARAMS = {
   driveEfficiency: 0.6, // useful jet fraction; (1−η)/η of the jet is waste heat to reject
   radiatorTempK: 1000, // assumed drive-radiator operating temperature
 };
-const SENSOR = { apertureM2: 1, nepW: 1e-15 };
+// A reference watching telescope. `nepW` is the detector noise floor; `bgFloorW`
+// is the in-beam zodiacal-IR + CMB background power for this aperture — once the
+// signal noise is background-dominated, range is sky-limited, not detector-limited
+// (a documented calibration; the 1/√ falloff itself is exact).
+const SENSOR = { apertureM2: 1, nepW: 1e-15, bgFloorW: 1e-14 };
 
 export interface ShipThermal {
   distanceFromSun: number; // m
@@ -195,7 +199,7 @@ export function shipThermalState(ship: Ship, t: number): ShipThermal {
     driveWasteW,
     radiatorAreaM2: driveWasteW > 0 ? radiatorArea(driveWasteW, radiatorTempK) : 0,
     signatureW,
-    detectionRangeM: detectionRange(signatureW, SENSOR.apertureM2, SENSOR.nepW),
+    detectionRangeM: detectionRange(signatureW, SENSOR.apertureM2, SENSOR.nepW, SENSOR.bgFloorW),
     thrusting: ship.mode === "thrust",
   };
 }

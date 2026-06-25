@@ -9,21 +9,10 @@ import { computePorkchop } from "./maneuver/porkchop.ts";
 import { bodyState } from "./ephemeris.ts";
 import { distance } from "./math/vec3.ts";
 import { BODY_BY_ID, DAY } from "./constants.ts";
+import { flyUntilCoast } from "./test-helpers.ts";
 
 const MU_EARTH = BODY_BY_ID.get("earth")!.mu;
 const R_EARTH = BODY_BY_ID.get("earth")!.radius;
-
-/** Run the sim until a (light-lagged) burn order is delivered and completes.
- *  Burns are now commands that propagate at c, so for a LEO ship there is a tiny
- *  (~0.02 s) delivery delay before thrust begins; wait that out too. */
-function flyUntilCoast(sim: Simulation, shipId: string): void {
-  const ship = sim.world.ships.get(shipId)!;
-  const commandInFlight = (): boolean =>
-    sim.world.messages.some((m) => m.kind === "command" && m.targetId === shipId);
-  let guard = 0;
-  while ((ship.mode === "thrust" || commandInFlight()) && guard++ < 200000) sim.step(10);
-  if (ship.mode === "thrust") throw new Error("burn never completed");
-}
 
 describe("finite-thrust prograde burn", () => {
   it("raises apoapsis, keeps the burn point as periapsis, and spends propellant per Tsiolkovsky", () => {

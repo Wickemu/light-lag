@@ -62,6 +62,19 @@ describe("detection — no stealth in space", () => {
     expect(r1).toBeGreaterThan(0);
     expect(r2 / r1).toBeCloseTo(2, 3); // 4× power → 2× range
   });
+
+  it("a sky background floor makes detection background-limited, not detector-limited", () => {
+    const sig = 3e4; // a cold ~30 kW hull
+    const detectorLimited = detectionRange(sig, 1, 1e-15); // NEP only
+    const skyLimited = detectionRange(sig, 1, 1e-15, 1e-14); // floor 10× the NEP dominates
+    // The floor shortens the achievable range — a better detector buys nothing.
+    expect(skyLimited).toBeLessThan(detectorLimited);
+    expect(skyLimited / detectorLimited).toBeCloseTo(1 / Math.sqrt(10), 3); // √(NEP/floor)
+    // Under the SAME floor a thrusting drive still vastly outshines the cold hull;
+    // the floor cancels in the ratio, so the √(signature) law is preserved.
+    const drive = detectionRange(1e9, 1, 1e-15, 1e-14);
+    expect(drive / skyLimited).toBeCloseTo(Math.sqrt(1e9 / sig), 3);
+  });
 });
 
 describe("hull geometry", () => {

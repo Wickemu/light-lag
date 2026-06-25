@@ -55,13 +55,21 @@ export function irradiance(P: number, d: number): number {
 
 /**
  * Maximum range (m) at which a source radiating `signatureW` is detectable by a
- * telescope of collecting area `aperture` (m²) with noise-equivalent power `nep`
- * (W): the distance at which collected power falls to the noise floor.
- *   d_max = √( P·A_tel / (4π·NEP) )
+ * telescope of collecting area `aperture` (m²): the distance at which the
+ * collected power falls to the limiting noise power.
+ *   d_max = √( P·A_tel / (4π·N) )
+ *
+ * The limiting noise N is the GREATER of the detector's own noise-equivalent
+ * power `nep` and an astrophysical `backgroundFloorW` — the in-beam zodiacal-IR +
+ * CMB photon background a real sensor integrates against and cannot null out.
+ * Past that floor the sensor is background-limited, not detector-limited, so a
+ * perfect detector buys nothing: the sky itself sets the range. Default 0 keeps
+ * the pure detector-limited behaviour.
  */
-export function detectionRange(signatureW: number, aperture: number, nep: number): number {
+export function detectionRange(signatureW: number, aperture: number, nep: number, backgroundFloorW = 0): number {
   if (signatureW <= 0) return 0;
-  return Math.sqrt((signatureW * aperture) / (4 * Math.PI * nep));
+  const noise = Math.max(nep, backgroundFloorW);
+  return Math.sqrt((signatureW * aperture) / (4 * Math.PI * noise));
 }
 
 /** Radiating/cross-section area (m²) of a ship of mass m, modelled as a sphere of
