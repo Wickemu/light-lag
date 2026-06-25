@@ -1,10 +1,13 @@
 # LIGHTLAG — roadmap
 
-**Status:** Phases 1–6 complete and adversarially audited; core-physics hardening
-pass underway. The reusable physics engine is `src/core/` (see
-[ARCHITECTURE.md](ARCHITECTURE.md)); 220 passing physics/sim tests — now including
-a JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
-invariants, and a golden-state determinism hash.
+**Status:** Phases 1–6 complete; core-physics hardening pass complete (ephemeris
+tightening + Horizons cross-check, integration-invariant suite, golden-state
+determinism, and an adversarial cross-subsystem audit with its confirmed findings
+fixed). The reusable physics engine is `src/core/` (see
+[ARCHITECTURE.md](ARCHITECTURE.md)); 227 passing physics/sim tests — including a
+JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
+(entry **and** egress) invariants, off-nominal flyby + abort handling, and a
+golden-state determinism hash.
 
 Built so far: real ephemeris + Keplerian orbits, the rocket equation + staging +
 RK4 powered flight, transfer planning (Lambert / Hohmann / porkchop / real launch
@@ -67,6 +70,11 @@ locked by a permanent integration test suite before more gameplay is layered on.
 
 - comms: control node treated as fixed during light-travel (O(v/c), ~0.13 s at
   Earth–Mars max range).
+- comms: a command's light-arrival time is solved once at emission and not
+  re-solved if the ship's path is later mutated in flight (a second delivered
+  burn, or an SOI patch). The firing-instant drift is O(δr/c) — sub-millisecond
+  at in-system speeds — and the burn still executes against the ship's real live
+  state, so only the timing (not the physics or Δv) is slightly stale.
 - `arrival.ts`: aim bisection returns the smallest achievable periapsis if the
   requested one is below reachable (a safe over-shoot).
 - Equal-time event tie-break is insertion order (deterministic for current

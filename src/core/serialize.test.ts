@@ -45,6 +45,30 @@ describe("canonical serialization", () => {
     expect(s).not.toContain("burn");
   });
 
+  it("revives non-finite numbers instead of leaving string tokens in numeric slots", () => {
+    const w = createWorld(1, 0);
+    const s = mkShip("p");
+    s.elements!.a = Infinity; // a parabolic orbit (a = −μ/2ε → ∞ at e=1)
+    s.tau = NaN;
+    w.ships.set("p", s);
+
+    const out = serializeWorld(w);
+    const w2 = deserializeWorld(out);
+    const r = w2.ships.get("p")!;
+    expect(r.elements!.a).toBe(Infinity); // not the string "Inf"
+    expect(Number.isNaN(r.tau)).toBe(true);
+    // Idempotent: re-serializing must not crash on a token and must be stable.
+    expect(serializeWorld(w2)).toBe(out);
+    expect(hashWorld(w2)).toBe(hashWorld(w));
+  });
+
+  it("does not misconvert a string field that happens to equal a token", () => {
+    const w = createWorld(1, 0);
+    w.ships.set("x", { ...mkShip("x"), name: "Inf" });
+    const w2 = deserializeWorld(serializeWorld(w));
+    expect(w2.ships.get("x")!.name).toBe("Inf"); // stays a string, not Infinity
+  });
+
   it("round-trips through deserialize and is hash-stable", () => {
     const w = createWorld(7, 12345);
     w.ships.set("a", mkShip("a"));

@@ -21,17 +21,17 @@
 import { type WorldState, type Ship, type ShipCommand, type BurnDir } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
-import { orbitFrame, hyperbolicBurnDv, periapsisRadius } from "./orbit.ts";
+import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius } from "./orbit.ts";
 import {
-  activeStage, applyImpulsiveDv, shipOsculatingElements, shipRelativeState, shipWorldState,
+  activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
 } from "./ships.ts";
 import { exhaustVelocity } from "./propulsion.ts";
 import { stateToElements, meanMotion } from "./math/kepler.ts";
-import { bodyState } from "./ephemeris.ts";
+import { bodyState, bodyElements } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
 import { aimArrival } from "./maneuver/arrival.ts";
 import { BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
-import { type Vec3, sub, scale, normalize, length, cross } from "./math/vec3.ts";
+import { type Vec3, add, sub, scale, normalize, length, cross } from "./math/vec3.ts";
 
 /** Sub-step grid spacing during powered flight (s). LEO period is ~5500 s, so a
  *  2 s grid keeps RK4 trajectory error negligible. */
@@ -49,6 +49,13 @@ export class Simulation {
 
   constructor(world: WorldState) {
     this.world = world;
+    // Re-seed the message-id counter past any ids already present (e.g. a world
+    // restored from a save), so a reconstructed sim never re-mints a live id and
+    // mis-delivers via deliverMessage's id lookup.
+    for (const m of world.messages) {
+      const n = Number(m.id.replace(/^msg-/, ""));
+      if (Number.isFinite(n) && n >= this.msgCounter) this.msgCounter = n + 1;
+    }
   }
 
   get warp(): number {
@@ -265,6 +272,7 @@ export class Simulation {
     switch (ev.kind) {
       case "transfer-depart": this.executeDeparture(ship, ev.t); break;
       case "soi-crossing": this.enterSoi(ship); break;
+      case "soi-exit": this.exitSoi(ship); break;
       case "capture": this.captureAtPeriapsis(ship); break;
       default: break;
     }
@@ -318,9 +326,12 @@ export class Simulation {
   }
 
   /** Begin a finite-thrust burn (the mutation behind a delivered burn command).
-   *  Returns false (rejected) if it cannot start — e.g. already mid-burn. */
+   *  Returns false (rejected → NACK) if it cannot start: already mid-burn, or the
+   *  commanded engine Δv exceeds the ship's remaining budget (a burn it could not
+   *  complete should be honestly refused, not run dry and falsely acknowledged). */
   private applyBurn(ship: Ship, dv: number, dir: BurnDir): boolean {
     if (dv <= 0 || ship.mode === "thrust") return false;
+    if (dv > dvRemaining(ship)) return false; // can't finish the commanded Δv → NACK
     const state = shipRelativeState(ship, this.world.t);
     ship.r = state.r;
     ship.v = state.v;
@@ -366,18 +377,27 @@ export class Simulation {
     const depState = bodyState(depBody, t);
     const rCapture = target.radius + DEFAULT_CAPTURE_ALT;
     const aim = aimArrival(depBody, target, t, tr.tArrive, rCapture);
-    tr.departed = true;
-    if (!aim) return; // degenerate geometry; abort the injection
+    if (!aim) return; // degenerate geometry; leave the transfer un-departed so it can be re-planned
 
     // Oberth-aware injection from the current parking orbit (see Phase-3 audit).
     const vInf = length(sub(aim.v1, depState.v));
     const parkEl = shipOsculatingElements(ship, t);
     const rPark = periapsisRadius(parkEl.a, parkEl.e);
     const dv = hyperbolicBurnDv(vInf, depBody.mu, rPark);
-    if (!applyImpulsiveDv(ship, dv)) return; // can't afford injection — stay in parking orbit
+    if (!applyImpulsiveDv(ship, dv)) return; // can't afford injection — stay in parking orbit, un-departed
+
+    // The injection is committed: only NOW has the ship actually left the parking
+    // orbit, so mark departed here (not before the guards) — an aborted injection
+    // must leave departed=false so the transfer stays re-plannable, not soft-locked.
+    tr.departed = true;
     tr.dvDepart = dv;
 
-    // Onto the heliocentric transfer toward the aim point.
+    // Onto the heliocentric transfer toward the aim point. This is the documented
+    // SOI-as-point DEPARTURE idealization: the ship is seeded on the heliocentric
+    // conic from the departure body's CENTRE with the Lambert velocity, dropping
+    // the parking-orbit offset (~rPark, a few thousand km ≈ 3e-5 of 1 AU, below the
+    // ephemeris error at heliocentric scale) and the brief SOI-escape arc. Only
+    // ARRIVAL SOI continuity is modelled (see enterSoi/exitSoi); see ROADMAP.
     ship.primary = "sun";
     ship.mode = "coast";
     ship.r = undefined;
@@ -413,16 +433,71 @@ export class Simulation {
     ship.epoch = t;
     tr.inSoi = true;
 
-    // Only an inbound hyperbola (e > 1, pre-periapsis) can be captured at a
-    // future periapsis. Anything else is an off-nominal arrival: leave the ship
-    // on its real relative trajectory (a flyby) rather than fake a capture.
+    // Only an inbound hyperbola (e > 1, pre-periapsis) is captured at a future
+    // periapsis. Anything else is an off-nominal arrival — a flyby: the ship is
+    // merely passing through the SOI, so schedule its EGRESS and re-patch back to
+    // a heliocentric conic when it leaves, rather than stranding it on a
+    // target-centred conic forever (which would fly it to infinity about the
+    // target while only the target's bounded position is added back).
     const el = ship.elements;
-    if (el.e <= 1 || el.M >= 0) return;
+    if (el.e <= 1 || el.M >= 0) {
+      // Schedule the outbound SOI crossing from the conic GEOMETRY (robust to the
+      // mean-anomaly wrapping convention: elliptic M is wrapped to [0,2π) while
+      // hyperbolic M is signed). The mean anomaly magnitude at r = rSoi is a
+      // geometric quantity; an inbound arrival reaches it again after dipping to
+      // periapsis (Δt = 2·Mᵣ/n by symmetry), an already-outbound one egresses now.
+      const parentMu = target.parent ? BODY_BY_ID.get(target.parent)!.mu : MU_SUN;
+      const rSoi = soiRadius(bodyElements(target, t)!.a, target.mu, parentMu);
+      const n = meanMotion(el.a, target.mu);
+      const inbound = rRel.x * vRel.x + rRel.y * vRel.y + rRel.z * vRel.z < 0;
+      let dt = 0;
+      if (inbound) {
+        if (el.e < 1) {
+          const cosE = Math.max(-1, Math.min(1, (1 - rSoi / el.a) / el.e));
+          const E = Math.acos(cosE);
+          dt = (2 * (E - el.e * Math.sin(E))) / n;
+        } else {
+          const coshF = Math.max(1, (1 - rSoi / el.a) / el.e); // a<0 ⇒ argument > 1
+          const F = Math.acosh(coshF);
+          dt = (2 * (el.e * Math.sinh(F) - F)) / n;
+        }
+      }
+      this.events.push({ t: t + dt, kind: "soi-exit", entityId: ship.id });
+      return;
+    }
 
     // Schedule the capture at periapsis (time-to-periapsis = −M/n for M < 0).
     const n = meanMotion(el.a, target.mu);
     const tPeri = t + -el.M / n;
     this.events.push({ t: tPeri, kind: "capture", entityId: ship.id });
+  }
+
+  /**
+   * Sphere-of-influence EGRESS for an uncaptured flyby: the mirror of enterSoi.
+   * Switch the reference body back to the Sun using the CONTINUOUS relative state
+   * vector (so world position/velocity stay continuous across the patch) and
+   * re-derive the heliocentric conic. Without this a flyby would propagate as an
+   * isolated orbit about the target forever — physically false once it leaves the
+   * SOI and solar gravity again dominates.
+   */
+  private exitSoi(ship: Ship): void {
+    const tr = ship.transfer;
+    if (!tr || !tr.inSoi || tr.arrived) return; // captured ships never egress
+    if (ship.primary === "sun") return;
+    const target = BODY_BY_ID.get(ship.primary);
+    if (!target) return;
+
+    const t = this.world.t;
+    const rel = shipRelativeState(ship, t); // continuous target-relative state at egress
+    const tgt = bodyState(target, t);
+
+    ship.primary = "sun";
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = stateToElements(add(rel.r, tgt.r), add(rel.v, tgt.v), MU_SUN);
+    ship.epoch = t;
+    tr.inSoi = false; // back on a heliocentric conic — the flyby continues correctly
   }
 
   /**

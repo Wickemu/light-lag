@@ -95,7 +95,10 @@ export function applyImpulsiveDv(ship: Ship, dv: number): boolean {
     const m0 = totalMass(ship);
     const stageCapacity = ve * Math.log(m0 / (m0 - stage.propMass));
     if (stageCapacity >= remaining) {
-      stage.propMass -= m0 * (1 - Math.exp(-remaining / ve));
+      // Clamp at zero: at the affordability boundary the closed-form propellant can
+      // round microscopically past propMass, which must never leave a negative tank
+      // (mirrors the finite-thrust path's Math.max in sim.advanceThrustShip).
+      stage.propMass = Math.max(stage.propMass - m0 * (1 - Math.exp(-remaining / ve)), 0);
       remaining = 0;
     } else {
       remaining -= stageCapacity;
@@ -110,7 +113,11 @@ export function applyImpulsiveDv(ship: Ship, dv: number): boolean {
 export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
   const mu = primaryMu(ship);
   if (ship.mode === "thrust" && ship.r && ship.v) {
-    return stateToElements(ship.r, ship.v, mu);
+    // Honour the requested time: linearly extrapolate the integrated state from
+    // its epoch (the same acknowledged second-order approximation shipRelativeState
+    // uses), so a retarded-time / light-lag query gets the orbit at t, not at epoch.
+    const dt = t - (ship.epoch ?? t);
+    return stateToElements(addScaled(ship.r, ship.v, dt), ship.v, mu);
   }
   const epoch = ship.epoch ?? 0;
   return propagate(ship.elements!, mu, t - epoch);

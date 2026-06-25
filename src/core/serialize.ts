@@ -9,10 +9,18 @@
  *     the output is independent of Map iteration/insertion history.
  *  2. Floating-point results that are mathematically equal can differ in the
  *     last ULP depending on evaluation order. We QUANTIZE every number to 12
- *     significant figures — far below any physical tolerance, comfortably above
- *     integrator/round-off jitter — so the same physical state always hashes
+ *     significant figures — far below any physical tolerance, above last-ULP /
+ *     evaluation-order noise — so a state that is genuinely the same hashes
  *     identically. `q` is idempotent, so re-serializing a deserialized world is
- *     stable.
+ *     stable (and non-finite values round-trip via the reviver in deserialize).
+ *
+ * Scope of the chunk-invariance guarantee: two runs that reach the SAME physical
+ * state hash identically. That makes hashWorld a determinism oracle across
+ * arbitrary time-chunkings ONLY in the analytic/impulsive regime (coast +
+ * impulsive maneuvers are exact regardless of chunking — see the golden
+ * scenario). It is NOT an oracle across different chunkings of an active
+ * finite-thrust burn: RK4 truncation makes those states differ by ~metres, which
+ * is many quanta, so they are legitimately different states and hash differently.
  *
  * Pure; depends only on world types.
  */
@@ -146,16 +154,36 @@ export function hashWorld(world: WorldState): string {
   return cyrb53(serializeWorld(world));
 }
 
+/** String-valued field names in the serialized form. A JSON reviver uses this to
+ *  restore the non-finite tokens q() emits into NUMERIC fields only, so a string
+ *  field that happens to equal a token (e.g. a ship named "Inf") is left alone. */
+const STRING_KEYS = new Set([
+  "id", "name", "primary", "mode", "targetId", "shipId", "label", "kind", "dir", "type", "controlNode",
+]);
+
+/** Inverse of q()'s non-finite tokens, applied during JSON.parse. */
+function reviveNonFinite(key: string, value: unknown): unknown {
+  if (typeof value === "string" && !STRING_KEYS.has(key)) {
+    if (value === "NaN") return NaN;
+    if (value === "Inf") return Infinity;
+    if (value === "-Inf") return -Infinity;
+  }
+  return value;
+}
+
 /**
  * Rebuild a WorldState from `serializeWorld` output (Phase-8 save/load
  * foundation). Values are quantized (≤12 sig figs, sub-metre) and the round-trip
- * is hash-stable. NOTE: this restores the world only — a live `Simulation`'s
- * scheduled events (capture / SOI / message arrivals) live in its EventQueue,
- * not in WorldState, so a resumed sim must re-schedule them. That is the one
- * remaining save/load gap, to be closed in Phase 8.
+ * is hash-stable; non-finite values (e.g. a parabolic a=∞) are revived from their
+ * tokens, not left as strings in numeric slots. NOTE: this restores the world
+ * only — a live `Simulation`'s scheduled events (capture / SOI crossings &
+ * exits / message arrivals) live in its EventQueue, not in WorldState, so a
+ * resumed sim must re-schedule them. (The Simulation constructor already re-seeds
+ * its message-id counter from the restored messages.) That EventQueue
+ * re-scheduling is the one remaining save/load gap, to be closed in Phase 8.
  */
 export function deserializeWorld(s: string): WorldState {
-  const o = JSON.parse(s) as ReturnType<typeof canonicalizeWorld>;
+  const o = JSON.parse(s, reviveNonFinite) as ReturnType<typeof canonicalizeWorld>;
   const toMap = <V>(obj: unknown): Map<string, V> =>
     new Map(Object.entries(obj as Record<string, V>));
   return {

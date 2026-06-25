@@ -9,12 +9,14 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createWorld } from "./world.ts";
+import { createWorld, type Ship } from "./world.ts";
 import { Simulation } from "./sim.ts";
 import { spawnShip, defaultDesign, planTransfer } from "../app/commands.ts";
 import { shipRelativeState, shipWorldState, shipOsculatingElements, dvRemaining } from "./ships.ts";
-import { orbitalPeriod, specificEnergy } from "./orbit.ts";
-import { length, cross, distance } from "./math/vec3.ts";
+import { orbitalPeriod, specificEnergy, soiRadius } from "./orbit.ts";
+import { bodyState, bodyElements } from "./ephemeris.ts";
+import { stateToElements } from "./math/kepler.ts";
+import { length, cross, add, distance } from "./math/vec3.ts";
 import { BODY_BY_ID, DAY, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
 import { hashWorld, serializeWorld, deserializeWorld } from "./serialize.ts";
 import { marsWindow, buildGoldenScenario, flyUntilCoast } from "./test-helpers.ts";
@@ -109,6 +111,58 @@ describe("B2 — SOI patch continuity", () => {
     console.log(`B2 SOI patch discontinuity: Δr=${dR.toExponential(3)} m, Δv=${dV.toExponential(3)} m/s`);
     expect(dR).toBeLessThan(1e-3); // sub-millimetre (limited only by the elements round-trip)
     expect(dV).toBeLessThan(1e-9); // sub-nm/s
+  });
+});
+
+describe("B2b — SOI egress for an uncaptured flyby", () => {
+  it("a flyby exits the SOI and rejoins a heliocentric conic — continuous, not stranded about the target", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const mars = BODY_BY_ID.get("mars")!;
+    const t0 = 100 * DAY;
+    const m = bodyState(mars, t0);
+    const rSoi = soiRadius(bodyElements(mars, t0)!.a, mars.mu, MU_SUN);
+
+    // Enter the SOI boundary with a sub-escape relative velocity (mixed radial-in +
+    // tangential) → a BOUND relative orbit → an off-nominal (uncaptured) arrival
+    // that must fly back out rather than be propagated about Mars forever.
+    const shipR = add(m.r, { x: rSoi, y: 0, z: 0 });
+    const shipV = add(m.v, { x: -200, y: 200, z: 0 });
+    const ship: Ship = {
+      id: "fly", name: "Flyby", primary: "sun", mode: "coast",
+      elements: stateToElements(shipR, shipV, MU_SUN), epoch: t0,
+      payloadMass: 1000, stages: [{ name: "S", dryMass: 1000, propMass: 1000, isp: 300, thrust: 1e5 }],
+      activeStage: 0, tau: 0,
+      transfer: { targetId: "mars", tDepart: 0, tArrive: t0, dvDepart: 0, dvArrive: 0, departed: true, inSoi: false, arrived: false },
+    };
+    sim.world.ships.set(ship.id, ship);
+    sim.events.push({ t: t0, kind: "soi-crossing", entityId: ship.id });
+
+    // Fire the SOI entry: it enters Mars's frame but is NOT captured.
+    sim.step(t0 + 1 - sim.world.t);
+    expect(ship.primary).toBe("mars");
+    expect(ship.transfer!.inSoi).toBe(true);
+    expect(ship.transfer!.arrived).toBe(false); // a flyby, not a capture
+    const egress = sim.events.toArray().find((e) => e.kind === "soi-exit" && e.entityId === ship.id);
+    expect(egress).toBeTruthy();
+    const tExit = egress!.t;
+
+    // World state continuity across the egress patch (same instant, both frames).
+    sim.step(tExit - 1 - sim.world.t);
+    const before = shipWorldState(ship, tExit);
+    expect(ship.primary).toBe("mars");
+    sim.step(tExit + 1 - sim.world.t);
+    expect(ship.primary).toBe("sun"); // re-patched to heliocentric
+    expect(ship.transfer!.inSoi).toBe(false);
+    const after = shipWorldState(ship, tExit);
+    expect(distance(before.r, after.r)).toBeLessThan(1e-3);
+    expect(distance(before.v, after.v)).toBeLessThan(1e-9);
+
+    // It is NOT stranded flying to infinity about Mars: the heliocentric orbit is a
+    // sane inner-system conic and the ship stays at a planetary heliocentric range.
+    expect(Number.isFinite(shipOsculatingElements(ship, sim.world.t).a)).toBe(true);
+    const r = length(shipWorldState(ship, tExit + 50 * DAY).r);
+    expect(r).toBeGreaterThan(1.2e11); // > 0.8 AU
+    expect(r).toBeLessThan(4e11); // < 2.7 AU — bounded, not flung off about Mars
   });
 });
 

@@ -41,6 +41,7 @@ export type SimEventKind =
   | "burn-ignite"
   | "burn-cutoff"
   | "soi-crossing"
+  | "soi-exit"
   | "message-arrival"
   | "window-open"
   | "transfer-depart"

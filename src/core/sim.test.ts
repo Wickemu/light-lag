@@ -198,6 +198,61 @@ describe("Phase 4: SOI patched conics and Mars capture", () => {
 
     expect(ship.primary).toBe("earth"); // never left the parking orbit
     expect(dvRemaining(ship)).toBeCloseTo(dvBefore, 3); // propellant untouched
+    // And the transfer is NOT falsely marked departed — it stays re-plannable
+    // rather than soft-locking as a fabricated "in transit" state.
+    expect(ship.transfer!.departed).toBe(false);
+  });
+});
+
+describe("audit-fix regressions", () => {
+  it("rejects (NACKs) a commanded burn it cannot complete, spending no propellant", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+    const propBefore = ship.stages.reduce((s, st) => s + st.propMass, 0);
+    sim.sendCommand(id, { type: "burn", dv: 1e5, dir: "prograde" }); // far past the ~7.9 km/s budget
+    let g = 0;
+    while (sim.world.messages.some((m) => m.kind === "command") && g++ < 100000) sim.step(1);
+    // The order was delivered (consumed) but refused: no thrust, no propellant
+    // spent. (For a LEO ship the NACK round-trips back within the same sub-second
+    // step, so it isn't asserted in-flight here — see B7 for the ack/nack path.)
+    expect(ship.mode).toBe("coast"); // never started a burn it could not finish
+    expect(ship.stages.reduce((s, st) => s + st.propMass, 0)).toBe(propBefore); // no propellant spent
+  });
+
+  it("a budget-exhausting impulsive burn never leaves a negative propellant residue", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+    expect(applyImpulsiveDv(ship, dvRemaining(ship))).toBe(true); // spend the entire budget
+    for (const st of ship.stages) expect(st.propMass).toBeGreaterThanOrEqual(0);
+  });
+
+  it("shipOsculatingElements honours the query time mid-burn (not epoch-frozen)", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+    sim.sendCommand(id, { type: "burn", dv: 500, dir: "prograde" });
+    let g = 0;
+    while (ship.mode !== "thrust" && g++ < 50) sim.step(1);
+    expect(ship.mode).toBe("thrust");
+    const epoch = ship.epoch!;
+    // Epoch-frozen would return identical elements regardless of t; the fix
+    // extrapolates, so the mean anomaly advances with the query time.
+    expect(shipOsculatingElements(ship, epoch + 30).M).not.toBe(shipOsculatingElements(ship, epoch).M);
+  });
+
+  it("re-seeds the message-id counter from a restored world so ids are never reused", () => {
+    const w = createWorld(1, 0);
+    w.messages.push({
+      id: "msg-5", kind: "telemetry", fromPos: { x: 0, y: 0, z: 0 }, toPos: { x: 0, y: 0, z: 0 },
+      targetId: "earth", tEmit: 0, tArrive: 1e9, label: "restored",
+    });
+    const sim = new Simulation(w); // reconstructed from a world that already holds msg-5
+    const id = spawnShip(sim, defaultDesign());
+    sim.sendCommand(id, { type: "burn", dv: 10, dir: "prograde" });
+    const newId = sim.world.messages.map((m) => m.id).find((x) => x !== "msg-5")!;
+    expect(Number(newId.replace("msg-", ""))).toBeGreaterThan(5); // not a reused id
   });
 });
 
