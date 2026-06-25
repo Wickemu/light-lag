@@ -34,6 +34,7 @@ export class SceneManager {
   /** Body the camera is centred on; its world position is the floating origin. */
   focusId = "sun";
   private focusPos: Vec3 = vec3(0, 0, 0);
+  private focusFn: (t: number) => Vec3 = (t) => bodyPosition("sun", t);
   private theme: Theme = "dark";
   private sunLight!: THREE.PointLight;
 
@@ -118,8 +119,11 @@ export class SceneManager {
     this.scene.background = new THREE.Color(BG[theme]);
   }
 
-  setFocus(id: string): void {
+  /** Centre on an arbitrary moving world point (in metres), e.g. a ship. */
+  setFocusTarget(id: string, fn: (t: number) => Vec3, frameDistanceUnits?: number): void {
     this.focusId = id;
+    this.focusFn = fn;
+    if (frameDistanceUnits !== undefined) this.placeCamera(frameDistanceUnits);
   }
 
   /** Centre on a body and pull the camera to a sensible distance for it: a wide
@@ -127,8 +131,12 @@ export class SceneManager {
   focusBody(id: string): void {
     const def = BODY_BY_ID.get(id);
     if (!def) return;
-    this.focusId = id;
     const dist = def.kind === "star" ? 500 : Math.max(metersToUnits(def.radius) * 30, 0.02);
+    this.setFocusTarget(id, (t) => bodyPosition(id, t), dist);
+  }
+
+  /** Reposition the camera at a distance from the focus, keeping its direction. */
+  private placeCamera(dist: number): void {
     const dir = this.camera.position.clone().sub(this.controls.target);
     if (dir.lengthSq() === 0) dir.set(0, 0.5, 1);
     dir.normalize().multiplyScalar(dist);
@@ -139,7 +147,7 @@ export class SceneManager {
   /** Recompute the floating origin for the current sim time. Call once per frame
    *  before positioning any body. */
   updateOrigin(t: number): void {
-    this.focusPos = bodyPosition(this.focusId, t);
+    this.focusPos = this.focusFn(t);
     // Keep the Sun's light at the real Sun, expressed through the floating origin.
     this.sunLight.position.copy(this.toRender(bodyPosition("sun", t)));
   }

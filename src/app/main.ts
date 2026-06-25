@@ -12,16 +12,22 @@ import { createWorld } from "../core/world.ts";
 import { Simulation } from "../core/sim.ts";
 import { SceneManager } from "../render/SceneManager.ts";
 import { BodyViews } from "../render/bodyViews.ts";
+import { ShipViews } from "../render/shipViews.ts";
 import { Hud } from "../ui/hud.ts";
+import { ShipPanel } from "../ui/shipPanel.ts";
+import * as commands from "./commands.ts";
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
+const uiRoot = document.getElementById("ui-root")!;
 
 const world = createWorld();
 const sim = new Simulation(world);
 
 const sm = new SceneManager(canvas);
 const views = new BodyViews(sm);
-const hud = new Hud(document.getElementById("ui-root")!, sim, sm);
+const shipViews = new ShipViews(sm, uiRoot);
+const hud = new Hud(uiRoot, sim, sm);
+const shipPanel = new ShipPanel(uiRoot, sim, sm);
 
 // Open on a gentle warp so the planets are visibly in motion immediately.
 sim.setWarpIndex(6); // 1 day/s
@@ -35,8 +41,10 @@ let fps = 60;
 function renderOnce(): void {
   sm.updateOrigin(world.t);
   views.update(world.t);
+  shipViews.update(world, world.t);
   sm.render();
   hud.update(fps, views);
+  shipPanel.update(world.t);
 }
 
 function frame(now: number): void {
@@ -59,7 +67,10 @@ if (import.meta.env.DEV) {
     sim,
     sm,
     views,
+    shipViews,
     hud,
+    shipPanel,
+    commands,
     renderOnce,
     /** Advance sim by `s` seconds and redraw — lets tools drive frames without rAF. */
     step(s: number): void {

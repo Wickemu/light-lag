@@ -38,7 +38,8 @@ export class Hud {
   }
 
   private build(): void {
-    this.root.innerHTML = "";
+    // Note: do NOT clear this.root here — other overlays (ship labels, panels)
+    // share #ui-root and would be wiped.
 
     // Header.
     const header = el("div", "panel header");

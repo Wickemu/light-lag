@@ -13,19 +13,48 @@
 
 import { type Vec3 } from "./math/vec3.ts";
 import { type KeplerElements } from "./math/kepler.ts";
+import { type Stage } from "./propulsion.ts";
 
-/** A spacecraft. Coasting ships are an analytic conic about `primary`; thrusting
- *  ships carry an integrated state vector. (Fleshed out in later phases.) */
+/** Directions a burn can be steered in, expressed in the local orbit frame. */
+export type BurnDir =
+  | "prograde"
+  | "retrograde"
+  | "radial-out"
+  | "radial-in"
+  | "normal"
+  | "antinormal";
+
+/** An in-progress finite-thrust burn. */
+export interface ShipBurn {
+  dir: BurnDir;
+  dvTarget: number; // m/s of engine Δv to deliver
+  dvDone: number; // m/s delivered so far (integrated ∫ F/m dt)
+}
+
+/**
+ * A spacecraft. Coasting ships are an analytic conic about `primary` (evaluated
+ * from `elements` at any time, like a natural body); thrusting ships carry an
+ * integrated state vector `r,v` about `primary`. Mass lives in the staged stack.
+ */
 export interface Ship {
   id: string;
   name: string;
   primary: string; // id of the body whose SOI it is in
   mode: "coast" | "thrust";
-  /** Coast: osculating elements about `primary`. */
+  /** Coast: osculating elements about `primary`, valid at time `epoch`. */
   elements?: KeplerElements;
-  /** Thrust: integrated state about `primary`. */
+  epoch?: number; // s, the time `elements` were set
+  /** Thrust: integrated state about `primary` (valid at world.t). */
   r?: Vec3;
   v?: Vec3;
+  /** Non-propulsive mass carried to the end (habitat, cargo), kg. */
+  payloadMass: number;
+  /** Stages in firing order; index 0 fires first. Spent stages are removed. */
+  stages: Stage[];
+  /** Index of the currently firing stage (bottom-most remaining). */
+  activeStage: number;
+  /** Present only while mode === "thrust". */
+  burn?: ShipBurn;
   /** Accumulated proper time (s). Equal to coordinate time in-system; kept so an
    *  eventual relativistic expansion stays consistent. */
   tau: number;
