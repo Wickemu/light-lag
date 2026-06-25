@@ -16,7 +16,8 @@ import {
 } from "./math/kepler.ts";
 import { bodyState } from "./ephemeris.ts";
 import { BODY_BY_ID } from "./constants.ts";
-import { add, addScaled } from "./math/vec3.ts";
+import { add, addScaled, length } from "./math/vec3.ts";
+import { solarFlux, hullArea, equilibriumTemp, detectionRange } from "./thermal.ts";
 
 /** GM of the body this ship orbits. */
 export function primaryMu(ship: Ship): number {
@@ -113,4 +114,66 @@ export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
   }
   const epoch = ship.epoch ?? 0;
   return propagate(ship.elements!, mu, t - epoch);
+}
+
+// ── Thermal / power / detection ──────────────────────────────────────────────
+
+/** Default material/sensor parameters. Material values are physical; the sensor
+ *  is a good space IR telescope — its NEP/aperture set the detection SCALE (the
+ *  only tunable here), while the 1/r² and T⁴ physics are exact. */
+const THERMAL_PARAMS = {
+  emissivity: 0.9,
+  absorptivity: 0.9,
+  housekeepingW: 2000, // baseline onboard electrical load
+  driveEfficiency: 0.6, // electrical→jet; the rest is waste heat
+};
+const SENSOR = { apertureM2: 1, nepW: 1e-15 };
+
+export interface ShipThermal {
+  distanceFromSun: number; // m
+  solarFlux: number; // W/m² at the ship
+  hullArea: number; // m²
+  absorbedSolarW: number; // re-radiated sunlight (even a cold hull glows)
+  internalW: number; // housekeeping + (thrusting) drive thermal load
+  signatureW: number; // total radiated power — what a sensor sees
+  hullTempK: number;
+  detectionRangeM: number;
+  thrusting: boolean;
+}
+
+/**
+ * The ship's thermodynamic + detection state right now. Energy balance: in
+ * steady state everything absorbed/generated must be radiated, so the IR
+ * signature equals absorbed sunlight plus internal power. A burning drive adds
+ * its (large) input power as heat, spiking the signature — there is no stealth.
+ */
+export function shipThermalState(ship: Ship, t: number): ShipThermal {
+  const r = length(shipWorldState(ship, t).r); // heliocentric distance (Sun at origin)
+  const flux = solarFlux(r);
+  const A = hullArea(totalMass(ship));
+  const absorbed = flux * (A / 4) * THERMAL_PARAMS.absorptivity; // mean cross-section = A/4
+
+  let internal = THERMAL_PARAMS.housekeepingW;
+  const thrusting = ship.mode === "thrust";
+  if (thrusting) {
+    const stage = activeStage(ship);
+    if (stage) {
+      const ve = exhaustVelocity(stage.isp);
+      const jet = 0.5 * stage.thrust * ve; // jet power ½·F·vₑ
+      internal += jet / THERMAL_PARAMS.driveEfficiency; // input power → heat (and a bright plume)
+    }
+  }
+
+  const signature = absorbed + internal;
+  return {
+    distanceFromSun: r,
+    solarFlux: flux,
+    hullArea: A,
+    absorbedSolarW: absorbed,
+    internalW: internal,
+    signatureW: signature,
+    hullTempK: equilibriumTemp(signature, THERMAL_PARAMS.emissivity, A),
+    detectionRangeM: detectionRange(signature, SENSOR.apertureM2, SENSOR.nepW),
+    thrusting,
+  };
 }

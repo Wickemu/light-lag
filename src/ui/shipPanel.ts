@@ -32,6 +32,7 @@ import {
   shipOsculatingElements,
   shipRelativeState,
   shipWorldState,
+  shipThermalState,
   primaryMu,
 } from "../core/ships.ts";
 import { summarizeOrbit } from "../core/orbit.ts";
@@ -396,6 +397,13 @@ export class ShipPanel {
     // A transfer can only be planned from a planet (not mid-flight).
     this.planBtn.disabled = ship.primary === "sun" || (!!tr && tr.departed);
 
+    // Thermal & detection — there is no stealth in space.
+    const th = shipThermalState(ship, t);
+    lines.push(kv("Solar flux", `${th.solarFlux.toFixed(0)} W/m² @ ${(th.distanceFromSun / AU).toFixed(2)} AU`));
+    lines.push(kv("Hull temp", `${th.hullTempK.toFixed(0)} K`));
+    lines.push(kv("IR signature", fmtPower(th.signatureW) + (th.thrusting ? " — drive HOT" : "")));
+    lines.push(kv("Detectable to", fmtRange(th.detectionRangeM)));
+
     if (ship.mode === "thrust" && ship.burn) {
       const pct = (100 * ship.burn.dvDone) / ship.burn.dvTarget;
       lines.push(kv("BURNING", `${ship.burn.dvDone.toFixed(0)} / ${ship.burn.dvTarget.toFixed(0)} m/s (${pct.toFixed(0)}%)`));
@@ -464,4 +472,16 @@ function fmtDelay(s: number): string {
   if (s < 90) return `${s.toFixed(0)} s`;
   if (s < 5400) return `${(s / 60).toFixed(1)} min`;
   return `${(s / 3600).toFixed(2)} hr`;
+}
+
+function fmtPower(w: number): string {
+  if (w < 1e3) return `${w.toFixed(0)} W`;
+  if (w < 1e6) return `${(w / 1e3).toFixed(1)} kW`;
+  if (w < 1e9) return `${(w / 1e6).toFixed(1)} MW`;
+  return `${(w / 1e9).toFixed(2)} GW`;
+}
+
+function fmtRange(m: number): string {
+  if (m < 1e9) return `${(m / 1e3).toLocaleString("en-US", { maximumFractionDigits: 0 })} km`;
+  return `${(m / 1.495978707e11).toFixed(3)} AU`;
 }

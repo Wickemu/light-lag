@@ -13,6 +13,7 @@ import { SceneManager } from "../render/SceneManager.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { BODIES, BODY_BY_ID, AU, C, MU_SUN } from "../core/constants.ts";
 import { bodyState, bodyElements } from "../core/ephemeris.ts";
+import { solarFlux } from "../core/thermal.ts";
 import { period as orbitalPeriod } from "../core/math/kepler.ts";
 import { length, distance } from "../core/math/vec3.ts";
 import { formatDate } from "../core/time.ts";
@@ -147,6 +148,7 @@ export class Hud {
       const rSun = length(state.r);
       lines.push(row("Distance from Sun", `${(rSun / AU).toFixed(3)} AU`));
       lines.push(row("Orbital speed", `${(length(state.v) / 1000).toFixed(2)} km/s`));
+      lines.push(row("Solar flux", `${solarFlux(rSun).toFixed(0)} W/m²`));
 
       const el = bodyElements(def, t);
       const parent = def.parent ? BODY_BY_ID.get(def.parent) : undefined;
