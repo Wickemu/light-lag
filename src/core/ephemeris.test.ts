@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { bodyState, bodyPosition, bodyElements } from "./ephemeris.ts";
 import { BODY_BY_ID, AU, MU_SUN, DAY } from "./constants.ts";
 import { period } from "./math/kepler.ts";
-import { length, distance } from "./math/vec3.ts";
+import { length, distance, sub, scale } from "./math/vec3.ts";
 
 /** Sample several times across a decade so we don't accidentally test only the
  *  epoch instant. */
@@ -67,10 +67,35 @@ describe("the Moon", () => {
 
   it("has a sidereal period near 27.3 days", () => {
     const el = bodyElements(BODY_BY_ID.get("moon")!, 0)!;
-    const T = period(el.a, BODY_BY_ID.get("earth")!.mu) / DAY;
+    // Governing mu of the relative two-body problem is G(M_earth + M_moon).
+    const mu = BODY_BY_ID.get("earth")!.mu + BODY_BY_ID.get("moon")!.mu;
+    const T = period(el.a, mu) / DAY;
     expect(T).toBeGreaterThan(27.0);
     expect(T).toBeLessThan(27.6);
   });
+});
+
+describe("analytic velocity matches the numerical derivative of position", () => {
+  // This is the regression guard for the two-body mu fix: with the wrong mu the
+  // Moon's velocity disagreed with d(position)/dt by ~0.47%.
+  const cases: [string, number][] = [
+    ["earth", 1e-3],
+    ["mars", 1e-3],
+    ["jupiter", 1e-3],
+    ["moon", 3e-3],
+  ];
+  for (const [id, tol] of cases) {
+    it(`${id}: |v - dr/dt| / |v| < ${tol}`, () => {
+      const body = BODY_BY_ID.get(id)!;
+      const t = 500 * DAY;
+      const h = 60; // s, central difference
+      const rp = bodyState(body, t + h).r;
+      const rm = bodyState(body, t - h).r;
+      const vNum = scale(sub(rp, rm), 1 / (2 * h));
+      const vAna = bodyState(body, t).v;
+      expect(distance(vNum, vAna) / length(vAna)).toBeLessThan(tol);
+    });
+  }
 });
 
 describe("the Earth–Mars synodic period drives the launch-window cadence", () => {

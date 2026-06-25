@@ -59,7 +59,11 @@ export function bodyStateRelative(body: BodyDef, t: number): State {
   const el = bodyElements(body, t);
   if (!el) return { r: { x: 0, y: 0, z: 0 }, v: { x: 0, y: 0, z: 0 } };
   const parent = body.parent ? BODY_BY_ID.get(body.parent) : undefined;
-  const mu = parent ? parent.mu : MU_SUN;
+  // The relative two-body problem is governed by mu = G(M_parent + M_body), not
+  // the primary's GM alone. For planets the planet's GM is negligible against
+  // the Sun's, but for the Moon (GM_moon ≈ 1.2% of GM_earth) omitting it makes
+  // the velocity ~0.5% too slow and inconsistent with the modelled motion.
+  const mu = (parent ? parent.mu : MU_SUN) + body.mu;
   return elementsToState(el, mu);
 }
 

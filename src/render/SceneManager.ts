@@ -35,6 +35,7 @@ export class SceneManager {
   focusId = "sun";
   private focusPos: Vec3 = vec3(0, 0, 0);
   private theme: Theme = "dark";
+  private sunLight!: THREE.PointLight;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -74,10 +75,11 @@ export class SceneManager {
 
   private addLighting(): void {
     // The Sun is the only real light source; a faint ambient keeps night sides
-    // from being pure black.
-    const sunLight = new THREE.PointLight(0xfff4e0, 3, 0, 0);
-    sunLight.position.set(0, 0, 0); // attached to the focus origin when focus=sun
-    this.scene.add(sunLight);
+    // from being pure black. Its render position is updated every frame to track
+    // the real Sun through the floating origin (see updateOrigin), so a focused
+    // planet's terminator faces the true Sun rather than the camera.
+    this.sunLight = new THREE.PointLight(0xfff4e0, 3, 0, 0);
+    this.scene.add(this.sunLight);
     this.scene.add(new THREE.AmbientLight(0x223044, 0.6));
   }
 
@@ -138,6 +140,8 @@ export class SceneManager {
    *  before positioning any body. */
   updateOrigin(t: number): void {
     this.focusPos = bodyPosition(this.focusId, t);
+    // Keep the Sun's light at the real Sun, expressed through the floating origin.
+    this.sunLight.position.copy(this.toRender(bodyPosition("sun", t)));
   }
 
   get origin(): Vec3 {

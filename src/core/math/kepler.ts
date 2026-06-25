@@ -220,10 +220,11 @@ export function stateToElements(r: Vec3, v: Vec3, mu: number): KeplerElements {
   );
   const e = length(eVec);
 
-  // Specific orbital energy gives the semi-major axis (vis-viva).
+  // Specific orbital energy gives the semi-major axis (vis-viva). The
+  // near-parabolic test must be RELATIVE: specific energy here is O(1e7) J/kg,
+  // so an absolute threshold never fires — flag on eccentricity instead.
   const energy = (vMag * vMag) / 2 - mu / rMag;
-  // For parabolic (energy ~ 0) a -> ∞; we never hit exact parabola in practice.
-  const a = Math.abs(energy) < 1e-12 ? Infinity : -mu / (2 * energy);
+  const a = Math.abs(e - 1) < 1e-9 ? Infinity : -mu / (2 * energy);
 
   const i = Math.acos(clamp(h.z / hMag, -1, 1));
 

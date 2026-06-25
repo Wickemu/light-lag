@@ -4,9 +4,10 @@
  * Sim time `t` is seconds since J2000 (2000-01-01 12:00 TT), an f64. Real
  * transfers take months, so the player must fast-forward up to ~1e6×; because
  * coasting bodies are evaluated analytically (see ephemeris.ts), advancing the
- * clock a million-fold is exact and cheap. The only thing that forces small
- * steps is an active burn, and the sim auto-clamps the warp then ("time slows
- * near burns") so the integrator never sees a huge dt.
+ * clock a million-fold is exact and cheap. The only thing that will force small
+ * steps is an active burn; once powered flight lands (Phase 2) the sim will clamp
+ * the warp during burns ("time slows near burns") so the integrator never sees a
+ * huge dt. In Phase 1 everything coasts, so no clamp is needed yet.
  *
  * The event queue is a binary min-heap keyed by time, so fast-forward can jump
  * straight to the next scheduled thing (burn ignition, SOI crossing, message
@@ -163,7 +164,8 @@ export function tToCalendar(t: number): CalendarDate {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Human-readable UTC-ish date string, e.g. "2031-Mar-14 08:22". */
+/** Human-readable Terrestrial Time (TT) date string, e.g. "2031-Mar-14 08:22".
+ *  TT leads UTC by ~69 s in this era; immaterial at our arc-minute ephemeris. */
 export function formatDate(t: number): string {
   const c = tToCalendar(t);
   const pad = (n: number, w = 2) => String(Math.floor(n)).padStart(w, "0");

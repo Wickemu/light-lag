@@ -4,7 +4,11 @@
  * Owns the world, the event queue, and the time-warp state. Each render frame
  * the app calls advanceReal(dtReal); the sim converts that to sim-seconds via
  * the current warp and advances the world, stopping at each scheduled event in
- * strict time order so behaviour is identical regardless of frame rate or warp.
+ * strict time order. step(dtSim) is deterministic in its argument — events fire
+ * at their exact scheduled times — which is what save/load and reproducibility
+ * rely on. advanceReal additionally caps a single frame's real dt (so a
+ * backgrounded tab doesn't lurch the clock forward); that capped time is
+ * intentionally forfeited rather than replayed.
  *
  * In Phase 1 nothing is under thrust, so advancing is pure clock motion: bodies
  * are analytic functions of t (ephemeris.ts) and need no stepping. Powered
@@ -48,7 +52,8 @@ export class Simulation {
   /** Advance the world by a real elapsed wall-clock interval (seconds). */
   advanceReal(dtReal: number): void {
     if (this.paused || dtReal <= 0) return;
-    // Guard against huge dt after a tab was backgrounded.
+    // Cap a single frame's real dt: a backgrounded/stalled tab should resume
+    // smoothly, not teleport the clock. The forfeited time is not replayed.
     const clampedReal = Math.min(dtReal, 0.1);
     this.step(clampedReal * this.warp);
   }
