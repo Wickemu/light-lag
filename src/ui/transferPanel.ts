@@ -12,13 +12,19 @@
 import { type Simulation } from "../core/sim.ts";
 import { type SceneManager } from "../render/SceneManager.ts";
 import { computePorkchop, type Porkchop, type PorkCell } from "../core/maneuver/porkchop.ts";
+import { hohmann, synodicPeriod } from "../core/maneuver/hohmann.ts";
 import { planTransfer } from "../app/commands.ts";
 import { dvRemaining, shipWorldState, shipOsculatingElements } from "../core/ships.ts";
-import { periapsisRadius } from "../core/orbit.ts";
+import { periapsisRadius, orbitalPeriod } from "../core/orbit.ts";
+import { bodyElements } from "../core/ephemeris.ts";
 import { formatDate } from "../core/time.ts";
-import { BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
+import { BODIES, BODY_BY_ID, DAY, MU_SUN, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 
-const TARGETS = ["mercury", "venus", "mars", "jupiter", "saturn"];
+/** Every heliocentric body (planets, dwarfs, asteroids) is a valid destination;
+ *  the porkchop solves any of them. Ordered by distance from the Sun. */
+const TARGETS = BODIES.filter((b) => b.parent === "sun" && b.id !== "earth")
+  .sort((a, b) => (bodyElements(a, 0)?.a ?? 0) - (bodyElements(b, 0)?.a ?? 0))
+  .map((b) => b.id);
 const CANVAS_W = 300;
 const CANVAS_H = 210;
 
@@ -115,15 +121,27 @@ export class TransferPanel {
         ? BODY_BY_ID.get("earth")!.radius + DEFAULT_CAPTURE_ALT
         : periapsisRadius(shipOsculatingElements(ship, t0).a, shipOsculatingElements(ship, t0).e);
     const rParkTo = BODY_BY_ID.get(this.targetId)!.radius + DEFAULT_CAPTURE_ALT;
-    // One synodic-ish departure span guarantees the next window is included.
+
+    // Scale the search grid to the target's transfer so distant bodies (the
+    // giants, the dwarf planets) get a usable window instead of the inner-planet
+    // 80–400 day box. The Hohmann time-of-flight sets the tof span; the synodic
+    // period sets how far ahead to look for the next departure window.
+    const aFrom = bodyElements(BODY_BY_ID.get(fromId)!, t0)?.a ?? BODY_BY_ID.get("earth")!.radius;
+    const aTo = bodyElements(BODY_BY_ID.get(this.targetId)!, t0)?.a ?? aFrom;
+    const hTof = hohmann(MU_SUN, aFrom, aTo).tof;
+    const synodic = synodicPeriod(orbitalPeriod(aFrom, MU_SUN), orbitalPeriod(aTo, MU_SUN));
+    const depSpan = Math.min(Math.max(1.3 * synodic, 500 * DAY), 8000 * DAY);
+    const tofMin = Math.max(20 * DAY, 0.3 * hTof);
+    const tofMax = 1.9 * hTof;
+
     this.pork = computePorkchop({
       fromId,
       toId: this.targetId,
       depStart: t0,
-      depEnd: t0 + 800 * DAY,
+      depEnd: t0 + depSpan,
       depN: 64,
-      tofMin: 80 * DAY,
-      tofMax: 400 * DAY,
+      tofMin,
+      tofMax,
       tofN: 48,
       rParkFrom,
       rParkTo,

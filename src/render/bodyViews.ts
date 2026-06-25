@@ -6,13 +6,23 @@
  */
 
 import * as THREE from "three";
-import { BODIES, BODY_BY_ID, type BodyDef } from "../core/constants.ts";
+import { BODIES, BODY_BY_ID, type BodyDef, type BodyKind } from "../core/constants.ts";
 import { bodyState, bodyElements } from "../core/ephemeris.ts";
 import { orbitPath } from "../core/math/kepler.ts";
 import { metersToUnits, SCENE_SCALE } from "./scale.ts";
 import { type SceneManager } from "./SceneManager.ts";
 
 const ORBIT_SEGMENTS = 256;
+
+/** Constant screen-size for the always-visible body marker, by class. Explicit
+ *  per-kind so a newly added BodyKind can't silently inherit a wrong size. */
+const MARKER_SCALE: Record<BodyKind, number> = {
+  star: 0.05,
+  planet: 0.022,
+  dwarf: 0.016,
+  asteroid: 0.012,
+  moon: 0.013,
+};
 
 function makeDotTexture(): THREE.Texture {
   const size = 64;
@@ -59,8 +69,7 @@ export class BodyViews {
       transparent: true,
     });
     const marker = new THREE.Sprite(markerMat);
-    const markerScale = def.kind === "star" ? 0.05 : def.kind === "planet" ? 0.022 : 0.013;
-    marker.scale.setScalar(markerScale);
+    marker.scale.setScalar(MARKER_SCALE[def.kind]);
     this.sm.scene.add(marker);
 
     // To-scale sphere (tiny at system zoom, resolves up close).

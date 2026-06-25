@@ -13,7 +13,7 @@
 
 import {
   AU, DEG, DAY, JULIAN_CENTURY, MU_SUN,
-  type BodyDef, type StandishRow, type MoonRow, BODY_BY_ID,
+  type BodyDef, type StandishRow, type MoonRow, type FixedHelioRow, BODY_BY_ID,
 } from "./constants.ts";
 import { type State, type KeplerElements, elementsToState, wrapPi } from "./math/kepler.ts";
 import { type Vec3, add, sub, scale } from "./math/vec3.ts";
@@ -42,6 +42,24 @@ export function standishElements(row: StandishRow, t: number): KeplerElements {
   };
 }
 
+/** Resolve a small body's fixed heliocentric osculating elements at time t
+ *  (s since J2000) into SI Keplerian elements about the Sun. The mean motion is
+ *  derived from MU_SUN (n = √(MU_SUN/a³)); only the mean anomaly advances. A pure
+ *  two-body conic — exact at J2000, drifting over decades (perturbations
+ *  neglected), the same documented approximation the Moon row carries. Note: the
+ *  row stores ω directly (NOT ϖ), so unlike standishElements there is no ϖ→ω
+ *  conversion here. */
+export function helioElements(row: FixedHelioRow, t: number): KeplerElements {
+  const a = row.a * AU;
+  const n = Math.sqrt(MU_SUN / (a * a * a)); // mean motion (rad/s)
+  return {
+    a, e: row.e, i: row.i * DEG,
+    Omega: row.node * DEG,
+    omega: row.peri * DEG,
+    M: wrapPi(row.M0 * DEG + n * t),
+  };
+}
+
 /** Resolve a moon's precessing elements at time t (s since J2000) into SI
  *  Keplerian elements about its parent. */
 export function moonElements(row: MoonRow, t: number): KeplerElements {
@@ -57,6 +75,7 @@ export function moonElements(row: MoonRow, t: number): KeplerElements {
  *  null for the root body (the Sun), which has no parent orbit. */
 export function bodyElements(body: BodyDef, t: number): KeplerElements | null {
   if (body.standish) return standishElements(body.standish, t);
+  if (body.helio) return helioElements(body.helio, t);
   if (body.moon) return moonElements(body.moon, t);
   return null;
 }

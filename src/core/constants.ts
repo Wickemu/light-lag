@@ -75,7 +75,43 @@ export interface MoonRow {
   M0: number; MDot: number;       // mean anomaly
 }
 
-export type BodyKind = "star" | "planet" | "moon";
+/**
+ * Fixed heliocentric osculating Keplerian elements at the J2000 epoch, for the
+ * small bodies (dwarf planets, asteroids) that have no published Standish-style
+ * linear-rate fit. Units: a in AU, angles in degrees, M0 the mean anomaly at
+ * J2000. The mean motion is DERIVED from MU_SUN (n = √(MU_SUN/a³)) rather than
+ * stored, so a and M0 fully determine the motion — a pure two-body conic with
+ * perturbations neglected (it drifts over decades, exactly like the Moon row),
+ * but correct in character and exact in energy/period.
+ *
+ * IMPORTANT: `peri` here is the argument of perihelion ω, taken DIRECTLY from
+ * the JPL Small-Body Database (field W), NOT the longitude of perihelion ϖ.
+ * StandishRow stores ϖ and converts ϖ→ω in ephemeris.ts; this row needs no such
+ * conversion. Do not "harmonise" the two — a Horizons vector test guards it.
+ * Source: JPL Horizons / Small-Body DB osculating elements @ JD 2451545.0.
+ */
+export interface FixedHelioRow {
+  a: number;   // AU
+  e: number;
+  i: number;   // deg
+  node: number; // Ω, deg (longitude of ascending node)
+  peri: number; // ω, deg (argument of perihelion)
+  M0: number;  // mean anomaly at J2000, deg
+}
+
+/**
+ * Exponential isothermal atmosphere: ρ(h) = ρ0·exp(−h/H), P(h) = P0·exp(−h/H).
+ * A single-scale-height fit — a documented first-order approximation (real
+ * atmospheres have a temperature-dependent, layered scale height). SI units.
+ * Used by surface.ts for ascent drag losses and descent aerobraking estimates.
+ */
+export interface Atmosphere {
+  surfacePressure: number; // P0, Pa
+  surfaceDensity: number;  // ρ0, kg/m^3
+  scaleHeight: number;     // H, m
+}
+
+export type BodyKind = "star" | "planet" | "dwarf" | "asteroid" | "moon";
 
 export interface BodyDef {
   id: string;
@@ -87,17 +123,27 @@ export interface BodyDef {
   color: number; // render hint (hex RGB)
   standish?: StandishRow; // heliocentric planets
   moon?: MoonRow; // parent-centric moons
+  helio?: FixedHelioRow; // heliocentric dwarfs/asteroids (fixed J2000 conic)
+  /** Sidereal rotation period (s); negative ⇒ retrograde. Drives the equatorial
+   *  surface speed a launch inherits / a landing must cancel (surface.ts). */
+  rotationPeriod?: number;
+  /** Present only for bodies with a real atmosphere (ascent drag / aerobraking). */
+  atmosphere?: Atmosphere;
+  /** True for bodies with a solid surface to land on. The Sun and the gas giants
+   *  have no surface, so landing/launch is physically impossible there. */
+  hasSurface?: boolean;
 }
 
 // JPL Standish elements, valid 1800 AD – 2050 AD (no extra correction terms).
 export const BODIES: BodyDef[] = [
   {
     id: "sun", name: "Sun", parent: null, mu: MU_SUN, radius: 6.957e8,
-    kind: "star", color: 0xffd66b,
+    kind: "star", color: 0xffd66b, hasSurface: false,
   },
   {
     id: "mercury", name: "Mercury", parent: "sun", mu: 2.2032e13, radius: 2.4397e6,
     kind: "planet", color: 0xa6855a,
+    rotationPeriod: 5067360, hasSurface: true, // 58.646 d; trace exosphere ⇒ airless
     standish: {
       a: 0.38709927, aDot: 0.00000037, e: 0.20563593, eDot: 0.00001906,
       i: 7.00497902, iDot: -0.00594749, L: 252.25032350, LDot: 149472.67411175,
@@ -107,6 +153,8 @@ export const BODIES: BodyDef[] = [
   {
     id: "venus", name: "Venus", parent: "sun", mu: 3.24859e14, radius: 6.0518e6,
     kind: "planet", color: 0xd9b38c,
+    rotationPeriod: -20996760, hasSurface: true, // retrograde, 243.025 d
+    atmosphere: { surfacePressure: 9.2e6, surfaceDensity: 65, scaleHeight: 15900 },
     standish: {
       a: 0.72333566, aDot: 0.00000390, e: 0.00677672, eDot: -0.00004107,
       i: 3.39467605, iDot: -0.00078890, L: 181.97909950, LDot: 58517.81538729,
@@ -116,6 +164,8 @@ export const BODIES: BodyDef[] = [
   {
     id: "earth", name: "Earth", parent: "sun", mu: 3.986004418e14, radius: 6.371e6,
     kind: "planet", color: 0x4a90d9,
+    rotationPeriod: 86164.0905, hasSurface: true, // sidereal day
+    atmosphere: { surfacePressure: 101325, surfaceDensity: 1.225, scaleHeight: 8500 },
     // Standish "EM Bary" row; we treat it as Earth (the Earth–barycentre offset
     // of ~4670 km is far below visual relevance at 1 AU).
     standish: {
@@ -127,6 +177,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "moon", name: "Moon", parent: "earth", mu: 4.9028e12, radius: 1.7374e6,
     kind: "moon", color: 0x9a9a9a,
+    rotationPeriod: 2360591.5, hasSurface: true, // synchronous, 27.321661 d
     // Mean precessing elements; a physically valid two-body Moon (perturbations
     // neglected — it will drift over years but is correct in character).
     moon: {
@@ -139,6 +190,8 @@ export const BODIES: BodyDef[] = [
   {
     id: "mars", name: "Mars", parent: "sun", mu: 4.282837e13, radius: 3.3895e6,
     kind: "planet", color: 0xc1440e,
+    rotationPeriod: 88642.66, hasSurface: true, // 24.6229 h
+    atmosphere: { surfacePressure: 610, surfaceDensity: 0.020, scaleHeight: 11100 },
     standish: {
       a: 1.52371034, aDot: 0.00001847, e: 0.09339410, eDot: 0.00007882,
       i: 1.84969142, iDot: -0.00813131, L: -4.55343205, LDot: 19140.30268499,
@@ -148,6 +201,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "jupiter", name: "Jupiter", parent: "sun", mu: 1.26686534e17, radius: 6.9911e7,
     kind: "planet", color: 0xd8a878,
+    rotationPeriod: 35730, hasSurface: false, // 9.925 h; no solid surface
     standish: {
       a: 5.20288700, aDot: -0.00011607, e: 0.04838624, eDot: -0.00013253,
       i: 1.30439695, iDot: -0.00183714, L: 34.39644051, LDot: 3034.74612775,
@@ -157,6 +211,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "saturn", name: "Saturn", parent: "sun", mu: 3.7931187e16, radius: 5.8232e7,
     kind: "planet", color: 0xead6a8,
+    rotationPeriod: 38362, hasSurface: false, // 10.656 h; no solid surface
     standish: {
       a: 9.53667594, aDot: -0.00125060, e: 0.05386179, eDot: -0.00050991,
       i: 2.48599187, iDot: 0.00193609, L: 49.95424423, LDot: 1222.49362201,
@@ -166,6 +221,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "uranus", name: "Uranus", parent: "sun", mu: 5.793939e15, radius: 2.5362e7,
     kind: "planet", color: 0x9fd8e0,
+    rotationPeriod: -62064, hasSurface: false, // retrograde, 17.24 h; no solid surface
     standish: {
       a: 19.18916464, aDot: -0.00196176, e: 0.04725744, eDot: -0.00004397,
       i: 0.77263783, iDot: -0.00242939, L: 313.23810451, LDot: 428.48202785,
@@ -175,11 +231,174 @@ export const BODIES: BodyDef[] = [
   {
     id: "neptune", name: "Neptune", parent: "sun", mu: 6.836529e15, radius: 2.4622e7,
     kind: "planet", color: 0x4f7cdb,
+    rotationPeriod: 57996, hasSurface: false, // 16.11 h; no solid surface
     standish: {
       a: 30.06992276, aDot: 0.00026291, e: 0.00859048, eDot: 0.00005105,
       i: 1.77004347, iDot: 0.00035372, L: -55.12002969, LDot: 218.45945325,
       peri: 44.96476227, periDot: -0.32241464, node: 131.78422574, nodeDot: -0.00508664,
     },
+  },
+  {
+    id: "ceres", name: "Ceres", parent: "sun", mu: 6.26284e10, radius: 4.697e5,
+    kind: "dwarf", color: 0x9a8f80,
+    rotationPeriod: 32667.0, hasSurface: true,
+    helio: { a: 2.7664960200, e: 0.0783756264716304, i: 10.58336045805628, node: 80.49435747295276, peri: 73.92286274285223, M0: 6.176654513180486 },
+  },
+  {
+    id: "pallas", name: "Pallas", parent: "sun", mu: 1.363e10, radius: 2.565e5,
+    kind: "asteroid", color: 0x8a8a96,
+    rotationPeriod: 28480.0, hasSurface: true,
+    helio: { a: 2.7723224751, e: 0.2296435321697976, i: 34.84614003622473, node: 173.1977991340821, peri: 310.2656379003444, M0: 352.9602856167207 },
+  },
+  {
+    id: "vesta", name: "Vesta", parent: "sun", mu: 1.728828e10, radius: 2.61385e5,
+    kind: "asteroid", color: 0xa8a090,
+    rotationPeriod: 19231.0, hasSurface: true,
+    helio: { a: 2.3615349347, e: 0.09002244561937413, i: 7.133935828421654, node: 103.9514370845001, peri: 149.5866679599199, M0: 341.0238343838706 },
+  },
+  {
+    id: "pluto", name: "Pluto", parent: "sun", mu: 8.696e11, radius: 1.1883e6,
+    kind: "dwarf", color: 0xd6b89a,
+    rotationPeriod: -551856.7, hasSurface: true, atmosphere: { surfacePressure: 1.0, surfaceDensity: 8.4e-05, scaleHeight: 19000.0 },
+    helio: { a: 39.2643374175, e: 0.2446745123195729, i: 17.15136439626299, node: 110.286929741788, peri: 113.76290248852, M0: 15.0232691500142 },
+  },
+  {
+    id: "charon", name: "Charon", parent: "pluto", mu: 1.061e11, radius: 6.06e5,
+    kind: "moon", color: 0x8a8278,
+    rotationPeriod: 551778.7, hasSurface: true,
+    moon: { a: 1.959576e7, e: 0.0001610672790944719, i: 112.8908097641467, node: 227.3916867008565, nodeDot: 0, peri: 172.5855027165132, periDot: 0, M0: 148.6651344828103, MDot: 56.37042275 },
+  },
+  {
+    id: "haumea", name: "Haumea", parent: "sun", mu: 2.674e11, radius: 7.98e5,
+    kind: "dwarf", color: 0xe8e0d8,
+    rotationPeriod: 14102.0, hasSurface: true,
+    helio: { a: 42.9092576609, e: 0.1999209495775153, i: 28.20614176692041, node: 121.9332385932473, peri: 240.5907776701779, M0: 189.5952699212157 },
+  },
+  {
+    id: "makemake", name: "Makemake", parent: "sun", mu: 2.069e11, radius: 7.15e5,
+    kind: "dwarf", color: 0xc97f5a,
+    rotationPeriod: 80640.0, hasSurface: true,
+    helio: { a: 45.3720577831, e: 0.1645232903298833, i: 29.00018553920377, node: 79.2749060739329, peri: 296.2809991935295, M0: 139.7201624508081 },
+  },
+  {
+    id: "eris", name: "Eris", parent: "sun", mu: 1.108e12, radius: 1.163e6,
+    kind: "dwarf", color: 0xd8d8d0,
+    hasSurface: true,
+    helio: { a: 68.1398686523, e: 0.4325050983099001, i: 43.74050564207168, node: 36.12852074096747, peri: 150.8448096449848, M0: 194.2903409988061 },
+  },
+  {
+    id: "phobos", name: "Phobos", parent: "mars", mu: 7.087e5, radius: 1.108e4,
+    kind: "moon", color: 0x6e655c,
+    rotationPeriod: 27575.4, hasSurface: true,
+    moon: { a: 9.37861e6, e: 0.01469841851969655, i: 26.05670195883539, node: 84.81514244056581, nodeDot: 0, peri: 342.7848642391356, periDot: 0, M0: 189.8224342278868, MDot: 1127.96185694 },
+  },
+  {
+    id: "deimos", name: "Deimos", parent: "mars", mu: 9.615e4, radius: 6.2e3,
+    kind: "moon", color: 0x6e655c,
+    rotationPeriod: 109082.6, hasSurface: true,
+    moon: { a: 2.345818e7, e: 0.0003299624878237082, i: 27.56936980386812, node: 83.66926662588133, nodeDot: 0, peri: 211.8947925261645, periDot: 0, M0: 5.093950813525924, MDot: 285.14161628 },
+  },
+  {
+    id: "io", name: "Io", parent: "jupiter", mu: 5.959916e12, radius: 1.82149e6,
+    kind: "moon", color: 0xe6d96b,
+    rotationPeriod: 153048.6, hasSurface: true,
+    moon: { a: 4.220364e8, e: 0.004715688921345897, i: 2.212617763556377, node: 336.8524452085695, nodeDot: 0, peri: 66.16488500283468, periDot: 0, M0: 335.153206478952, MDot: 203.22957277 },
+  },
+  {
+    id: "europa", name: "Europa", parent: "jupiter", mu: 3.202712e12, radius: 1.5608e6,
+    kind: "moon", color: 0xcdb89a,
+    rotationPeriod: 306997.0, hasSurface: true,
+    moon: { a: 6.712485e8, e: 0.009812823575576082, i: 1.790971209716447, node: 332.6287323572119, nodeDot: 0, peri: 254.6471423731226, periDot: 0, M0: 345.411036769848, MDot: 101.31694862 },
+  },
+  {
+    id: "ganymede", name: "Ganymede", parent: "jupiter", mu: 9.887833e12, radius: 2.6312e6,
+    kind: "moon", color: 0x9a8d7c,
+    rotationPeriod: 618267.1, hasSurface: true,
+    moon: { a: 1.070497e9, e: 0.001457215292672099, i: 2.214148041848081, node: 343.1728455275238, nodeDot: 0, peri: 319.8078127226449, periDot: 0, M0: 277.0487684461206, MDot: 50.30835017 },
+  },
+  {
+    id: "callisto", name: "Callisto", parent: "jupiter", mu: 7.179283e12, radius: 2.4103e6,
+    kind: "moon", color: 0x6b5d50,
+    rotationPeriod: 1442112.9, hasSurface: true,
+    moon: { a: 1.882773e9, e: 0.007439434600948234, i: 2.016916220859312, node: 337.9426103461244, nodeDot: 0, peri: 16.12689497888475, periDot: 0, M0: 85.11888858079212, MDot: 21.56835291 },
+  },
+  {
+    id: "mimas", name: "Mimas", parent: "saturn", mu: 2.503489e9, radius: 1.982e5,
+    kind: "moon", color: 0xc8c8c2,
+    rotationPeriod: 81861.6, hasSurface: true,
+    moon: { a: 1.860368e8, e: 0.02175634846415301, i: 27.00265761372071, node: 172.0569449519339, nodeDot: 0, peri: 108.7253838060412, periDot: 0, M0: 37.39805775106126, MDot: 379.95856308 },
+  },
+  {
+    id: "enceladus", name: "Enceladus", parent: "saturn", mu: 7.210367e9, radius: 2.521e5,
+    kind: "moon", color: 0xf0f4f8,
+    rotationPeriod: 118766.9, hasSurface: true,
+    moon: { a: 2.384199e8, e: 0.006351597350212341, i: 28.05202310549093, node: 169.5065956328603, nodeDot: 0, peri: 135.4830251984964, periDot: 0, M0: 6.953398474767734, MDot: 261.89123630 },
+  },
+  {
+    id: "tethys", name: "Tethys", parent: "saturn", mu: 4.121e10, radius: 5.311e5,
+    kind: "moon", color: 0xc8c8c2,
+    rotationPeriod: 163444.7, hasSurface: true,
+    moon: { a: 2.949803e8, e: 0.0009698778768676897, i: 27.22072909012297, node: 167.9977256763769, nodeDot: 0, peri: 158.0570744864902, periDot: 0, M0: 350.3828192477454, MDot: 190.30290229 },
+  },
+  {
+    id: "dione", name: "Dione", parent: "saturn", mu: 7.3116e10, radius: 5.614e5,
+    kind: "moon", color: 0xc2c2bc,
+    rotationPeriod: 236765.9, hasSurface: true,
+    moon: { a: 3.776522e8, e: 0.002928360145096942, i: 28.04139510566285, node: 169.470196786071, nodeDot: 0, peri: 164.9353995421455, periDot: 0, M0: 332.0565629313631, MDot: 131.37024771 },
+  },
+  {
+    id: "rhea", name: "Rhea", parent: "saturn", mu: 1.5394e11, radius: 7.638e5,
+    kind: "moon", color: 0xbcbcb4,
+    rotationPeriod: 390548.6, hasSurface: true,
+    moon: { a: 5.272253e8, e: 0.0008002149724314739, i: 28.24141737577452, node: 168.9842022220848, nodeDot: 0, peri: 165.7818213737295, periDot: 0, M0: 206.9021112955066, MDot: 79.64181841 },
+  },
+  {
+    id: "titan", name: "Titan", parent: "saturn", mu: 8.97814e12, radius: 2.5747e6,
+    kind: "moon", color: 0xd9a441,
+    rotationPeriod: 1377851.2, hasSurface: true, atmosphere: { surfacePressure: 146700.0, surfaceDensity: 5.3, scaleHeight: 20000.0 },
+    moon: { a: 1.221935e9, e: 0.02860066256432539, i: 27.71833887311165, node: 169.2391602866279, nodeDot: 0, peri: 164.4091285733822, periDot: 0, M0: 163.4361974944248, MDot: 22.57428131 },
+  },
+  {
+    id: "iapetus", name: "Iapetus", parent: "saturn", mu: 1.2052e11, radius: 7.345e5,
+    kind: "moon", color: 0x9a8c70,
+    rotationPeriod: 6860020.9, hasSurface: true,
+    moon: { a: 3.562567e9, e: 0.02786249162022612, i: 17.23820439459392, node: 139.6917551276544, nodeDot: 0, peri: 229.658395405145, periDot: 0, M0: 208.0175928163262, MDot: 4.53409694 },
+  },
+  {
+    id: "miranda", name: "Miranda", parent: "uranus", mu: 4.3e9, radius: 2.358e5,
+    kind: "moon", color: 0x8a9498,
+    rotationPeriod: 122170.1, hasSurface: true,
+    moon: { a: 1.298718e8, e: 0.001509798566639019, i: 97.25415391960598, node: 172.0875833032825, nodeDot: 0, peri: 261.0221270814858, periDot: 0, M0: 62.06189119864032, MDot: 254.59591482 },
+  },
+  {
+    id: "ariel", name: "Ariel", parent: "uranus", mu: 8.343e10, radius: 5.789e5,
+    kind: "moon", color: 0x9aa0a2,
+    rotationPeriod: 217790.9, hasSurface: true,
+    moon: { a: 1.909413e8, e: 0.001520812328868678, i: 97.719319228073, node: 167.6455486422633, nodeDot: 0, peri: 45.35674156751863, periDot: 0, M0: 152.7943682479845, MDot: 142.81587599 },
+  },
+  {
+    id: "umbriel", name: "Umbriel", parent: "uranus", mu: 8.54e10, radius: 5.847e5,
+    kind: "moon", color: 0x7a8488,
+    rotationPeriod: 358131.1, hasSurface: true,
+    moon: { a: 2.660122e8, e: 0.004170165145635332, i: 97.66606723745439, node: 167.6381821495947, nodeDot: 0, peri: 334.9516684490692, periDot: 0, M0: 271.2233789529364, MDot: 86.85088134 },
+  },
+  {
+    id: "titania", name: "Titania", parent: "uranus", mu: 2.228e11, radius: 7.884e5,
+    kind: "moon", color: 0x9a9490,
+    rotationPeriod: 752231.4, hasSurface: true,
+    moon: { a: 4.362927e8, e: 0.002479000317146799, i: 97.818368383812, node: 167.6178145945835, nodeDot: 0, peri: 202.1167721066045, periDot: 0, M0: 74.41677554285916, MDot: 41.34898001 },
+  },
+  {
+    id: "oberon", name: "Oberon", parent: "uranus", mu: 2.0534e11, radius: 7.614e5,
+    kind: "moon", color: 0x8a847e,
+    rotationPeriod: 1163596.1, hasSurface: true,
+    moon: { a: 5.835499e8, e: 0.0005523244847399845, i: 97.87585296035932, node: 167.7555265636234, nodeDot: 0, peri: 254.006725206052, periDot: 0, M0: 93.49629094330373, MDot: 26.73092468 },
+  },
+  {
+    id: "triton", name: "Triton", parent: "neptune", mu: 1.428495e12, radius: 1.3526e6,
+    kind: "moon", color: 0xd4c8b8,
+    rotationPeriod: 507726.0, hasSurface: true,
+    moon: { a: 3.547659e8, e: 6.368939270099938e-06, i: 130.2557894944188, node: 215.8516384153697, nodeDot: 0, peri: 74.71431790690689, periDot: 0, M0: 359.9145795589976, MDot: 61.26138326 },
   },
 ];
 
