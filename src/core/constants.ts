@@ -39,6 +39,10 @@ export const JULIAN_CENTURY = 36_525 * DAY; // s
  *  seconds since this instant. */
 export const J2000_JD = 2_451_545.0;
 
+/** Default altitude (m) of the low parking orbit used as the capture target when
+ *  planning an arrival; the real capture burn (Phase 4) uses the same value. */
+export const DEFAULT_CAPTURE_ALT = 4e5; // 400 km
+
 // ── Gravitational parameters mu = GM (m^3/s^2) ──────────────────────────────
 export const MU_SUN = 1.327_124_400_18e20;
 

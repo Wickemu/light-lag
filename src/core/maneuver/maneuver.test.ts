@@ -73,6 +73,8 @@ describe("Porkchop (Earth → Mars over one synodic period)", () => {
       fromId: "earth", toId: "mars",
       depStart: 0, depEnd: 800 * DAY, depN: 60,
       tofMin: 120 * DAY, tofMax: 330 * DAY, tofN: 44,
+      rParkFrom: BODY_BY_ID.get("earth")!.radius + 4e5,
+      rParkTo: BODY_BY_ID.get("mars")!.radius + 4e5,
     });
     expect(pork.best).not.toBeNull();
     const best = pork.best!;

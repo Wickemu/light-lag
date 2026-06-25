@@ -13,9 +13,10 @@ import { type Simulation } from "../core/sim.ts";
 import { type SceneManager } from "../render/SceneManager.ts";
 import { computePorkchop, type Porkchop, type PorkCell } from "../core/maneuver/porkchop.ts";
 import { planTransfer } from "../app/commands.ts";
-import { dvRemaining, shipWorldState } from "../core/ships.ts";
+import { dvRemaining, shipWorldState, shipOsculatingElements } from "../core/ships.ts";
+import { periapsisRadius } from "../core/orbit.ts";
 import { formatDate } from "../core/time.ts";
-import { BODY_BY_ID, DAY } from "../core/constants.ts";
+import { BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 
 const TARGETS = ["mercury", "venus", "mars", "jupiter", "saturn"];
 const CANVAS_W = 300;
@@ -104,9 +105,15 @@ export class TransferPanel {
     const ship = this.sim.world.ships.get(this.shipId);
     if (!ship) return;
     const t0 = this.sim.world.t;
+    const fromId = ship.primary === "sun" ? "earth" : ship.primary;
+    const rParkFrom =
+      ship.primary === "sun"
+        ? BODY_BY_ID.get("earth")!.radius + DEFAULT_CAPTURE_ALT
+        : periapsisRadius(shipOsculatingElements(ship, t0).a, shipOsculatingElements(ship, t0).e);
+    const rParkTo = BODY_BY_ID.get(this.targetId)!.radius + DEFAULT_CAPTURE_ALT;
     // One synodic-ish departure span guarantees the next window is included.
     this.pork = computePorkchop({
-      fromId: ship.primary === "sun" ? "earth" : ship.primary,
+      fromId,
       toId: this.targetId,
       depStart: t0,
       depEnd: t0 + 800 * DAY,
@@ -114,6 +121,8 @@ export class TransferPanel {
       tofMin: 80 * DAY,
       tofMax: 400 * DAY,
       tofN: 48,
+      rParkFrom,
+      rParkTo,
     });
     this.selectBest();
   }

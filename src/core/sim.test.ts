@@ -127,6 +127,8 @@ describe("interplanetary transfer execution", () => {
       fromId: "earth", toId: "mars",
       depStart: 0, depEnd: 800 * DAY, depN: 60,
       tofMin: 120 * DAY, tofMax: 330 * DAY, tofN: 44,
+      rParkFrom: R_EARTH + 4e5,
+      rParkTo: BODY_BY_ID.get("mars")!.radius + 4e5,
     });
     const best = pork.best!;
     const plan = planTransfer(sim, id, "mars", best.depT, best.arrT);

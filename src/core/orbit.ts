@@ -18,6 +18,19 @@ export function circularSpeed(mu: number, r: number): number {
   return Math.sqrt(mu / r);
 }
 
+/**
+ * The impulsive Δv connecting a circular parking orbit (radius rPark about a
+ * body of GM mu) and a hyperbolic trajectory of excess speed vInf — i.e. the
+ * Oberth-aware injection burn at periapsis (and, symmetrically, the capture
+ * burn). Always ≥ vInf, approaching vInf only as rPark → ∞: burning deep in a
+ * gravity well is what makes interplanetary departures affordable.
+ */
+export function hyperbolicBurnDv(vInf: number, mu: number, rPark: number): number {
+  const vPark = Math.sqrt(mu / rPark);
+  const vPeri = Math.sqrt(vInf * vInf + 2 * mu / rPark);
+  return vPeri - vPark;
+}
+
 /** Specific orbital energy (J/kg). Negative = bound. */
 export function specificEnergy(mu: number, a: number): number {
   return -mu / (2 * a);

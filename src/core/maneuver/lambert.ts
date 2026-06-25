@@ -6,7 +6,10 @@
  *
  * Implementation: the universal-variable / Stumpff-function method (Curtis,
  * "Orbital Mechanics for Engineering Students", Algorithm 5.2). Single
- * revolution. Handles elliptic and hyperbolic transfers, prograde or retrograde.
+ * revolution only (N = 0) — sufficient for direct interplanetary legs; long
+ * time-of-flight cells that would need a multi-rev transfer are reported as
+ * having no solution rather than a wrong one. Handles elliptic and hyperbolic
+ * transfers, prograde or retrograde.
  *
  * SI: r in metres, dt in seconds, mu in m^3/s^2.
  */
@@ -108,14 +111,19 @@ export function lambert(
   while (yOf(z) < 0 && guard++ < 1000) z += 0.1;
   if (yOf(z) < 0) return null;
 
+  let converged = false;
   for (let i = 0; i < 100; i++) {
     const f = Fof(z);
     const d = dFdz(z);
     if (!isFinite(d) || d === 0) return null;
     const dz = f / d;
     z -= dz;
-    if (Math.abs(dz) < 1e-8) break;
+    if (Math.abs(dz) < 1e-8) {
+      converged = true;
+      break;
+    }
   }
+  if (!converged) return null; // honour the no-solution contract on non-convergence
 
   const y = yOf(z);
   if (!isFinite(y) || y < 0) return null;

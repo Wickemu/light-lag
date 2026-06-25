@@ -10,14 +10,15 @@
 import { BODY_BY_ID } from "../constants.ts";
 import { bodyState } from "../ephemeris.ts";
 import { length, sub } from "../math/vec3.ts";
+import { hyperbolicBurnDv } from "../orbit.ts";
 import { lambert } from "./lambert.ts";
 
 export interface PorkCell {
   depT: number; // departure time (s since J2000)
   tof: number; // time of flight (s)
   arrT: number;
-  dvDepart: number; // |v_transfer(r1) − v_from| (m/s); Infinity if no solution
-  dvArrive: number; // |v_transfer(r2) − v_to| (m/s)
+  dvDepart: number; // Oberth-aware injection burn from the parking orbit (m/s)
+  dvArrive: number; // Oberth-aware capture burn into the target parking orbit (m/s)
   total: number;
 }
 
@@ -44,6 +45,10 @@ export interface PorkchopParams {
   tofMin: number;
   tofMax: number;
   tofN: number;
+  /** Radius (m) of the departure parking orbit, for the Oberth-aware injection. */
+  rParkFrom: number;
+  /** Radius (m) of the target capture orbit, for the Oberth-aware capture. */
+  rParkTo: number;
 }
 
 /** Compute a porkchop grid of heliocentric transfers from one body to another. */
@@ -71,8 +76,10 @@ export function computePorkchop(p: PorkchopParams): Porkchop {
       const sol = lambert(depState.r, arrState.r, tof, muSun, true);
       let dvDepart = Infinity, dvArrive = Infinity, total = Infinity;
       if (sol) {
-        dvDepart = length(sub(sol.v1, depState.v));
-        dvArrive = length(sub(sol.v2, arrState.v));
+        const vInfDep = length(sub(sol.v1, depState.v));
+        const vInfArr = length(sub(sol.v2, arrState.v));
+        dvDepart = hyperbolicBurnDv(vInfDep, from.mu, p.rParkFrom);
+        dvArrive = hyperbolicBurnDv(vInfArr, to.mu, p.rParkTo);
         total = dvDepart + dvArrive;
         if (isFinite(total)) {
           if (total > maxFinite) maxFinite = total;

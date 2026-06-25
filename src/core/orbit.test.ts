@@ -8,6 +8,7 @@ import {
   circularOrbit,
   orbitFrame,
   summarizeOrbit,
+  hyperbolicBurnDv,
 } from "./orbit.ts";
 import { elementsToState, period } from "./math/kepler.ts";
 import { dot, length } from "./math/vec3.ts";
@@ -50,6 +51,20 @@ describe("the maneuver frame", () => {
     expect(Math.abs(dot(f.prograde, f.radialOut))).toBeLessThan(1e-9);
     expect(Math.abs(dot(f.normal, f.prograde))).toBeLessThan(1e-9);
     expect(Math.abs(dot(f.normal, f.radialOut))).toBeLessThan(1e-9);
+  });
+});
+
+describe("Oberth-aware injection / capture burn", () => {
+  it("from a 400 km LEO with v∞ = 3 km/s costs ~3.58 km/s (and always exceeds v∞)", () => {
+    const dv = hyperbolicBurnDv(3000, MU_EARTH, R_EARTH + 4e5);
+    expect(dv).toBeGreaterThan(3000); // never cheaper than the hyperbolic excess
+    expect(dv).toBeGreaterThan(3500);
+    expect(dv).toBeLessThan(3700);
+  });
+  it("approaches v∞ as the parking orbit grows (shallow well → little Oberth gain)", () => {
+    const dv = hyperbolicBurnDv(3000, MU_EARTH, 1e15);
+    expect(dv).toBeGreaterThan(2990);
+    expect(dv).toBeLessThan(3001);
   });
 });
 

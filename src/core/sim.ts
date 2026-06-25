@@ -21,8 +21,8 @@
 import { type WorldState, type Ship } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
-import { orbitFrame } from "./orbit.ts";
-import { activeStage, applyImpulsiveDv } from "./ships.ts";
+import { orbitFrame, hyperbolicBurnDv, periapsisRadius } from "./orbit.ts";
+import { activeStage, applyImpulsiveDv, shipOsculatingElements } from "./ships.ts";
 import { exhaustVelocity } from "./propulsion.ts";
 import { stateToElements } from "./math/kepler.ts";
 import { bodyState } from "./ephemeris.ts";
@@ -283,7 +283,13 @@ export class Simulation {
     tr.departed = true;
     if (!sol) return; // degenerate geometry; abort the injection
 
-    const dv = length(sub(sol.v1, depState.v));
+    // Charge the Oberth-aware injection from the current parking orbit — the
+    // ship is bound there at v_park, not co-moving with Earth — so the energy
+    // bookkeeping matches placing it on the transfer at the full heliocentric v1.
+    const vInf = length(sub(sol.v1, depState.v));
+    const parkEl = shipOsculatingElements(ship, t);
+    const rPark = periapsisRadius(parkEl.a, parkEl.e);
+    const dv = hyperbolicBurnDv(vInf, depBody.mu, rPark);
     applyImpulsiveDv(ship, dv);
     tr.dvDepart = dv;
 

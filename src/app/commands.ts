@@ -10,12 +10,12 @@
 import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir } from "../core/world.ts";
 import { type Stage } from "../core/propulsion.ts";
-import { circularOrbit } from "../core/orbit.ts";
-import { shipRelativeState } from "../core/ships.ts";
+import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
+import { shipRelativeState, shipOsculatingElements } from "../core/ships.ts";
 import { bodyState } from "../core/ephemeris.ts";
 import { lambert } from "../core/maneuver/lambert.ts";
 import { length, sub } from "../core/math/vec3.ts";
-import { BODY_BY_ID, DEG, MU_SUN } from "../core/constants.ts";
+import { BODY_BY_ID, DEG, MU_SUN, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 
 export interface ShipDesign {
   name: string;
@@ -116,8 +116,13 @@ export function planTransfer(
   const sol = lambert(depState.r, arrState.r, tArrive - tDepart, MU_SUN, true);
   if (!sol) return null;
 
-  const dvDepart = length(sub(sol.v1, depState.v));
-  const dvArrive = length(sub(sol.v2, arrState.v));
+  // Oberth-aware injection from the ship's parking orbit, and capture into a
+  // default low orbit at the target — so the planned cost equals what is paid.
+  const el = shipOsculatingElements(ship, sim.world.t);
+  const rParkFrom = periapsisRadius(el.a, el.e);
+  const rParkTo = target.radius + DEFAULT_CAPTURE_ALT;
+  const dvDepart = hyperbolicBurnDv(length(sub(sol.v1, depState.v)), depBody.mu, rParkFrom);
+  const dvArrive = hyperbolicBurnDv(length(sub(sol.v2, arrState.v)), target.mu, rParkTo);
   ship.transfer = { targetId, tDepart, tArrive, dvDepart, dvArrive, departed: false, arrived: false };
   sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
   return { dvDepart, dvArrive, tof: tArrive - tDepart };
