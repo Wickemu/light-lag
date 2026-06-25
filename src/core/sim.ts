@@ -3,19 +3,19 @@
  *
  * Owns the world, the event queue, and the time-warp state. Each render frame
  * the app calls advanceReal(dtReal); the sim converts that to sim-seconds via
- * the current warp and advances the world, stopping at each scheduled event in
- * strict time order. step(dtSim) is deterministic in its argument — events fire
- * at their exact scheduled times — which is what save/load and reproducibility
- * rely on. advanceReal additionally caps a single frame's real dt (so a
- * backgrounded tab doesn't lurch the clock forward); that capped time is
- * intentionally forfeited rather than replayed.
+ * the current warp and advances the world.
  *
  * Two regimes:
  *  - Nothing thrusting → bodies and ships are analytic functions of t, so the
  *    clock simply jumps to the target (exact at any warp).
- *  - Something thrusting → we sub-step at a small fixed dt so RK4 stays accurate,
- *    and the warp is clamped ("time slows near burns") so a million-× warp can't
- *    hand the integrator a month-long step.
+ *  - Something thrusting → we sub-step on a FIXED ABSOLUTE-TIME GRID (so the
+ *    partition is independent of how the caller chunked dtSim — step(A) then
+ *    step(B) gives the same result as step(A+B), which is what determinism and
+ *    save/load rely on), and the warp is clamped ("time slows near burns").
+ *    Within a sub-step, the discrete burn events — reaching the target Δv and a
+ *    tank running dry — are detected analytically and the integration is split
+ *    EXACTLY at them, so the engine never overshoots the commanded Δv and a
+ *    stage transition never leaves a thrust gap or burns phantom propellant.
  */
 
 import { type WorldState, type Ship } from "./world.ts";
@@ -28,8 +28,8 @@ import { stateToElements } from "./math/kepler.ts";
 import { BODY_BY_ID } from "./constants.ts";
 import { type Vec3 } from "./math/vec3.ts";
 
-/** Largest sub-step handed to RK4 during powered flight (s). LEO period is
- *  ~5500 s, so 2 s keeps integration error negligible. */
+/** Sub-step grid spacing during powered flight (s). LEO period is ~5500 s, so a
+ *  2 s grid keeps RK4 trajectory error negligible. */
 const MAX_THRUST_STEP = 2;
 /** While any ship is thrusting, the warp is capped so burns stay watchable and
  *  the sub-step count per frame stays bounded. */
@@ -84,6 +84,11 @@ export class Simulation {
   /** Advance sim time by dtSim seconds, firing events in order along the way. */
   step(dtSim: number): void {
     if (dtSim <= 0) return;
+
+    // Proper time advances with coordinate time for every ship (τ ≡ t in-system;
+    // a relativistic layer would later scale this by 1/γ).
+    for (const s of this.world.ships.values()) s.tau += dtSim;
+
     const target = this.world.t + dtSim;
 
     if (!this.anyThrust()) {
@@ -93,15 +98,18 @@ export class Simulation {
       return;
     }
 
-    // Powered flight: sub-step so the integrator sees a small dt.
-    let remaining = dtSim;
-    while (remaining > 1e-9) {
-      const dt = Math.min(remaining, MAX_THRUST_STEP);
-      this.integrateThrustShips(dt);
-      this.world.t += dt;
-      remaining -= dt;
+    // Powered flight: sub-step on a fixed absolute-time grid for determinism.
+    while (this.world.t < target - 1e-9) {
+      const gridNext = (Math.floor(this.world.t / MAX_THRUST_STEP) + 1) * MAX_THRUST_STEP;
+      const dt = Math.min(gridNext, target) - this.world.t;
+      const t0 = this.world.t;
+      for (const ship of this.world.ships.values()) {
+        if (ship.mode === "thrust") this.advanceThrustShip(ship, t0, dt);
+      }
+      this.world.t = t0 + dt;
       this.drainEvents(this.world.t);
     }
+    this.world.t = target;
   }
 
   private drainEvents(tMax: number): void {
@@ -113,96 +121,119 @@ export class Simulation {
     }
   }
 
-  private integrateThrustShips(dt: number): void {
-    for (const ship of this.world.ships.values()) {
-      if (ship.mode === "thrust") this.advanceThrustShip(ship, dt);
-    }
-  }
-
   /**
-   * Integrate one ship under gravity + thrust for dt seconds via RK4, consuming
-   * propellant honestly, staging when a tank empties, and ending the burn when
-   * the target Δv is reached or the ship runs dry.
+   * Integrate one ship under gravity + thrust across [t0, t0+dt], splitting the
+   * interval EXACTLY at each discrete event (target Δv reached, or active tank
+   * empty). Within each smooth segment thrust is continuous, so RK4 keeps its
+   * full order; the rocket-equation quantities (propellant, delivered Δv) are
+   * advanced analytically so they land precisely on the event.
+   *
+   * Dynamics are integrated in the primary-centred frame, which is treated as
+   * inertial (a patched-conic approximation: the omitted solar tidal term across
+   * LEO is ~1e-7 of Earth's central gravity, far below relevance for a burn).
    */
-  private advanceThrustShip(ship: Ship, dt: number): void {
-    const burn = ship.burn;
-    const stage = activeStage(ship);
-    if (!burn || !stage || !ship.r || !ship.v) {
-      this.endBurn(ship);
-      return;
-    }
-
-    const mu = BODY_BY_ID.get(ship.primary)!.mu;
-    const ve = exhaustVelocity(stage.isp);
-    const thrust = stage.thrust;
-
-    // Mass carried but not part of the active stage's propellant: payload plus
-    // every stage above the active one, plus the active stage's own dry mass.
-    let carried = ship.payloadMass + stage.dryMass;
-    for (let i = ship.activeStage + 1; i < ship.stages.length; i++) {
-      const up = ship.stages[i]!;
-      carried += up.dryMass + up.propMass;
-    }
-
-    const dirFor = (r: Vec3, v: Vec3): Vec3 => {
-      const f = orbitFrame(r, v);
-      switch (burn.dir) {
-        case "prograde": return f.prograde;
-        case "retrograde": return f.retrograde;
-        case "radial-out": return f.radialOut;
-        case "radial-in": return f.radialIn;
-        case "normal": return f.normal;
-        case "antinormal": return f.antinormal;
+  private advanceThrustShip(ship: Ship, t0: number, dt: number): void {
+    let elapsed = 0;
+    while (elapsed < dt - 1e-12 && ship.mode === "thrust") {
+      const burn = ship.burn;
+      const stage = activeStage(ship);
+      if (!burn || !stage || !ship.r || !ship.v) {
+        this.endBurn(ship, t0 + elapsed);
+        return;
       }
-    };
 
-    // State: [rx,ry,rz, vx,vy,vz, propellant, dvDelivered]
-    const deriv = (_t: number, y: number[]): number[] => {
-      const r: Vec3 = { x: y[0]!, y: y[1]!, z: y[2]! };
-      const v: Vec3 = { x: y[3]!, y: y[4]!, z: y[5]! };
-      const prop = y[6]!;
-      const dvDone = y[7]!;
-      const m = carried + Math.max(prop, 0);
-      const rmag = Math.hypot(r.x, r.y, r.z);
-      const gfac = -mu / (rmag * rmag * rmag);
-      let ax = r.x * gfac, ay = r.y * gfac, az = r.z * gfac;
-      let dprop = 0, ddv = 0;
-      if (prop > 1e-9 && dvDone < burn.dvTarget) {
+      const mu = BODY_BY_ID.get(ship.primary)!.mu;
+      const ve = exhaustVelocity(stage.isp);
+      const thrust = stage.thrust;
+      const mdot = thrust / ve;
+
+      // Mass carried but not part of the active tank: payload + active dry +
+      // every upper stage (dry + propellant). m0 is the mass at segment start.
+      let carried = ship.payloadMass + stage.dryMass;
+      for (let i = ship.activeStage + 1; i < ship.stages.length; i++) {
+        const up = ship.stages[i]!;
+        carried += up.dryMass + up.propMass;
+      }
+      const m0 = carried + stage.propMass;
+
+      const dvRem = burn.dvTarget - burn.dvDone;
+      if (dvRem <= 1e-9) {
+        this.endBurn(ship, t0 + elapsed);
+        return;
+      }
+
+      // Analytic event times within the remaining interval (ṁ is constant).
+      const tauCut = (m0 / mdot) * (1 - Math.exp(-dvRem / ve)); // reach target Δv
+      const tauEmpty = stage.propMass / mdot; // tank runs dry
+      let seg = dt - elapsed;
+      let event: "none" | "cut" | "empty" = "none";
+      if (tauCut < seg) { seg = tauCut; event = "cut"; }
+      if (tauEmpty < seg) { seg = tauEmpty; event = "empty"; }
+
+      // Integrate r,v over the smooth segment (thrust always on — no toggling).
+      const dirFor = (r: Vec3, v: Vec3): Vec3 => {
+        const f = orbitFrame(r, v);
+        switch (burn.dir) {
+          case "prograde": return f.prograde;
+          case "retrograde": return f.retrograde;
+          case "radial-out": return f.radialOut;
+          case "radial-in": return f.radialIn;
+          case "normal": return f.normal;
+          case "antinormal": return f.antinormal;
+        }
+      };
+      const deriv = (_t: number, y: number[]): number[] => {
+        const r: Vec3 = { x: y[0]!, y: y[1]!, z: y[2]! };
+        const v: Vec3 = { x: y[3]!, y: y[4]!, z: y[5]! };
+        const prop = y[6]!;
+        const m = carried + Math.max(prop, 0);
+        const rmag = Math.hypot(r.x, r.y, r.z);
+        const gfac = -mu / (rmag * rmag * rmag);
         const dir = dirFor(r, v);
         const at = thrust / m;
-        ax += dir.x * at;
-        ay += dir.y * at;
-        az += dir.z * at;
-        dprop = -thrust / ve;
-        ddv = at;
+        return [
+          v.x, v.y, v.z,
+          r.x * gfac + dir.x * at,
+          r.y * gfac + dir.y * at,
+          r.z * gfac + dir.z * at,
+          -mdot,
+        ];
+      };
+
+      const y0 = [ship.r.x, ship.r.y, ship.r.z, ship.v.x, ship.v.y, ship.v.z, stage.propMass];
+      const y1 = rk4(y0, t0 + elapsed, seg, deriv);
+      ship.r = { x: y1[0]!, y: y1[1]!, z: y1[2]! };
+      ship.v = { x: y1[3]!, y: y1[4]!, z: y1[5]! };
+
+      // Rocket-equation quantities advanced analytically so events land exactly.
+      stage.propMass = Math.max(stage.propMass - mdot * seg, 0);
+      burn.dvDone += ve * Math.log(m0 / (m0 - mdot * seg));
+      elapsed += seg;
+
+      if (event === "cut") {
+        burn.dvDone = burn.dvTarget; // kill rounding; the analytic step lands here
+        this.endBurn(ship, t0 + elapsed);
+        return;
       }
-      return [v.x, v.y, v.z, ax, ay, az, dprop, ddv];
-    };
-
-    const y0 = [ship.r.x, ship.r.y, ship.r.z, ship.v.x, ship.v.y, ship.v.z, stage.propMass, burn.dvDone];
-    const y1 = rk4(y0, this.world.t, dt, deriv);
-
-    ship.r = { x: y1[0]!, y: y1[1]!, z: y1[2]! };
-    ship.v = { x: y1[3]!, y: y1[4]!, z: y1[5]! };
-    stage.propMass = Math.max(y1[6]!, 0);
-    burn.dvDone = y1[7]!;
-    ship.tau += dt;
-
-    if (burn.dvDone >= burn.dvTarget - 1e-9) {
-      this.endBurn(ship);
-    } else if (stage.propMass <= 1e-6) {
-      // Tank empty: drop this stage and continue with the next, if any.
-      ship.activeStage += 1;
-      if (!activeStage(ship)) this.endBurn(ship); // out of propellant
+      if (event === "empty") {
+        stage.propMass = 0;
+        ship.activeStage += 1;
+        if (!activeStage(ship)) {
+          this.endBurn(ship, t0 + elapsed); // out of propellant
+          return;
+        }
+        // Next stage ignites for the remainder of dt on the next loop iteration.
+      }
     }
   }
 
-  /** Finish a burn: freeze the achieved orbit as osculating elements and coast. */
-  private endBurn(ship: Ship): void {
+  /** Finish a burn at the exact event time: freeze the achieved orbit as
+   *  osculating elements (valid at `epoch`) and coast. */
+  private endBurn(ship: Ship, epoch: number): void {
     if (ship.r && ship.v) {
       const mu = BODY_BY_ID.get(ship.primary)!.mu;
       ship.elements = stateToElements(ship.r, ship.v, mu);
-      ship.epoch = this.world.t;
+      ship.epoch = epoch;
     }
     ship.mode = "coast";
     ship.burn = undefined;

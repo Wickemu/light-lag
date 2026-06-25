@@ -59,7 +59,13 @@ export function spawnShip(sim: Simulation, design: ShipDesign): string {
   return id;
 }
 
-/** Begin a finite-thrust burn of `dvTarget` (m/s) in the given orbit direction. */
+/**
+ * Begin a finite-thrust burn delivering `dvTarget` of ENGINE Δv (∫F/m dt, the
+ * rocket-equation currency that the Δv budget is measured in) in the given orbit
+ * direction. Because the burn is finite rather than impulsive, the realised
+ * change in orbital speed is slightly less, lost to gravity (and, for off-
+ * prograde directions, cosine) — that loss is physically honest, not a bug.
+ */
 export function startBurn(sim: Simulation, shipId: string, dvTarget: number, dir: BurnDir): void {
   const ship = sim.world.ships.get(shipId);
   if (!ship || dvTarget <= 0) return;
