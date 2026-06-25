@@ -34,7 +34,6 @@ export class Hud {
     private sm: SceneManager,
   ) {
     this.build();
-    this.bindKeys();
   }
 
   private build(): void {
@@ -90,7 +89,7 @@ export class Hud {
     // Controls hint + fps.
     const foot = el("div", "panel foot");
     this.fpsEl = el("span", "fps");
-    foot.innerHTML = `<span class="hint">drag orbit · scroll zoom · «/» warp · space pause</span>`;
+    foot.innerHTML = `<span class="hint">drag/WASD/↑↓←→ orbit · scroll/±zoom · space pause · ,. warp · 1-8 focus · tab cycle · [F] ships · [V] views · [R] reset</span>`;
     foot.appendChild(this.fpsEl);
     this.root.appendChild(foot);
 
@@ -106,27 +105,14 @@ export class Hud {
     this.focus(this.sm.focusId);
   }
 
-  private bindKeys(): void {
-    window.addEventListener("keydown", (e) => {
-      if (e.key === " ") {
-        e.preventDefault();
-        this.togglePause();
-      } else if (e.key === "." || e.key === ">") {
-        this.sim.cycleWarp(1);
-      } else if (e.key === "," || e.key === "<") {
-        this.sim.cycleWarp(-1);
-      }
-    });
-  }
-
-  private focus(id: string): void {
+  focus(id: string): void {
     this.sm.focusBody(id);
     for (const [bid, btn] of this.listButtons) {
       btn.classList.toggle("active", bid === id);
     }
   }
 
-  private togglePause(): void {
+  togglePause(): void {
     this.sim.togglePause();
     this.pauseBtn.textContent = this.sim.paused ? "▶" : "⏸";
   }
