@@ -17,7 +17,7 @@ import {
   type ShipDesign,
   defaultDesign,
   spawnShip,
-  startBurn,
+  sendBurn,
 } from "../app/commands.ts";
 import { deltaVBudget, initialTWR } from "../core/propulsion.ts";
 import {
@@ -29,6 +29,8 @@ import {
   primaryMu,
 } from "../core/ships.ts";
 import { summarizeOrbit } from "../core/orbit.ts";
+import { bodyPosition } from "../core/ephemeris.ts";
+import { retardedTime } from "../core/comms.ts";
 import { BODY_BY_ID, AU, DAY } from "../core/constants.ts";
 import { formatDate } from "../core/time.ts";
 import { length } from "../core/math/vec3.ts";
@@ -209,7 +211,8 @@ export class ShipPanel {
     if (!this.selectedId) return;
     const dv = parseFloat(this.dvInput.value);
     if (!isFinite(dv) || dv <= 0) return;
-    startBurn(this.sim, this.selectedId, dv, this.dir);
+    // The order is transmitted, not applied: it reaches the ship at light-lag.
+    sendBurn(this.sim, this.selectedId, dv, this.dir);
   }
 
   private syncDirButtons(): void {
@@ -239,13 +242,20 @@ export class ShipPanel {
       return;
     }
 
+    // Light-lag: what you KNOW is the ship's retarded state — its state at the
+    // instant whose light is only now reaching the control node.
+    const controlPos = bodyPosition(this.sim.world.controlNode, t);
+    const tKnown = retardedTime(controlPos, (tt) => shipWorldState(ship, tt).r, t);
+    const age = t - tKnown; // one-way light delay
+
     const mu = primaryMu(ship);
     const primary = BODY_BY_ID.get(ship.primary)!;
-    const el = shipOsculatingElements(ship, t);
-    const rel = shipRelativeState(ship, t);
+    const el = shipOsculatingElements(ship, tKnown);
+    const rel = shipRelativeState(ship, tKnown);
     const speed = length(rel.v);
 
     const lines: string[] = [];
+    lines.push(kv("Signal delay (1-way)", fmtDelay(age)));
     if (ship.primary === "sun") {
       // Heliocentric (in/after a transfer): show distance from the Sun, not an
       // altitude above the Sun's surface.
@@ -261,6 +271,12 @@ export class ShipPanel {
     lines.push(kv("Speed", `${(speed / 1000).toFixed(3)} km/s`));
     lines.push(kv("Mass", `${(totalMass(ship) / 1000).toFixed(2)} t`));
     lines.push(kv("Δv remaining", `${(dvRemaining(ship) / 1000).toFixed(2)} km/s`));
+
+    // A command you've sent is still crawling out to the ship at c.
+    const inbound = this.sim.world.messages.find(
+      (m) => m.kind === "command" && m.targetId === ship.id && m.tArrive > t,
+    );
+    if (inbound) lines.push(kv("Order en route", `arrives in ${fmtDelay(inbound.tArrive - t)}`));
 
     // Transfer status.
     const tr = ship.transfer;
@@ -340,4 +356,12 @@ function formatDur(s: number): string {
   if (s < 5400) return `${(s / 60).toFixed(1)} min`;
   if (s < 172800) return `${(s / 3600).toFixed(2)} hr`;
   return `${(s / 86400).toFixed(2)} d`;
+}
+
+/** Light-delay readout: live for the local case, then seconds → minutes → hours. */
+function fmtDelay(s: number): string {
+  if (s < 1) return "live";
+  if (s < 90) return `${s.toFixed(0)} s`;
+  if (s < 5400) return `${(s / 60).toFixed(1)} min`;
+  return `${(s / 3600).toFixed(2)} hr`;
 }

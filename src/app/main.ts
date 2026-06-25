@@ -13,6 +13,7 @@ import { Simulation } from "../core/sim.ts";
 import { SceneManager } from "../render/SceneManager.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { ShipViews } from "../render/shipViews.ts";
+import { CommsViews } from "../render/commsViews.ts";
 import { Hud } from "../ui/hud.ts";
 import { ShipPanel } from "../ui/shipPanel.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
@@ -27,6 +28,7 @@ const sim = new Simulation(world);
 const sm = new SceneManager(canvas);
 const views = new BodyViews(sm);
 const shipViews = new ShipViews(sm, uiRoot);
+const commsViews = new CommsViews(sm);
 const hud = new Hud(uiRoot, sim, sm);
 const transferPanel = new TransferPanel(uiRoot, sim, sm);
 const shipPanel = new ShipPanel(uiRoot, sim, sm, (shipId) => transferPanel.open(shipId));
@@ -44,6 +46,7 @@ function renderOnce(): void {
   sm.updateOrigin(world.t);
   views.update(world.t);
   shipViews.update(world, world.t);
+  commsViews.update(world, world.t);
   sm.render();
   hud.update(fps, views);
   shipPanel.update(world.t);
@@ -70,6 +73,7 @@ if (import.meta.env.DEV) {
     sm,
     views,
     shipViews,
+    commsViews,
     hud,
     shipPanel,
     transferPanel,

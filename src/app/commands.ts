@@ -11,7 +11,7 @@ import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir } from "../core/world.ts";
 import { type Stage } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
-import { shipRelativeState, shipOsculatingElements } from "../core/ships.ts";
+import { shipOsculatingElements } from "../core/ships.ts";
 import { bodyState } from "../core/ephemeris.ts";
 import { lambert } from "../core/maneuver/lambert.ts";
 import { length, sub } from "../core/math/vec3.ts";
@@ -63,27 +63,19 @@ export function spawnShip(sim: Simulation, design: ShipDesign): string {
 }
 
 /**
- * Begin a finite-thrust burn delivering `dvTarget` of ENGINE Δv (∫F/m dt, the
- * rocket-equation currency that the Δv budget is measured in) in the given orbit
- * direction. Because the burn is finite rather than impulsive, the realised
- * change in orbital speed is slightly less, lost to gravity (and, for off-
- * prograde directions, cosine) — that loss is physically honest, not a bug.
+ * Command a finite-thrust burn delivering `dvTarget` of ENGINE Δv in the given
+ * orbit direction. The command is NOT applied now: it is transmitted from the
+ * control node and propagates at c, so a distant ship only begins the burn after
+ * the one-way light delay (and acknowledges a round-trip later). The Δv is
+ * engine Δv (∫F/m dt, the rocket-equation currency); the realised speed change
+ * is slightly less for a finite burn — that loss is physically honest.
+ *
+ * Returns the one-way light delay (s) until the order reaches the ship, or null.
  */
-export function startBurn(sim: Simulation, shipId: string, dvTarget: number, dir: BurnDir): void {
-  const ship = sim.world.ships.get(shipId);
-  if (!ship || dvTarget <= 0) return;
-  if (ship.mode === "thrust") return; // already burning
-
-  // Freeze the current coast state as the integration's initial vector.
-  const state = shipRelativeState(ship, sim.world.t);
-  ship.r = state.r;
-  ship.v = state.v;
-  ship.mode = "thrust";
-  ship.burn = { dir, dvTarget, dvDone: 0 };
-
-  // Make the burn watchable: unpause and settle to a moderate warp.
-  sim.paused = false;
-  sim.setWarpIndex(Math.min(sim.warpIndex, 2)); // <= 60x
+export function sendBurn(sim: Simulation, shipId: string, dvTarget: number, dir: BurnDir): number | null {
+  if (dvTarget <= 0) return null;
+  const res = sim.sendCommand(shipId, { type: "burn", dv: dvTarget, dir });
+  return res ? res.delay : null;
 }
 
 export interface TransferPlan {

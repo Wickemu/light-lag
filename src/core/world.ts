@@ -88,13 +88,20 @@ export interface Maneuver {
   executed: boolean;
 }
 
+/** A command a control node sends to a ship (delivered at light-lag). */
+export type ShipCommand = { type: "burn"; dv: number; dir: BurnDir };
+
+/** A signal propagating at c — a command outbound, or telemetry/ack inbound. */
 export interface MessageInFlight {
   id: string;
-  fromPos: Vec3;
-  tEmit: number;
-  tArrive: number; // tEmit + distance/c
   kind: "command" | "telemetry";
-  payload: unknown;
+  fromPos: Vec3; // emission point (fixed in inertial space)
+  toPos: Vec3; // target position at arrival (the light-chase solution)
+  targetId: string; // ship id (command) or control node id (telemetry)
+  tEmit: number;
+  tArrive: number; // tEmit + light-time to the moving target
+  label: string; // human-readable, for the comms log
+  command?: ShipCommand; // present when kind === "command"
 }
 
 export interface WorldState {
@@ -102,6 +109,9 @@ export interface WorldState {
   t: number;
   /** Seed for the (future) deterministic PRNG. */
   seed: number;
+  /** Body id of the player's command origin — all commands/telemetry propagate
+   *  to and from here at c. (Game config; the engine just reads it.) */
+  controlNode: string;
   ships: Map<string, Ship>;
   stations: Map<string, Station>;
   maneuvers: Map<string, Maneuver>;
@@ -109,10 +119,11 @@ export interface WorldState {
 }
 
 /** Create a fresh world. t0 defaults to J2000 (t=0) for reproducibility. */
-export function createWorld(seed = 1, t0 = 0): WorldState {
+export function createWorld(seed = 1, t0 = 0, controlNode = "earth"): WorldState {
   return {
     t: t0,
     seed,
+    controlNode,
     ships: new Map(),
     stations: new Map(),
     maneuvers: new Map(),

@@ -18,14 +18,17 @@
  *    stage transition never leaves a thrust gap or burns phantom propellant.
  */
 
-import { type WorldState, type Ship } from "./world.ts";
+import { type WorldState, type Ship, type ShipCommand, type BurnDir } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius } from "./orbit.ts";
-import { activeStage, applyImpulsiveDv, shipOsculatingElements, shipRelativeState } from "./ships.ts";
+import {
+  activeStage, applyImpulsiveDv, shipOsculatingElements, shipRelativeState, shipWorldState,
+} from "./ships.ts";
 import { exhaustVelocity } from "./propulsion.ts";
 import { stateToElements, meanMotion } from "./math/kepler.ts";
 import { bodyState } from "./ephemeris.ts";
+import { signalArrival } from "./comms.ts";
 import { aimArrival } from "./maneuver/arrival.ts";
 import { BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
 import { type Vec3, sub, scale, normalize, length, cross } from "./math/vec3.ts";
@@ -42,6 +45,7 @@ export class Simulation {
   readonly events = new EventQueue();
   warpIndex = 0;
   paused = false;
+  private msgCounter = 0;
 
   constructor(world: WorldState) {
     this.world = world;
@@ -93,22 +97,28 @@ export class Simulation {
 
     const target = this.world.t + dtSim;
 
-    if (!this.anyThrust()) {
-      // Analytic fast path: coasting bodies/ships need no stepping.
-      this.drainEvents(target);
-      this.world.t = target;
-      return;
-    }
-
-    // Powered flight: sub-step on a fixed absolute-time grid for determinism.
-    while (this.world.t < target - 1e-9) {
-      const gridNext = (Math.floor(this.world.t / MAX_THRUST_STEP) + 1) * MAX_THRUST_STEP;
-      const dt = Math.min(gridNext, target) - this.world.t;
-      const t0 = this.world.t;
-      for (const ship of this.world.ships.values()) {
-        if (ship.mode === "thrust") this.advanceThrustShip(ship, t0, dt);
+    // Advance in segments bounded by the next scheduled event — and, while
+    // anything is thrusting, by a fixed absolute-time sub-step grid. Re-checking
+    // thrust after each event means a command delivered mid-interval (a burn
+    // order arriving at light-lag) is integrated correctly, with no skipped arc.
+    let guard = 0;
+    while (this.world.t < target - 1e-9 && guard++ < 5_000_000) {
+      const nextEvent = this.events.nextTime();
+      if (this.anyThrust()) {
+        const gridNext = (Math.floor(this.world.t / MAX_THRUST_STEP) + 1) * MAX_THRUST_STEP;
+        const segEnd = Math.min(gridNext, target, nextEvent);
+        const t0 = this.world.t;
+        const dt = segEnd - t0;
+        if (dt > 0) {
+          for (const ship of this.world.ships.values()) {
+            if (ship.mode === "thrust") this.advanceThrustShip(ship, t0, dt);
+          }
+        }
+        this.world.t = segEnd;
+      } else {
+        // Coasting: bodies and ships are analytic — jump straight to the next event.
+        this.world.t = Math.min(target, nextEvent);
       }
-      this.world.t = t0 + dt;
       this.drainEvents(this.world.t);
     }
     this.world.t = target;
@@ -243,6 +253,10 @@ export class Simulation {
 
   /** Event dispatch. */
   private handleEvent(ev: SimEvent): void {
+    if (ev.kind === "message-arrival") {
+      if (ev.entityId) this.deliverMessage(ev.entityId);
+      return;
+    }
     const ship = ev.entityId ? this.world.ships.get(ev.entityId) : undefined;
     if (!ship) return;
     switch (ev.kind) {
@@ -251,6 +265,75 @@ export class Simulation {
       case "capture": this.captureAtPeriapsis(ship); break;
       default: break;
     }
+  }
+
+  // ── Light-lag command & comms ─────────────────────────────────────────────
+
+  /**
+   * Send a command to a ship from the control node. The command is NOT applied
+   * now — it becomes a signal that propagates at c and is delivered when it
+   * reaches the (moving) ship. Returns the delivery time and one-way light delay,
+   * or null if the target is unknown. This is the heart of the game: you act on
+   * the past and your orders take real time to arrive.
+   */
+  sendCommand(targetId: string, command: ShipCommand): { tArrive: number; delay: number } | null {
+    const ship = this.world.ships.get(targetId);
+    const control = BODY_BY_ID.get(this.world.controlNode);
+    if (!ship || !control) return null;
+    const fromPos = bodyState(control, this.world.t).r;
+    const posFn = (t: number): Vec3 => shipWorldState(ship, t).r;
+    const tArrive = signalArrival(fromPos, posFn, this.world.t);
+    const id = `msg-${this.msgCounter++}`;
+    this.world.messages.push({
+      id, kind: "command", fromPos, toPos: posFn(tArrive), targetId,
+      tEmit: this.world.t, tArrive, label: `${command.type} → ${ship.name}`, command,
+    });
+    this.events.push({ t: tArrive, kind: "message-arrival", entityId: id });
+    return { tArrive, delay: tArrive - this.world.t };
+  }
+
+  private deliverMessage(id: string): void {
+    const idx = this.world.messages.findIndex((m) => m.id === id);
+    if (idx < 0) return;
+    const msg = this.world.messages[idx]!;
+    this.world.messages.splice(idx, 1);
+    if (msg.kind !== "command" || !msg.command) return; // telemetry just "arrives"
+
+    const ship = this.world.ships.get(msg.targetId);
+    if (!ship) return;
+    this.applyCommand(ship, msg.command);
+    // The ship answers: an acknowledgement crawls back to the control node at c.
+    this.emitTelemetry(ship, `ack: ${msg.label}`);
+  }
+
+  private applyCommand(ship: Ship, command: ShipCommand): void {
+    if (command.type === "burn") this.applyBurn(ship, command.dv, command.dir);
+  }
+
+  /** Begin a finite-thrust burn (the mutation behind a delivered burn command). */
+  private applyBurn(ship: Ship, dv: number, dir: BurnDir): void {
+    if (dv <= 0 || ship.mode === "thrust") return;
+    const state = shipRelativeState(ship, this.world.t);
+    ship.r = state.r;
+    ship.v = state.v;
+    ship.mode = "thrust";
+    ship.burn = { dir, dvTarget: dv, dvDone: 0 };
+  }
+
+  /** Emit a telemetry/ack signal from a ship back to the control node at c. */
+  private emitTelemetry(ship: Ship, label: string): void {
+    const control = BODY_BY_ID.get(this.world.controlNode);
+    if (!control) return;
+    const t = this.world.t;
+    const fromPos = shipWorldState(ship, t).r;
+    const posFn = (tt: number): Vec3 => bodyState(control, tt).r;
+    const tArrive = signalArrival(fromPos, posFn, t);
+    const id = `msg-${this.msgCounter++}`;
+    this.world.messages.push({
+      id, kind: "telemetry", fromPos, toPos: posFn(tArrive), targetId: this.world.controlNode,
+      tEmit: t, tArrive, label,
+    });
+    this.events.push({ t: tArrive, kind: "message-arrival", entityId: id });
   }
 
   /**

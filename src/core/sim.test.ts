@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createWorld } from "./world.ts";
 import { Simulation } from "./sim.ts";
-import { spawnShip, startBurn, defaultDesign, planTransfer } from "../app/commands.ts";
+import { spawnShip, sendBurn, defaultDesign, planTransfer } from "../app/commands.ts";
 import { shipOsculatingElements, totalMass, shipWorldState, applyImpulsiveDv, dvRemaining } from "./ships.ts";
 import { summarizeOrbit } from "./orbit.ts";
 import { exhaustVelocity, propellantForDv } from "./propulsion.ts";
@@ -13,11 +13,15 @@ import { BODY_BY_ID, DAY } from "./constants.ts";
 const MU_EARTH = BODY_BY_ID.get("earth")!.mu;
 const R_EARTH = BODY_BY_ID.get("earth")!.radius;
 
-/** Run the sim until the (single) ship finishes its burn. */
+/** Run the sim until a (light-lagged) burn order is delivered and completes.
+ *  Burns are now commands that propagate at c, so for a LEO ship there is a tiny
+ *  (~0.02 s) delivery delay before thrust begins; wait that out too. */
 function flyUntilCoast(sim: Simulation, shipId: string): void {
   const ship = sim.world.ships.get(shipId)!;
+  const commandInFlight = (): boolean =>
+    sim.world.messages.some((m) => m.kind === "command" && m.targetId === shipId);
   let guard = 0;
-  while (ship.mode === "thrust" && guard++ < 200000) sim.step(10);
+  while ((ship.mode === "thrust" || commandInFlight()) && guard++ < 200000) sim.step(10);
   if (ship.mode === "thrust") throw new Error("burn never completed");
 }
 
@@ -32,7 +36,7 @@ describe("finite-thrust prograde burn", () => {
     const propBefore = ship.stages[0]!.propMass;
     const ve = exhaustVelocity(ship.stages[0]!.isp);
 
-    startBurn(sim, id, 1000, "prograde");
+    sendBurn(sim, id, 1000, "prograde");
     flyUntilCoast(sim, id);
 
     const after = summarizeOrbit(shipOsculatingElements(ship, sim.world.t), MU_EARTH, R_EARTH);
@@ -55,7 +59,7 @@ describe("finite-thrust prograde burn", () => {
   it("ends in a stable, still-bound orbit (no integrator blow-up)", () => {
     const sim = new Simulation(createWorld(1, 0));
     const id = spawnShip(sim, defaultDesign());
-    startBurn(sim, id, 800, "prograde");
+    sendBurn(sim, id, 800, "prograde");
     flyUntilCoast(sim, id);
     const el = shipOsculatingElements(sim.world.ships.get(id)!, sim.world.t);
     expect(el.e).toBeLessThan(1); // still bound
@@ -75,7 +79,7 @@ describe("burn cutoff precision (event-detected, no overshoot)", () => {
     const ve = exhaustVelocity(ship.stages[0]!.isp);
     const propBefore = ship.stages[0]!.propMass;
 
-    startBurn(sim, id, 50, "prograde");
+    sendBurn(sim, id, 50, "prograde");
     flyUntilCoast(sim, id);
 
     const propConsumed = propBefore - ship.stages[0]!.propMass;
@@ -89,7 +93,7 @@ describe("determinism of powered flight", () => {
     const run = (chunks: number[]) => {
       const sim = new Simulation(createWorld(1, 0));
       const id = spawnShip(sim, defaultDesign());
-      startBurn(sim, id, 1200, "prograde");
+      sendBurn(sim, id, 1200, "prograde");
       for (const c of chunks) sim.step(c);
       return shipOsculatingElements(sim.world.ships.get(id)!, sim.world.t);
     };
@@ -106,7 +110,7 @@ describe("determinism of powered flight", () => {
     const run = (chunk: number) => {
       const sim = new Simulation(createWorld(1, 0));
       const id = spawnShip(sim, defaultDesign());
-      startBurn(sim, id, 1200, "prograde");
+      sendBurn(sim, id, 1200, "prograde");
       while (sim.world.t < 600) sim.step(chunk);
       return shipOsculatingElements(sim.world.ships.get(id)!, sim.world.t);
     };
@@ -219,6 +223,40 @@ describe("applyImpulsiveDv affordability", () => {
   });
 });
 
+describe("Phase 5: light-lag command", () => {
+  it("a burn order reaches a ship in transit only after the one-way light delay", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const pork = computePorkchop({
+      fromId: "earth", toId: "mars",
+      depStart: 0, depEnd: 800 * DAY, depN: 60, tofMin: 120 * DAY, tofMax: 330 * DAY, tofN: 44,
+      rParkFrom: R_EARTH + 4e5, rParkTo: BODY_BY_ID.get("mars")!.radius + 4e5,
+    });
+    const best = pork.best!;
+    planTransfer(sim, id, "mars", best.depT, best.arrT);
+    sim.step(best.depT + 130 * DAY - sim.world.t); // deep in transit, far from Earth
+    const ship = sim.world.ships.get(id)!;
+    expect(ship.primary).toBe("sun");
+
+    const propBefore = ship.stages.reduce((s, st) => s + st.propMass, 0);
+    const res = sim.sendCommand(id, { type: "burn", dv: 50, dir: "prograde" });
+    expect(res).not.toBeNull();
+    expect(res!.delay).toBeGreaterThan(120); // minutes of light-lag, not instant
+    expect(ship.mode).toBe("coast"); // order not yet arrived
+
+    sim.step(res!.delay - 60);
+    expect(ship.mode).toBe("coast"); // still en route
+    expect(ship.stages.reduce((s, st) => s + st.propMass, 0)).toBe(propBefore); // no burn yet
+
+    sim.step(120); // cross the arrival time (the short burn may also finish here)
+    // Order delivered: propellant was spent, the command is consumed, and an
+    // acknowledgement is now crawling back to Earth at c.
+    expect(ship.stages.reduce((s, st) => s + st.propMass, 0)).toBeLessThan(propBefore);
+    expect(sim.world.messages.some((m) => m.kind === "command")).toBe(false);
+    expect(sim.world.messages.some((m) => m.kind === "telemetry")).toBe(true);
+  });
+});
+
 describe("staging", () => {
   it("drops the spent stage and keeps delivering Δv from the next", () => {
     const sim = new Simulation(createWorld(1, 0));
@@ -226,7 +264,7 @@ describe("staging", () => {
     const ship = sim.world.ships.get(id)!;
 
     // Stage 1 alone provides ~3.23 km/s; ask for 5 km/s to force a stage drop.
-    startBurn(sim, id, 5000, "prograde");
+    sendBurn(sim, id, 5000, "prograde");
     flyUntilCoast(sim, id);
 
     expect(ship.activeStage).toBe(1); // advanced into the second stage
