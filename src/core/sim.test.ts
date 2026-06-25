@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createWorld } from "./world.ts";
 import { Simulation } from "./sim.ts";
 import { spawnShip, startBurn, defaultDesign, planTransfer } from "../app/commands.ts";
-import { shipOsculatingElements, totalMass, shipWorldState } from "./ships.ts";
+import { shipOsculatingElements, totalMass, shipWorldState, applyImpulsiveDv, dvRemaining } from "./ships.ts";
 import { summarizeOrbit } from "./orbit.ts";
 import { exhaustVelocity, propellantForDv } from "./propulsion.ts";
 import { computePorkchop } from "./maneuver/porkchop.ts";
@@ -178,11 +178,44 @@ describe("Phase 4: SOI patched conics and Mars capture", () => {
     expect(ship.primary).toBe("mars");
 
     const el = shipOsculatingElements(ship, sim.world.t);
-    expect(el.e).toBeLessThan(1); // captured into a bound orbit
+    expect(el.e).toBeLessThan(0.02); // vector circularization → very near circular
     expect(el.a).toBeGreaterThan(0);
     const peri = el.a * (1 - el.e);
     expect(peri).toBeGreaterThan(mars.radius); // clears the surface
     expect(peri).toBeLessThan(mars.radius + 3e6); // a low-ish Mars orbit
+  });
+
+  it("refuses a transfer the ship cannot afford (no free Δv on an empty tank)", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    // A tug with only ~0.66 km/s — far short of the ~3.6 km/s injection.
+    const id = spawnShip(sim, {
+      name: "Tug", payloadMass: 3000, altitudeKm: 400, inclinationDeg: 28.5,
+      stages: [{ name: "S1", dryMass: 5000, propMass: 2000, isp: 300, thrust: 1e6 }],
+    });
+    const ship = sim.world.ships.get(id)!;
+    const pork = computePorkchop({
+      fromId: "earth", toId: "mars",
+      depStart: 0, depEnd: 800 * DAY, depN: 60, tofMin: 120 * DAY, tofMax: 330 * DAY, tofN: 44,
+      rParkFrom: R_EARTH + 4e5, rParkTo: BODY_BY_ID.get("mars")!.radius + 4e5,
+    });
+    const best = pork.best!;
+    const dvBefore = dvRemaining(ship);
+    planTransfer(sim, id, "mars", best.depT, best.arrT);
+    sim.step(best.depT - sim.world.t + DAY);
+
+    expect(ship.primary).toBe("earth"); // never left the parking orbit
+    expect(dvRemaining(ship)).toBeCloseTo(dvBefore, 3); // propellant untouched
+  });
+});
+
+describe("applyImpulsiveDv affordability", () => {
+  it("returns false and mutates nothing when the burn is unaffordable", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+    const before = totalMass(ship);
+    expect(applyImpulsiveDv(ship, 1e6)).toBe(false); // way past the budget
+    expect(totalMass(ship)).toBe(before);
   });
 });
 

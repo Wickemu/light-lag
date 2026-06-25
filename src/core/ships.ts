@@ -73,6 +73,10 @@ export function shipWorldState(ship: Ship, t: number): State {
  * standard (the porkchop Δv is itself an impulsive metric).
  */
 export function applyImpulsiveDv(ship: Ship, dv: number): boolean {
+  if (dv <= 0) return true;
+  // Affordability check FIRST, so a maneuver the ship can't pay for makes no
+  // mutation — never fabricate Δv on an empty tank.
+  if (dv > dvRemaining(ship) + 1e-6) return false;
   let remaining = dv;
   while (remaining > 1e-9) {
     const stage = activeStage(ship);

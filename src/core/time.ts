@@ -52,10 +52,12 @@ export interface SimEvent {
   kind: SimEventKind;
   entityId?: string;
   data?: unknown;
+  seq?: number; // insertion order; breaks ties so equal-time ordering is deterministic
 }
 
 export class EventQueue {
   private heap: SimEvent[] = [];
+  private counter = 0;
 
   get size(): number {
     return this.heap.length;
@@ -66,13 +68,19 @@ export class EventQueue {
     return this.heap.length > 0 ? this.heap[0]!.t : Infinity;
   }
 
+  /** Strict ordering: by time, then by insertion sequence (stable, deterministic). */
+  private before(a: SimEvent, b: SimEvent): boolean {
+    return a.t < b.t || (a.t === b.t && (a.seq ?? 0) < (b.seq ?? 0));
+  }
+
   push(ev: SimEvent): void {
     const h = this.heap;
+    ev.seq = this.counter++;
     h.push(ev);
     let i = h.length - 1;
     while (i > 0) {
       const parent = (i - 1) >> 1;
-      if (h[parent]!.t <= h[i]!.t) break;
+      if (!this.before(h[i]!, h[parent]!)) break;
       [h[parent], h[i]] = [h[i]!, h[parent]!];
       i = parent;
     }
@@ -98,8 +106,8 @@ export class EventQueue {
       const l = 2 * i + 1;
       const r = 2 * i + 2;
       let smallest = i;
-      if (l < n && h[l]!.t < h[smallest]!.t) smallest = l;
-      if (r < n && h[r]!.t < h[smallest]!.t) smallest = r;
+      if (l < n && this.before(h[l]!, h[smallest]!)) smallest = l;
+      if (r < n && this.before(h[r]!, h[smallest]!)) smallest = r;
       if (smallest === i) break;
       [h[smallest], h[i]] = [h[i]!, h[smallest]!];
       i = smallest;

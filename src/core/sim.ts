@@ -28,7 +28,7 @@ import { stateToElements, meanMotion } from "./math/kepler.ts";
 import { bodyState } from "./ephemeris.ts";
 import { aimArrival } from "./maneuver/arrival.ts";
 import { BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
-import { type Vec3, sub, scale, normalize, length } from "./math/vec3.ts";
+import { type Vec3, sub, scale, normalize, length, cross } from "./math/vec3.ts";
 
 /** Sub-step grid spacing during powered flight (s). LEO period is ~5500 s, so a
  *  2 s grid keeps RK4 trajectory error negligible. */
@@ -281,7 +281,7 @@ export class Simulation {
     const parkEl = shipOsculatingElements(ship, t);
     const rPark = periapsisRadius(parkEl.a, parkEl.e);
     const dv = hyperbolicBurnDv(vInf, depBody.mu, rPark);
-    applyImpulsiveDv(ship, dv);
+    if (!applyImpulsiveDv(ship, dv)) return; // can't afford injection — stay in parking orbit
     tr.dvDepart = dv;
 
     // Onto the heliocentric transfer toward the aim point.
@@ -320,10 +320,15 @@ export class Simulation {
     ship.epoch = t;
     tr.inSoi = true;
 
-    // Schedule the capture at periapsis (time-to-periapsis = −M/n for M < 0).
+    // Only an inbound hyperbola (e > 1, pre-periapsis) can be captured at a
+    // future periapsis. Anything else is an off-nominal arrival: leave the ship
+    // on its real relative trajectory (a flyby) rather than fake a capture.
     const el = ship.elements;
+    if (el.e <= 1 || el.M >= 0) return;
+
+    // Schedule the capture at periapsis (time-to-periapsis = −M/n for M < 0).
     const n = meanMotion(el.a, target.mu);
-    const tPeri = el.M < 0 ? t + -el.M / n : t;
+    const tPeri = t + -el.M / n;
     this.events.push({ t: tPeri, kind: "capture", entityId: ship.id });
   }
 
@@ -341,16 +346,21 @@ export class Simulation {
     const t = this.world.t;
     const st = shipRelativeState(ship, t); // at periapsis (coast about target)
     const r = length(st.r);
-    const vMag = length(st.v);
     const vCirc = Math.sqrt(body.mu / r);
-    const captureDv = vMag - vCirc;
-    if (captureDv > 0) applyImpulsiveDv(ship, captureDv);
 
-    const newV = scale(normalize(st.v), vCirc);
-    ship.elements = stateToElements(st.r, newV, body.mu);
+    // True circularization impulse: target the tangential (prograde) direction
+    // and take the FULL vector difference, so any residual radial component is
+    // removed and the propellant charged matches the burn actually flown. (At
+    // exact periapsis this equals the scalar |v| − vCirc.)
+    const tHat = normalize(cross(cross(st.r, st.v), st.r));
+    const targetV = scale(tHat, vCirc);
+    const captureDv = length(sub(targetV, st.v));
+    if (!applyImpulsiveDv(ship, captureDv)) return; // can't afford — stays on the hyperbola
+
+    ship.elements = stateToElements(st.r, targetV, body.mu);
     ship.epoch = t;
     ship.mode = "coast";
     tr.arrived = true;
-    tr.dvArrive = Math.max(captureDv, 0);
+    tr.dvArrive = captureDv;
   }
 }
