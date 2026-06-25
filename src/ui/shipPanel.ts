@@ -49,6 +49,7 @@ export class ShipPanel {
   private dir: BurnDir = "prograde";
   private lastShipCount = -1;
 
+  private panelEl!: HTMLElement;
   private stagesEl!: HTMLElement;
   private budgetEl!: HTMLElement;
   private shipListEl!: HTMLElement;
@@ -68,8 +69,17 @@ export class ShipPanel {
     this.build();
   }
 
+  toggle(): void {
+    this.panelEl.style.display = this.isOpen() ? "none" : "flex";
+  }
+
+  isOpen(): boolean {
+    return this.panelEl.style.display !== "none";
+  }
+
   private build(): void {
     const panel = el("div", "panel ship-panel");
+    this.panelEl = panel;
 
     panel.appendChild(el("div", "panel-label", "SHIP DESIGNER"));
     this.stagesEl = el("div", "stages");
