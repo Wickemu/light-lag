@@ -255,6 +255,32 @@ describe("Phase 5: light-lag command", () => {
     expect(sim.world.messages.some((m) => m.kind === "command")).toBe(false);
     expect(sim.world.messages.some((m) => m.kind === "telemetry")).toBe(true);
   });
+
+  it("integrates a light-lag-delivered burn the same whether stepped coarse or fine", () => {
+    // A command can be delivered (and its burn started) mid-interval while the
+    // player fast-forwards. The event-aware step must integrate that burn, not
+    // skip it, regardless of how time was chunked.
+    const run = (chunk: number) => {
+      const sim = new Simulation(createWorld(1, 0));
+      const id = spawnShip(sim, defaultDesign());
+      const pork = computePorkchop({
+        fromId: "earth", toId: "mars",
+        depStart: 0, depEnd: 800 * DAY, depN: 60, tofMin: 120 * DAY, tofMax: 330 * DAY, tofN: 44,
+        rParkFrom: R_EARTH + 4e5, rParkTo: BODY_BY_ID.get("mars")!.radius + 4e5,
+      });
+      const best = pork.best!;
+      planTransfer(sim, id, "mars", best.depT, best.arrT);
+      sim.step(best.depT + 130 * DAY - sim.world.t);
+      const res = sim.sendCommand(id, { type: "burn", dv: 200, dir: "prograde" })!;
+      const tEnd = sim.world.t + res.delay + 5000;
+      while (sim.world.t < tEnd) sim.step(Math.min(chunk, tEnd - sim.world.t));
+      return shipOsculatingElements(sim.world.ships.get(id)!, sim.world.t);
+    };
+    const big = run(1e12); // one giant jump across delivery + burn
+    const fine = run(30);
+    expect(Math.abs(big.a - fine.a)).toBeLessThan(50); // metres
+    expect(Math.abs(big.e - fine.e)).toBeLessThan(1e-5);
+  });
 });
 
 describe("staging", () => {

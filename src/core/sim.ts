@@ -237,6 +237,9 @@ export class Simulation {
         // Next stage ignites for the remainder of dt on the next loop iteration.
       }
     }
+    // Still thrusting after the full interval: r,v are valid at t0+dt; stamp the
+    // epoch so shipRelativeState can extrapolate the ship's position mid-burn.
+    if (ship.mode === "thrust") ship.epoch = t0 + dt;
   }
 
   /** Finish a burn at the exact event time: freeze the achieved orbit as
@@ -301,23 +304,30 @@ export class Simulation {
 
     const ship = this.world.ships.get(msg.targetId);
     if (!ship) return;
-    this.applyCommand(ship, msg.command);
-    // The ship answers: an acknowledgement crawls back to the control node at c.
-    this.emitTelemetry(ship, `ack: ${msg.label}`);
+    // The command resolves in the ship's frame AT DELIVERY — which, after the
+    // light delay, may differ from the frame the player aimed at (it may have
+    // crossed an SOI). That is the light-lag bargain, not a bug. The ship answers
+    // honestly: an ACK if it executed the order, a NACK if it could not.
+    const ok = this.applyCommand(ship, msg.command);
+    this.emitTelemetry(ship, `${ok ? "ack" : "nack"}: ${msg.label}`);
   }
 
-  private applyCommand(ship: Ship, command: ShipCommand): void {
-    if (command.type === "burn") this.applyBurn(ship, command.dv, command.dir);
+  private applyCommand(ship: Ship, command: ShipCommand): boolean {
+    if (command.type === "burn") return this.applyBurn(ship, command.dv, command.dir);
+    return false;
   }
 
-  /** Begin a finite-thrust burn (the mutation behind a delivered burn command). */
-  private applyBurn(ship: Ship, dv: number, dir: BurnDir): void {
-    if (dv <= 0 || ship.mode === "thrust") return;
+  /** Begin a finite-thrust burn (the mutation behind a delivered burn command).
+   *  Returns false (rejected) if it cannot start — e.g. already mid-burn. */
+  private applyBurn(ship: Ship, dv: number, dir: BurnDir): boolean {
+    if (dv <= 0 || ship.mode === "thrust") return false;
     const state = shipRelativeState(ship, this.world.t);
     ship.r = state.r;
     ship.v = state.v;
+    ship.epoch = this.world.t; // r,v are valid now (used to extrapolate during thrust)
     ship.mode = "thrust";
     ship.burn = { dir, dvTarget: dv, dvDone: 0 };
+    return true;
   }
 
   /** Emit a telemetry/ack signal from a ship back to the control node at c. */

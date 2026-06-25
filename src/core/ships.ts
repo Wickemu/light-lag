@@ -16,7 +16,7 @@ import {
 } from "./math/kepler.ts";
 import { bodyState } from "./ephemeris.ts";
 import { BODY_BY_ID } from "./constants.ts";
-import { add } from "./math/vec3.ts";
+import { add, addScaled } from "./math/vec3.ts";
 
 /** GM of the body this ship orbits. */
 export function primaryMu(ship: Ship): number {
@@ -49,7 +49,12 @@ export function dvRemaining(ship: Ship): number {
 /** State of the ship relative to its primary (the Earth-centred frame, etc.). */
 export function shipRelativeState(ship: Ship, t: number): State {
   if (ship.mode === "thrust" && ship.r && ship.v) {
-    return { r: ship.r, v: ship.v };
+    // Linear extrapolation from the integrated state's valid time, so callers
+    // that query a different time (the light-lag chase, retarded telemetry) get
+    // a moving target rather than a frozen point. Exact at t = epoch; over a
+    // one-way light delay the neglected thrust curvature is second-order.
+    const dt = t - (ship.epoch ?? t);
+    return { r: addScaled(ship.r, ship.v, dt), v: ship.v };
   }
   const mu = primaryMu(ship);
   const epoch = ship.epoch ?? 0;
