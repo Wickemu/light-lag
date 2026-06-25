@@ -96,6 +96,10 @@ export class TransferPanel {
     this.recompute();
   }
 
+  isOpen(): boolean {
+    return this.panel.style.display !== "none";
+  }
+
   close(): void {
     this.panel.style.display = "none";
   }

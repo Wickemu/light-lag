@@ -19,6 +19,12 @@ import {
   spawnShip,
   sendBurn,
 } from "../app/commands.ts";
+import {
+  type ShipPreset,
+  PRESETS_BY_ID,
+  presetsByCategory,
+  presetToDesign,
+} from "../app/shipCatalog.ts";
 import { deltaVBudget, initialTWR } from "../core/propulsion.ts";
 import {
   totalMass,
@@ -51,8 +57,14 @@ export class ShipPanel {
   private dir: BurnDir = "prograde";
   private lastShipCount = -1;
 
+  private panelEl!: HTMLElement;
   private stagesEl!: HTMLElement;
   private budgetEl!: HTMLElement;
+  private presetSelect!: HTMLSelectElement;
+  private presetCaption!: HTMLElement;
+  private nameInput!: HTMLInputElement;
+  private payloadInput!: HTMLInputElement;
+  private altInput!: HTMLInputElement;
   private shipListEl!: HTMLElement;
   private flightEl!: HTMLElement;
   private readoutEl!: HTMLElement;
@@ -70,14 +82,41 @@ export class ShipPanel {
     this.build();
   }
 
+  toggle(): void {
+    this.panelEl.style.display = this.isOpen() ? "none" : "flex";
+  }
+
+  isOpen(): boolean {
+    return this.panelEl.style.display !== "none";
+  }
+
   private build(): void {
     const panel = el("div", "panel ship-panel");
+    this.panelEl = panel;
 
     panel.appendChild(el("div", "panel-label", "SHIP DESIGNER"));
+
+    // Preset fleet picker — load a real or inferred design, then tweak freely.
+    this.presetSelect = this.buildPresetSelect();
+    panel.appendChild(this.presetSelect);
+    this.presetCaption = el("div", "preset-caption");
+    panel.appendChild(this.presetCaption);
+
+    // Editable name (mirrors the loaded preset; the launched ship takes it).
+    const nameField = el("label", "field name-field");
+    nameField.appendChild(el("span", "field-label", "Name"));
+    this.nameInput = document.createElement("input");
+    this.nameInput.type = "text";
+    this.nameInput.value = this.design.name;
+    this.nameInput.oninput = () => { this.design.name = this.nameInput.value; };
+    nameField.appendChild(this.nameInput);
+    panel.appendChild(nameField);
+
     this.stagesEl = el("div", "stages");
     panel.appendChild(this.stagesEl);
     const addBtn = button("+ add stage", () => {
       this.design.stages.push({ name: `Stage ${this.design.stages.length + 1}`, dryMass: 1000, propMass: 8000, isp: 320, thrust: 1e5 });
+      this.markCustom();
       this.renderStages();
       this.refreshBudget();
     });
@@ -85,12 +124,14 @@ export class ShipPanel {
     panel.appendChild(addBtn);
 
     const params = el("div", "design-params");
-    numberField(params, "Payload (t)", this.design.payloadMass / 1000, (v) => {
+    this.payloadInput = numberField(params, "Payload (t)", this.design.payloadMass / 1000, (v) => {
       this.design.payloadMass = v * 1000;
+      this.markCustom();
       this.refreshBudget();
     });
-    numberField(params, "LEO alt (km)", this.design.altitudeKm, (v) => {
+    this.altInput = numberField(params, "LEO alt (km)", this.design.altitudeKm, (v) => {
       this.design.altitudeKm = v;
+      this.markCustom();
     });
     panel.appendChild(params);
 
@@ -158,13 +199,14 @@ export class ShipPanel {
     this.design.stages.forEach((s, i) => {
       const row = el("div", "stage-row");
       row.appendChild(el("span", "stage-name", `${i + 1}`));
-      compactField(row, "dry t", s.dryMass / 1000, (v) => { s.dryMass = v * 1000; this.refreshBudget(); });
-      compactField(row, "prop t", s.propMass / 1000, (v) => { s.propMass = v * 1000; this.refreshBudget(); });
-      compactField(row, "Isp s", s.isp, (v) => { s.isp = v; this.refreshBudget(); });
-      compactField(row, "kN", s.thrust / 1000, (v) => { s.thrust = v * 1000; this.refreshBudget(); });
+      compactField(row, "dry t", s.dryMass / 1000, (v) => { s.dryMass = v * 1000; this.markCustom(); this.refreshBudget(); });
+      compactField(row, "prop t", s.propMass / 1000, (v) => { s.propMass = v * 1000; this.markCustom(); this.refreshBudget(); });
+      compactField(row, "Isp s", s.isp, (v) => { s.isp = v; this.markCustom(); this.refreshBudget(); });
+      compactField(row, "kN", s.thrust / 1000, (v) => { s.thrust = v * 1000; this.markCustom(); this.refreshBudget(); });
       if (this.design.stages.length > 1) {
         const rm = button("✕", () => {
           this.design.stages.splice(i, 1);
+          this.markCustom();
           this.renderStages();
           this.refreshBudget();
         });
@@ -184,6 +226,64 @@ export class ShipPanel {
       kv("Wet / final mass", `${(b.wetMass / 1000).toFixed(1)} / ${(b.finalMass / 1000).toFixed(1)} t`) +
       kv("Initial T/W", twr.toFixed(2) + (twr < 1 ? " (low thrust)" : "")) +
       `<div class="per-stage">${perStage} km/s</div>`;
+  }
+
+  /** A category-grouped <select> over the whole preset fleet. */
+  private buildPresetSelect(): HTMLSelectElement {
+    const sel = document.createElement("select");
+    sel.className = "preset-sel";
+    const custom = document.createElement("option");
+    custom.value = "";
+    custom.textContent = "— Custom / from scratch —";
+    sel.appendChild(custom);
+    for (const group of presetsByCategory()) {
+      const og = document.createElement("optgroup");
+      og.label = group.category;
+      for (const p of group.presets) {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.name;
+        og.appendChild(opt);
+      }
+      sel.appendChild(og);
+    }
+    sel.onchange = () => {
+      if (sel.value) this.loadPreset(sel.value);
+      else this.clearCaption();
+    };
+    return sel;
+  }
+
+  /** Load a preset into the live (editable) design and re-sync the controls. */
+  private loadPreset(id: string): void {
+    const preset = PRESETS_BY_ID.get(id);
+    if (!preset) return;
+    this.design = presetToDesign(preset);
+    this.nameInput.value = this.design.name;
+    this.payloadInput.value = String(this.design.payloadMass / 1000);
+    this.altInput.value = String(this.design.altitudeKm);
+    this.renderStages();
+    this.refreshBudget();
+    this.showCaption(preset);
+  }
+
+  private showCaption(p: ShipPreset): void {
+    const role = p.role === "launcher" ? "launch vehicle" : "in-space craft";
+    this.presetCaption.innerHTML =
+      `<span class="preset-meta">${p.category} · ${p.era} · ${role}</span>` +
+      `<span class="preset-blurb">${p.blurb}</span>`;
+  }
+
+  private clearCaption(): void {
+    this.presetCaption.innerHTML = "";
+  }
+
+  /** Any manual edit drops the "this is preset X" framing — it's now bespoke. */
+  private markCustom(): void {
+    if (this.presetSelect.value !== "") {
+      this.presetSelect.value = "";
+      this.clearCaption();
+    }
   }
 
   private launch(): void {

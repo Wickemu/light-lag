@@ -17,6 +17,7 @@ import { CommsViews } from "../render/commsViews.ts";
 import { Hud } from "../ui/hud.ts";
 import { ShipPanel } from "../ui/shipPanel.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
+import { KeyboardManager } from "../ui/keyboard.ts";
 import * as commands from "./commands.ts";
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
@@ -32,6 +33,7 @@ const commsViews = new CommsViews(sm);
 const hud = new Hud(uiRoot, sim, sm);
 const transferPanel = new TransferPanel(uiRoot, sim, sm);
 const shipPanel = new ShipPanel(uiRoot, sim, sm, (shipId) => transferPanel.open(shipId));
+const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel);
 
 // Open on a gentle warp so the planets are visibly in motion immediately.
 sim.setWarpIndex(6); // 1 day/s
@@ -58,7 +60,8 @@ function frame(now: number): void {
   fps = fps * 0.9 + (1 / Math.max(dtReal, 1e-4)) * 0.1;
 
   sim.advanceReal(dtReal); // 1) advance the sim
-  renderOnce(); // 2) render + HUD read the world
+  km.tick(dtReal);          // 2) apply keyboard camera movement before render
+  renderOnce(); // 3) render + HUD read the world
 
   requestAnimationFrame(frame);
 }
@@ -77,6 +80,7 @@ if (import.meta.env.DEV) {
     hud,
     shipPanel,
     transferPanel,
+    km,
     commands,
     renderOnce,
     /** Advance sim by `s` seconds and redraw — lets tools drive frames without rAF. */
