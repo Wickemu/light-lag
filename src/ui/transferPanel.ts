@@ -59,7 +59,7 @@ export class TransferPanel {
     this.panel.style.display = "none";
 
     const head = div("transfer-head");
-    head.appendChild(div("panel-label", "TRANSFER PLANNER"));
+    head.appendChild(div("panel-title", "TRANSFER PLANNER"));
     this.targetSel = document.createElement("select");
     this.targetSel.className = "target-sel";
     for (const id of TARGETS) {
@@ -78,7 +78,7 @@ export class TransferPanel {
 
     // Optional gravity-assist flyby body. "Direct" = no assist.
     const viaRow = div("transfer-head");
-    viaRow.appendChild(div("panel-label", "VIA FLYBY"));
+    viaRow.appendChild(div("section-label", "VIA FLYBY"));
     this.viaSel = document.createElement("select");
     this.viaSel.className = "target-sel";
     const none = document.createElement("option");
@@ -109,6 +109,7 @@ export class TransferPanel {
 
     const btns = div("transfer-btns");
     const opt = btn("Use optimum", () => this.selectBest());
+    opt.title = "Jump to the lowest-Δv departure/arrival in the porkchop.";
     this.commitBtn = btn("Commit transfer", () => this.commit());
     this.commitBtn.className = "primary";
     const close = btn("Close", () => this.close());
@@ -287,7 +288,7 @@ export class TransferPanel {
       const a = this.assist;
       if (!a) {
         this.readout.innerHTML = `No usable ${BODY_BY_ID.get(this.viaId)?.name ?? this.viaId} assist in range.`;
-        this.commitBtn.disabled = true;
+        setDisabled(this.commitBtn, true, "No usable gravity-assist solution in range.");
         return;
       }
       const haveDv = dvRemaining(ship);
@@ -307,14 +308,14 @@ export class TransferPanel {
         (feasible
           ? `<div class="ok">✓ injection + flyby within budget</div>`
           : `<div class="warn">✗ exceeds Δv budget</div>`);
-      this.commitBtn.disabled = !feasible;
+      setDisabled(this.commitBtn, !feasible, "Injection + flyby Δv exceeds the ship's budget.");
       return;
     }
 
     const cell = this.selectedCell();
     if (!cell || !ship || !isFinite(cell.total)) {
       this.readout.textContent = "No solution for this cell.";
-      this.commitBtn.disabled = true;
+      setDisabled(this.commitBtn, true, "No transfer solution for this cell — pick another or use the optimum.");
       return;
     }
     const haveDv = dvRemaining(ship);
@@ -332,7 +333,7 @@ export class TransferPanel {
       (feasible
         ? `<div class="ok">✓ injection within budget</div>`
         : `<div class="warn">✗ injection exceeds Δv budget</div>`);
-    this.commitBtn.disabled = !feasible;
+    setDisabled(this.commitBtn, !feasible, "Injection Δv exceeds the ship's budget.");
   }
 
   private commit(): void {
@@ -375,4 +376,10 @@ function btn(label: string, onClick: () => void): HTMLButtonElement {
 }
 function kv(k: string, v: string): string {
   return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+}
+/** Disable a button and surface the reason as a native hover tooltip. */
+function setDisabled(btn: HTMLButtonElement, disabled: boolean, reason = ""): void {
+  btn.disabled = disabled;
+  if (disabled && reason) btn.title = reason;
+  else btn.removeAttribute("title");
 }

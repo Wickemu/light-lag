@@ -42,12 +42,18 @@ function makeDotTexture(): THREE.Texture {
   return tex;
 }
 
+/** How much larger/brighter a body's marker gets while it is the focus. */
+const FOCUS_MARKER_GAIN = 1.6;
+
 interface BodyVisual {
   def: BodyDef;
   marker: THREE.Sprite;
   sphere: THREE.Mesh;
   orbit?: THREE.LineLoop;
   orbitArray?: Float32Array;
+  // Precomputed marker colours (avoid per-frame allocation in update()).
+  baseColor: THREE.Color;
+  focusColor: THREE.Color;
 }
 
 export class BodyViews {
@@ -83,7 +89,9 @@ export class BodyViews {
     const sphere = new THREE.Mesh(sphereGeo, sphereMat);
     this.sm.scene.add(sphere);
 
-    const visual: BodyVisual = { def, marker, sphere };
+    const baseColor = color.clone();
+    const focusColor = color.clone().lerp(new THREE.Color(0xffffff), 0.5);
+    const visual: BodyVisual = { def, marker, sphere, baseColor, focusColor };
 
     // Orbit path (non-root bodies).
     if (def.parent) {
@@ -114,6 +122,11 @@ export class BodyViews {
       this.sm.toRender(state.r, tmp);
       vis.marker.position.copy(tmp);
       vis.sphere.position.copy(tmp);
+
+      // Emphasise the focused body: a larger, brighter marker draws the eye.
+      const focused = def.id === this.sm.focusId;
+      vis.marker.scale.setScalar(MARKER_SCALE[def.kind] * (focused ? FOCUS_MARKER_GAIN : 1));
+      (vis.marker.material as THREE.SpriteMaterial).color.copy(focused ? vis.focusColor : vis.baseColor);
 
       if (vis.orbit && vis.orbitArray && def.parent) {
         // Orbit path lives relative to the parent: position the loop at the

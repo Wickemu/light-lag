@@ -86,7 +86,7 @@ export class Hud {
     // Body selector (right). With 43 bodies the flat list ran off-screen, so the
     // panel scrolls (under a sticky FOCUS header) and the bodies are grouped by kind.
     const list = el("div", "panel body-list");
-    list.appendChild(el("div", "panel-label", "FOCUS"));
+    list.appendChild(el("div", "panel-title", "FOCUS"));
     for (const g of GROUPS) {
       const inGroup = BODIES.filter((b) => b.kind === g.kind);
       if (inGroup.length === 0) continue;
@@ -176,6 +176,11 @@ export class Hud {
     const next = html.getAttribute("data-theme") === "light" ? "dark" : "light";
     html.setAttribute("data-theme", next);
     this.sm.setTheme(next);
+    try {
+      localStorage.setItem("lightlag.theme", next);
+    } catch (e) {
+      // Private-mode / storage-disabled: theme just won't persist. Non-fatal.
+    }
   }
 
   /** Called once per frame. */
