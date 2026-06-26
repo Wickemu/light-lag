@@ -100,11 +100,11 @@ export interface Ship {
    *  analytic brachistochrone trajectory in the root frame (primary is "sun"). */
   interstellarLeg?: InterstellarLeg;
   /** Set when the ship has touched down on a body's surface (after paying the
-   *  descent Δv). While landed it is parked on a surface-skimming orbit as a
-   *  visual placeholder; the flag drives the UI (offer Launch, not Land) and the
-   *  semantics ("safe touchdown is implicit" — we account the Δv, not the
-   *  guidance). Cleared on launch. */
-  landed?: { bodyId: string };
+   *  descent Δv). `surfaceDir` is the landing site as a BODY-FIXED unit vector, so
+   *  the ship co-rotates with the surface (moving at surface speed, not orbital
+   *  speed). Drives the UI (offer Launch, not Land) and the "safe touchdown is
+   *  implicit" semantics. Cleared on launch. */
+  landed?: { bodyId: string; surfaceDir: Vec3 };
   /** Accumulated proper time (s). Equal to coordinate time in-system; kept so an
    *  eventual relativistic expansion stays consistent. */
   tau: number;

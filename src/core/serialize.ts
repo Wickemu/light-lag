@@ -94,7 +94,7 @@ function qShip(s: Ship): Record<string, unknown> {
   if (s.burn) o.burn = qBurn(s.burn);
   if (s.transfer) o.transfer = qTransfer(s.transfer);
   if (s.interstellarLeg) o.interstellarLeg = qLeg(s.interstellarLeg);
-  if (s.landed) o.landed = { bodyId: s.landed.bodyId };
+  if (s.landed) o.landed = { bodyId: s.landed.bodyId, surfaceDir: qv(s.landed.surfaceDir) };
   o.stages = s.stages.map(qStage);
   return o;
 }

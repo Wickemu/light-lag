@@ -135,9 +135,10 @@ export class ShipViews {
       this.sm.toRender(ws.r, tmp);
       vis.marker.position.copy(tmp);
 
-      // Osculating orbit about the primary (elliptic only — hide if escaping).
+      // Osculating orbit about the primary (elliptic only — hide if escaping or
+      // landed, where there is no orbit).
       const el = shipOsculatingElements(ship, t);
-      if (el.e < 0.999 && el.a > 0) {
+      if (!ship.landed && el.e < 0.999 && el.a > 0) {
         vis.orbit.visible = true;
         const primary = BODY_BY_ID.get(ship.primary)!;
         this.sm.toRender(bodyState(primary, t).r, vis.orbit.position);
