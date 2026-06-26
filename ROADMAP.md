@@ -66,19 +66,18 @@ next, after four expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion). Each round stays additive: pure SI, deterministic, read-time
 analytic, suite green, golden hash documented if it moves.
 
-1. **In-system relativistic / finite-thrust burns** — the finite-thrust integrator is
-   still classical; a rapidity-based integrator would harden the interstellar layer.
-   *(see "Relativistic propulsion" → Still to do.)*
-2. **Parallel staging / strap-on boosters / drop tanks** — serial stages only today; real
+1. **Parallel staging / strap-on boosters / drop tanks** — serial stages only today; real
    launchers light boosters and core together and stage asymmetrically. *(see "Parallel
    staging".)*
 
-*(Done since last round: **stellar proper motion** — the star catalog now carries real
-Gaia/Hipparcos space-velocity vectors and drifts as a function of time, and interstellar
-legs lead the target (see "Stellar proper motion" below). Earlier rounds: low-thrust
-**capture/escape spirals** + **variable-Isp throttling** (see "Power-limited electric
-thrust"); **multi-flyby assist chains** + analytic **free-bend B-plane targeting** (see
-"Gravity assists").)*
+*(Done since last round: **in-system relativistic finite-thrust burns** — the in-sim
+integrator now composes velocity as a rapidity (capped below c), burns propellant at a
+constant proper-time rate, and tracks delivered Δv as rapidity, reducing to the classical
+integrator to f64 at sub-relativistic speeds (see "Relativistic propulsion" below). Earlier
+rounds: **stellar proper motion** (the star catalog drifts under real Gaia/Hipparcos space
+velocity; interstellar legs lead the target); low-thrust **capture/escape spirals** +
+**variable-Isp throttling**; **multi-flyby assist chains** + analytic **free-bend B-plane
+targeting**.)*
 
 These are candidates, not a commitment — pick the highest-leverage one when the next round
 starts. Lower-priority refinements (aerocapture + entry heating, N-body/J3 perturbations, a
@@ -89,9 +88,17 @@ defensible SNR-vs-range detection curve, comet outgassing) live in the backlog e
 - **Relativistic propulsion** — DONE (first cut): rapidity rocket equation,
   constant-proper-accel brachistochrone, time dilation / proper-time divergence,
   and an in-sim flyable interstellar leg; `PENDING_RELATIVISTIC` is now the flyable
-  `INTERSTELLAR_CRAFT` roster. Still to do: in-system relativistic burns (the
-  finite-thrust integrator is still classical) and multi-leg coast cruises rendered
-  in-sim. (**Stellar proper motion — DONE**; see its own entry below.)
+  `INTERSTELLAR_CRAFT` roster. **In-system relativistic finite-thrust burns — DONE:**
+  the in-sim integrator (`sim.advanceThrustShip`) is now special-relativistic —
+  `properToCoordinateAccel` (`math/relativity.ts`) turns the proper-frame specific
+  force (thrust + gravity) into the coordinate 3-acceleration, so velocity composes as
+  a rapidity and is capped below c; propellant burns at a constant *proper-time* rate
+  (`−ṁ/γ`, integrated so the rapidity ledger telescopes and the burn stays
+  chunk-invariant on the grid); and `burn.dvDone`/`dvTarget` are a delivered/target
+  rapidity (`ve·ln(m₀/m_f)`). It reduces to the classical integrator to f64 at the
+  sub-relativistic speeds every preset ship flies (golden hash unchanged). Still to do:
+  multi-leg coast cruises rendered in-sim, and a time-optimal in-system relativistic
+  trajectory planner. (**Stellar proper motion — DONE**; see its own entry below.)
 - **Power-limited electric thrust** — DONE: an `ElectricSource {powerW, eta, solar}`
   on a stage drives the *actual* thrust `F = min(F_rated, 2ηP/vₑ)`, with solar power
   falling as 1/r² toward the Sun (reactor power constant); the ship console reads

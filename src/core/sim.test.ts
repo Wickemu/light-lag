@@ -2,13 +2,13 @@ import { describe, it, expect } from "vitest";
 import { createWorld } from "./world.ts";
 import { Simulation } from "./sim.ts";
 import { spawnShip, sendBurn, defaultDesign, planTransfer } from "../app/commands.ts";
-import { shipOsculatingElements, totalMass, shipWorldState, applyImpulsiveDv, dvRemaining, shipThermalState } from "./ships.ts";
+import { shipOsculatingElements, totalMass, shipWorldState, shipRelativeState, applyImpulsiveDv, dvRemaining, shipThermalState } from "./ships.ts";
 import { summarizeOrbit, circularOrbit } from "./orbit.ts";
-import { exhaustVelocity, propellantForDv, thrustAt } from "./propulsion.ts";
+import { exhaustVelocity, propellantForDv, thrustAt, velocityFromRapidity, rapidity } from "./propulsion.ts";
 import { computePorkchop } from "./maneuver/porkchop.ts";
 import { bodyState } from "./ephemeris.ts";
-import { distance } from "./math/vec3.ts";
-import { BODY_BY_ID, DAY, AU } from "./constants.ts";
+import { distance, length } from "./math/vec3.ts";
+import { BODY_BY_ID, DAY, AU, C } from "./constants.ts";
 import { flyUntilCoast } from "./test-helpers.ts";
 
 const MU_EARTH = BODY_BY_ID.get("earth")!.mu;
@@ -54,6 +54,100 @@ describe("finite-thrust prograde burn", () => {
     expect(el.e).toBeLessThan(1); // still bound
     expect(el.a).toBeGreaterThan(0);
     expect(Number.isFinite(el.a)).toBe(true);
+  });
+});
+
+describe("relativistic finite-thrust burn", () => {
+  // A synthetic torchship: exhaust at 0.5c and a mass ratio of e² (rapidity
+  // capacity = ve·ln(e²) = c). The classical integrator would add velocity
+  // linearly and sail past c; the relativistic one composes rapidities and caps
+  // below c. ve = 0.5c → isp = 0.5c/g₀. Huge thrust ⇒ a ~10 s burn, so gravity
+  // loss is negligible and the final speed is a clean rapidity check.
+  const VE = 0.5 * C;
+  const torchDesign = () => ({
+    name: "Torch",
+    payloadMass: 1000,
+    altitudeKm: 400,
+    inclinationDeg: 0,
+    stages: [{ name: "S1", dryMass: 0, propMass: 6389, isp: VE / 9.80665, thrust: 1e11 }],
+  });
+
+  it("composes rapidity, caps below c, and never crosses c mid-burn", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, torchDesign());
+    const ship = sim.world.ships.get(id)!;
+    const m0 = totalMass(ship);
+    const propBefore = ship.stages[0]!.propMass;
+    const v0 = length(shipRelativeState(ship, 0).v); // primary-relative orbital speed
+
+    const target = 2e8; // m/s of RAPIDITY (< the c capacity, so it cuts cleanly)
+    expect(target).toBeLessThan(dvRemaining(ship)); // affordable → ACK, not NACK
+    sendBurn(sim, id, target, "prograde");
+
+    // Step through the (light-lagged) command delivery and the whole burn,
+    // sampling the primary-relative speed finely so we catch any c crossing.
+    const inFlight = () => sim.world.messages.some((m) => m.kind === "command" && m.targetId === id);
+    let maxSpeed = 0, guard = 0;
+    while ((ship.mode === "thrust" || inFlight()) && guard++ < 1_000_000) {
+      sim.step(1);
+      maxSpeed = Math.max(maxSpeed, length(shipRelativeState(ship, sim.world.t).v));
+    }
+    const vFinal = length(shipRelativeState(ship, sim.world.t).v);
+
+    // Never reached c at any point, and the classical Δv (≈ v0 + 2e8 ≈ 0.67c added
+    // linearly) would have, so this is a real relativistic difference.
+    expect(maxSpeed).toBeLessThan(C);
+    expect(vFinal).toBeLessThan(C);
+
+    // Final speed = the rapidity sum mapped back to velocity (prograde thrust stays
+    // along v, so rapidities add along the path). Gravity loss is ~0 at this thrust.
+    const expected = velocityFromRapidity(rapidity(v0) + target);
+    expect(vFinal).toBeCloseTo(expected, -6); // within ~1e6 m/s of ~1.75e8 (<1%)
+    expect(vFinal / C).toBeGreaterThan(0.57);
+    expect(vFinal / C).toBeLessThan(0.60);
+
+    // Propellant matches the relativistic rocket equation for the delivered
+    // rapidity: m₀/m_f = exp(Δφ/ve) ⇒ consumed = m₀(1 − e^(−Δφ/ve)).
+    const propConsumed = propBefore - ship.stages[0]!.propMass;
+    const expectedProp = m0 * (1 - Math.exp(-target / VE));
+    expect(Math.abs(propConsumed - expectedProp) / expectedProp).toBeLessThan(0.005);
+  });
+
+  it("a sub-relativistic burn is identical to the classical result (reduction)", () => {
+    // The same engine, but a small target: must match plain Tsiolkovsky to f64,
+    // proving the relativistic path reduces to the classical one at v ≪ c.
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, torchDesign());
+    const ship = sim.world.ships.get(id)!;
+    const m0 = totalMass(ship);
+    const propBefore = ship.stages[0]!.propMass;
+
+    sendBurn(sim, id, 1000, "prograde"); // 1 km/s ≈ rapidity to 12 sig figs
+    flyUntilCoast(sim, id);
+
+    const propConsumed = propBefore - ship.stages[0]!.propMass;
+    const expected = propellantForDv(VE, m0, 1000); // classical Tsiolkovsky
+    expect(Math.abs(propConsumed - expected) / expected).toBeLessThan(1e-6);
+  });
+
+  it("is chunk-invariant for grid-aligned stepping (the warp loop's absolute grid)", () => {
+    // The finite-thrust integrator sub-steps on a fixed 2 s ABSOLUTE grid, and the
+    // propellant ledger is an integral (split-invariant), so any grid-multiple
+    // chunking visits identical segment boundaries → identical state. (Sub-2 s
+    // chunking introduces off-grid boundaries and so differs at the truncation
+    // level, exactly as different RK4 step sizes do — not asserted here.)
+    const run = (chunk: number) => {
+      const sim = new Simulation(createWorld(1, 0));
+      const id = spawnShip(sim, torchDesign());
+      const ship = sim.world.ships.get(id)!;
+      sendBurn(sim, id, 2e8, "prograde");
+      const inFlight = () => sim.world.messages.some((m) => m.kind === "command" && m.targetId === id);
+      let guard = 0;
+      while ((ship.mode === "thrust" || inFlight()) && guard++ < 1_000_000) sim.step(chunk);
+      return length(shipRelativeState(ship, sim.world.t).v);
+    };
+    const a = run(2), b = run(10); // both multiples of the 2 s grid
+    expect(Math.abs(a - b) / b).toBeLessThan(1e-9);
   });
 });
 
