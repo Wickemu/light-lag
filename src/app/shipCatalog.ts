@@ -568,7 +568,9 @@ export function presetToDesign(preset: ShipPreset): ShipDesign {
     payloadMass: d.payloadMass,
     altitudeKm: d.altitudeKm,
     inclinationDeg: d.inclinationDeg,
-    stages: d.stages.map((s) => ({ ...s })),
+    // Deep-copy stages AND their boosters so editing the loaded design never
+    // mutates the shared catalog entry.
+    stages: d.stages.map((s) => ({ ...s, boosters: s.boosters?.map((b) => ({ ...b })) })),
   };
 }
 

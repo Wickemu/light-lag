@@ -34,7 +34,7 @@ import {
   presetsByCategory,
   presetToDesign,
 } from "../app/shipCatalog.ts";
-import { deltaVBudget, initialTWR, availablePowerW, thrustAt } from "../core/propulsion.ts";
+import { deltaVBudget, initialTWR, stageLiftoffThrust, availablePowerW, thrustAt } from "../core/propulsion.ts";
 import {
   totalMass,
   dvRemaining,
@@ -268,6 +268,7 @@ export class ShipPanel {
   private renderStages(): void {
     this.stagesEl.innerHTML = "";
     this.design.stages.forEach((s, i) => {
+      const block = el("div", "stage-block");
       const row = el("div", "stage-row");
       row.appendChild(el("span", "stage-name", `${i + 1}`));
       compactField(row, "dry t", s.dryMass / 1000, (v) => { s.dryMass = v * 1000; this.markCustom(); this.refreshBudget(); });
@@ -284,7 +285,41 @@ export class ShipPanel {
         rm.className = "rm-btn";
         row.appendChild(rm);
       }
-      this.stagesEl.appendChild(row);
+      block.appendChild(row);
+
+      // Strap-on boosters: ignite WITH this stage and burn in parallel (×N units
+      // that drop together when spent). The core keeps firing after they drop.
+      (s.boosters ?? []).forEach((bst, j) => {
+        const brow = el("div", "stage-row booster-row");
+        brow.appendChild(el("span", "stage-name", "↳"));
+        compactField(brow, "×N", bst.count ?? 1, (v) => { bst.count = Math.max(1, Math.round(v)); this.markCustom(); this.refreshBudget(); });
+        compactField(brow, "dry t", bst.dryMass / 1000, (v) => { bst.dryMass = v * 1000; this.markCustom(); this.refreshBudget(); });
+        compactField(brow, "prop t", bst.propMass / 1000, (v) => { bst.propMass = v * 1000; this.markCustom(); this.refreshBudget(); });
+        compactField(brow, "Isp s", bst.isp, (v) => { bst.isp = v; this.markCustom(); this.refreshBudget(); });
+        compactField(brow, "kN", bst.thrust / 1000, (v) => { bst.thrust = v * 1000; this.markCustom(); this.refreshBudget(); });
+        const rm = button("✕", () => {
+          s.boosters!.splice(j, 1);
+          if (s.boosters!.length === 0) delete s.boosters;
+          this.markCustom();
+          this.renderStages();
+          this.refreshBudget();
+        });
+        rm.className = "rm-btn";
+        brow.appendChild(rm);
+        block.appendChild(brow);
+      });
+
+      const addB = button("+ booster", () => {
+        (s.boosters ??= []).push({ name: "Booster", dryMass: 2000, propMass: 20000, isp: 280, thrust: 5e5, count: 2 });
+        this.markCustom();
+        this.renderStages();
+        this.refreshBudget();
+      });
+      addB.className = "add-booster";
+      addB.title = "Add strap-on boosters that ignite with this stage and burn in parallel.";
+      block.appendChild(addB);
+
+      this.stagesEl.appendChild(block);
     });
   }
 
@@ -292,10 +327,13 @@ export class ShipPanel {
     const b = deltaVBudget(this.design.stages, this.design.payloadMass);
     const twr = initialTWR(this.design.stages, this.design.payloadMass);
     const perStage = b.perStage.map((d, i) => `S${i + 1}: ${(d / 1000).toFixed(2)}`).join("  ");
+    const first = this.design.stages[0];
+    const hasBoosters = !!(first && first.boosters && first.boosters.length > 0);
     this.budgetEl.innerHTML =
       kv("Total Δv", `${(b.total / 1000).toFixed(2)} km/s`) +
       kv("Wet / final mass", `${(b.wetMass / 1000).toFixed(1)} / ${(b.finalMass / 1000).toFixed(1)} t`) +
       kv("Initial T/W", twr.toFixed(2) + (twr < 1 ? " (low thrust)" : "")) +
+      (hasBoosters ? kv("Liftoff thrust", `${(stageLiftoffThrust(first!) / 1000).toFixed(0)} kN (core + boosters)`) : "") +
       `<div class="per-stage">${perStage} km/s</div>`;
   }
 
