@@ -205,7 +205,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "jupiter", name: "Jupiter", parent: "sun", mu: 1.26686534e17, radius: 6.9911e7,
     kind: "planet", color: 0xd8a878,
-    rotationPeriod: 35730, hasSurface: false, J2: 0.014736, // 9.925 h; no solid surface
+    rotationPeriod: 35730, hasSurface: false, J2: 0.0146965, // 9.925 h; no solid surface. J2 from Juno (Iess et al. 2018)
     standish: {
       a: 5.20288700, aDot: -0.00011607, e: 0.04838624, eDot: -0.00013253,
       i: 1.30439695, iDot: -0.00183714, L: 34.39644051, LDot: 3034.74612775,

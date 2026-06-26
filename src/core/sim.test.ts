@@ -3,12 +3,12 @@ import { createWorld } from "./world.ts";
 import { Simulation } from "./sim.ts";
 import { spawnShip, sendBurn, defaultDesign, planTransfer } from "../app/commands.ts";
 import { shipOsculatingElements, totalMass, shipWorldState, applyImpulsiveDv, dvRemaining, shipThermalState } from "./ships.ts";
-import { summarizeOrbit } from "./orbit.ts";
-import { exhaustVelocity, propellantForDv } from "./propulsion.ts";
+import { summarizeOrbit, circularOrbit } from "./orbit.ts";
+import { exhaustVelocity, propellantForDv, thrustAt } from "./propulsion.ts";
 import { computePorkchop } from "./maneuver/porkchop.ts";
 import { bodyState } from "./ephemeris.ts";
 import { distance } from "./math/vec3.ts";
-import { BODY_BY_ID, DAY } from "./constants.ts";
+import { BODY_BY_ID, DAY, AU } from "./constants.ts";
 import { flyUntilCoast } from "./test-helpers.ts";
 
 const MU_EARTH = BODY_BY_ID.get("earth")!.mu;
@@ -106,6 +106,55 @@ describe("determinism of powered flight", () => {
     const coarse = run(7); // non-grid-aligned chunk
     const fine = run(0.5);
     expect(Math.abs(coarse.a - fine.a)).toBeLessThan(50); // metres
+  });
+});
+
+describe("solar-electric thrust derating in a finite burn", () => {
+  it("derates an electric burn by 1/r² with heliocentric distance", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, {
+      name: "Tug", payloadMass: 1000, altitudeKm: 400, inclinationDeg: 0,
+      stages: [{
+        name: "Hall", dryMass: 4000, propMass: 2500, isp: 2600, thrust: 0.6,
+        electric: { powerW: (0.6 * 2600 * 9.80665) / 1.2, eta: 0.6, solar: true },
+      }],
+    });
+    const ship = sim.world.ships.get(id)!;
+
+    // Relocate to a 3 AU heliocentric circular orbit — well outside 1 AU, where
+    // the solar array is power-starved and the electric thruster must derate. At
+    // 1 AU (Earth) the array is at rated power, so the bug would be invisible.
+    const r = 3 * AU;
+    ship.primary = "sun"; // a freshly spawned ship is already coasting
+    ship.elements = circularOrbit(r);
+    ship.epoch = 0;
+    ship.r = undefined;
+    ship.v = undefined;
+
+    const stage = ship.stages[0]!;
+    const ve = exhaustVelocity(stage.isp);
+
+    // Commanded Δv far exceeds what the window delivers, so the burn stays active.
+    sendBurn(sim, id, 5000, "prograde");
+    // Run until the light-lagged command reaches the ship and the burn is under way.
+    let guard = 0;
+    while (ship.mode !== "thrust" && guard++ < 200) sim.step(200);
+    expect(ship.mode).toBe("thrust");
+
+    // Propellant burned over a clean continuously-thrusting window is ṁ·Δt, which
+    // reveals the actual (derated) thrust applied.
+    const p1 = stage.propMass;
+    const t1 = sim.world.t;
+    sim.step(4000);
+    const dt = sim.world.t - t1;
+    const consumed = p1 - stage.propMass;
+
+    const expectedDerated = (thrustAt(stage, r) / ve) * dt; // ≈ rated/9 at 3 AU
+    const ratedAmount = (stage.thrust / ve) * dt;           // the pre-fix (buggy) amount
+
+    expect(ship.mode).toBe("thrust"); // still burning — 5000 m/s target unreached
+    expect(Math.abs(consumed - expectedDerated) / expectedDerated).toBeLessThan(0.01);
+    expect(consumed).toBeLessThan(ratedAmount / 5); // derating is ~9× at 3 AU
   });
 });
 

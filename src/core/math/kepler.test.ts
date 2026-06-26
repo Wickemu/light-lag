@@ -69,6 +69,41 @@ describe("elements <-> state round trip", () => {
   });
 });
 
+describe("hyperbolic elements <-> state round trip", () => {
+  // Hyperbolic orbits (e>1, a<0) drive every interplanetary capture and flyby —
+  // arrival.ts runs stateToElements on the inbound hyperbola — so coe2rv/rv2coe
+  // must round-trip on the hyperbolic branch too, not just for ellipses.
+  const cases: KeplerElements[] = [
+    { a: -1.2 * AU, e: 1.2, i: 0.4, Omega: 1.0, omega: 2.0, M: 0.7 },
+    { a: -0.8 * AU, e: 2.0, i: 0.3, Omega: 0.5, omega: 1.0, M: -1.5 },
+    { a: -0.5 * AU, e: 3.0, i: 0.6, Omega: 2.5, omega: 0.3, M: 1.3 },
+  ];
+
+  it("recovers hyperbolic elements (a<0, e>1) to high precision", () => {
+    for (const el of cases) {
+      const s = elementsToState(el, MU_SUN);
+      const el2 = stateToElements(s.r, s.v, MU_SUN);
+      expect(el2.a).toBeCloseTo(el.a, -3); // within ~1e3 m on 1e11
+      expect(el2.e).toBeCloseTo(el.e, 8);
+      expect(el2.i).toBeCloseTo(el.i, 8);
+      expect(angleClose(el2.Omega, el.Omega)).toBe(true);
+      expect(angleClose(el2.omega, el.omega)).toBe(true);
+      // Hyperbolic mean anomaly is unbounded (not wrapped); compare directly.
+      expect(Math.abs(el2.M - el.M)).toBeLessThan(1e-6);
+    }
+  });
+
+  it("is self-consistent through a full re-projection (state stable)", () => {
+    for (const el of cases) {
+      const s1 = elementsToState(el, MU_SUN);
+      const el2 = stateToElements(s1.r, s1.v, MU_SUN);
+      const s2 = elementsToState(el2, MU_SUN);
+      expect(distance(s1.r, s2.r) / length(s1.r)).toBeLessThan(1e-9);
+      expect(distance(s1.v, s2.v) / length(s1.v)).toBeLessThan(1e-9);
+    }
+  });
+});
+
 describe("orbit geometry", () => {
   it("places periapsis at a(1-e) and apoapsis at a(1+e)", () => {
     const a = 1.0 * AU;
