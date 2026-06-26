@@ -385,6 +385,9 @@ export class ShipPanel {
 
   private refreshShipList(): void {
     this.shipListEl.innerHTML = "";
+    if (this.sim.world.ships.size === 0) {
+      this.shipListEl.appendChild(el("div", "ship-empty", "No ships yet — launch one above."));
+    }
     for (const ship of this.sim.world.ships.values()) {
       const b = button(ship.name, () => this.select(ship.id));
       b.className = "ship-btn" + (ship.id === this.selectedId ? " active" : "");

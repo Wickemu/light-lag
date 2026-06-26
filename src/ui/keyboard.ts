@@ -24,7 +24,6 @@ import type { Hud } from "./hud.ts";
 import type { ShipPanel } from "./shipPanel.ts";
 import type { TransferPanel } from "./transferPanel.ts";
 import type { InterstellarPanel } from "./interstellarPanel.ts";
-import { BODIES } from "../core/constants.ts";
 
 const ORBIT_SPEED = 1.5; // rad/s while key is held
 const ZOOM_SPEED  = 2.0; // distance-multiplier rate per second
@@ -96,7 +95,7 @@ export class KeyboardManager {
 
     if (k === "Tab") {
       e.preventDefault();
-      this.cycleFocus(e.shiftKey ? -1 : 1);
+      this.hud.cycleFocus(e.shiftKey ? -1 : 1);
       return;
     }
 
@@ -123,13 +122,6 @@ export class KeyboardManager {
       }
       return;
     }
-  }
-
-  private cycleFocus(dir: 1 | -1): void {
-    const idx = BODIES.findIndex((b) => b.id === this.sm.focusId);
-    const next = (idx + dir + BODIES.length) % BODIES.length;
-    const body = BODIES[next];
-    if (body) this.hud.focus(body.id);
   }
 
   private snapView(): void {

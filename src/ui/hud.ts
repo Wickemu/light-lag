@@ -19,6 +19,19 @@ import { period as orbitalPeriod } from "../core/math/kepler.ts";
 import { length, distance } from "../core/math/vec3.ts";
 import { formatDate } from "../core/time.ts";
 
+/** Focus-list groups, in display order. The Sun (star) gets no header — it sits
+ *  alone at the top, directly under FOCUS. BODIES is ordered by heliocentric
+ *  distance, which interleaves moons and dwarfs; grouping by kind gives one clean
+ *  section per kind (distance order preserved within each). */
+const GROUPS: { kind: string; label: string }[] = [
+  { kind: "star", label: "" },
+  { kind: "planet", label: "Planets" },
+  { kind: "dwarf", label: "Dwarf planets" },
+  { kind: "asteroid", label: "Asteroids" },
+  { kind: "moon", label: "Moons" },
+  { kind: "comet", label: "Comets" },
+];
+
 export class Hud {
   private dateEl!: HTMLElement;
   private warpEl!: HTMLElement;
@@ -29,6 +42,9 @@ export class Hud {
   private labelLayer!: HTMLElement;
   private labels = new Map<string, HTMLElement>();
   private listButtons = new Map<string, HTMLButtonElement>();
+  /** Focus-list order as displayed (grouped by kind) — drives Tab cycling so the
+   *  keyboard and the visible list agree. */
+  private focusOrder: string[] = [];
 
   constructor(
     private root: HTMLElement,
@@ -67,17 +83,24 @@ export class Hud {
     clock.append(this.dateEl, warpRow);
     this.root.appendChild(clock);
 
-    // Body selector (right).
+    // Body selector (right). With 43 bodies the flat list ran off-screen, so the
+    // panel scrolls (under a sticky FOCUS header) and the bodies are grouped by kind.
     const list = el("div", "panel body-list");
     list.appendChild(el("div", "panel-label", "FOCUS"));
-    for (const b of BODIES) {
-      const btn = button(b.name, () => this.focus(b.id));
-      btn.classList.add("body-btn");
-      const swatch = el("span", "swatch");
-      swatch.style.background = `#${b.color.toString(16).padStart(6, "0")}`;
-      btn.prepend(swatch);
-      this.listButtons.set(b.id, btn);
-      list.appendChild(btn);
+    for (const g of GROUPS) {
+      const inGroup = BODIES.filter((b) => b.kind === g.kind);
+      if (inGroup.length === 0) continue;
+      if (g.label) list.appendChild(el("div", "body-group", g.label));
+      for (const b of inGroup) {
+        this.focusOrder.push(b.id);
+        const btn = button(b.name, () => this.focus(b.id));
+        btn.classList.add("body-btn");
+        const swatch = el("span", "swatch");
+        swatch.style.background = `#${b.color.toString(16).padStart(6, "0")}`;
+        btn.prepend(swatch);
+        this.listButtons.set(b.id, btn);
+        list.appendChild(btn);
+      }
     }
     this.root.appendChild(list);
 
@@ -91,8 +114,25 @@ export class Hud {
     // Controls hint + fps.
     const foot = el("div", "panel foot");
     this.fpsEl = el("span", "fps");
-    foot.innerHTML = `<span class="hint">drag/WASD/↑↓←→ orbit · scroll/±zoom · space pause · ,. warp · 1-8 focus · tab cycle · [F] ships · [V] views · [R] reset</span>`;
-    foot.appendChild(this.fpsEl);
+    const hint = el("div", "hint");
+    const shortcuts: [string, string][] = [
+      ["drag / WASD", "orbit"],
+      ["scroll / ±", "zoom"],
+      ["space", "pause"],
+      [", .", "warp"],
+      ["1–8", "focus"],
+      ["tab", "cycle"],
+      ["F", "ships"],
+      ["V", "views"],
+      ["R", "reset"],
+    ];
+    for (const [keys, label] of shortcuts) {
+      const item = el("span");
+      item.appendChild(el("span", "key", keys));
+      item.appendChild(el("span", "lbl", ` ${label}`));
+      hint.appendChild(item);
+    }
+    foot.append(hint, this.fpsEl);
     this.root.appendChild(foot);
 
     // Label layer.
@@ -110,8 +150,20 @@ export class Hud {
   focus(id: string): void {
     this.sm.focusBody(id);
     for (const [bid, btn] of this.listButtons) {
-      btn.classList.toggle("active", bid === id);
+      const active = bid === id;
+      btn.classList.toggle("active", active);
+      // Keep the focused body visible when it's selected from off-screen (Tab/1–8).
+      if (active) btn.scrollIntoView({ block: "nearest" });
     }
+  }
+
+  /** Step focus through the displayed (grouped) order; used by Tab cycling. */
+  cycleFocus(dir: 1 | -1): void {
+    const order = this.focusOrder;
+    if (order.length === 0) return;
+    const idx = order.indexOf(this.sm.focusId);
+    const next = (idx + dir + order.length) % order.length;
+    this.focus(order[next]!);
   }
 
   togglePause(): void {
