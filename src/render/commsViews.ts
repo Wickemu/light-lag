@@ -66,8 +66,9 @@ export class CommsViews {
   }
 
   update(world: WorldState, t: number): void {
-    // Comms layer hidden: tear down any in-flight visuals and skip.
-    if (!this.vis.layer("comms")) {
+    // Comms layer hidden, or the interstellar view is active (light-cones are an
+    // in-system overlay): tear down any in-flight visuals and skip.
+    if (this.sm.viewMode !== "system" || !this.vis.layer("comms")) {
       for (const [id, vis] of this.visuals) this.dispose(id, vis);
       return;
     }

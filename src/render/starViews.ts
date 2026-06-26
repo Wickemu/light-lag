@@ -43,7 +43,7 @@ export function starDirection(star: StarDef, t = 0): { x: number; y: number; z: 
   return { x: p.x / r, y: p.y / r, z: p.z / r };
 }
 
-function makeStarTexture(): THREE.Texture {
+export function makeStarTexture(): THREE.Texture {
   const size = 64;
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = size;
@@ -60,7 +60,7 @@ function makeStarTexture(): THREE.Texture {
 }
 
 /** Rough display colour from spectral class (OBAFGKM → blue…red). */
-function spectralColor(sp: string): number {
+export function spectralColor(sp: string): number {
   const c = sp.charAt(0).toUpperCase();
   switch (c) {
     case "O": case "B": return 0xaecbff;

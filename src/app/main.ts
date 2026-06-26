@@ -15,6 +15,7 @@ import { Visibility } from "../render/visibility.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { ShipViews } from "../render/shipViews.ts";
 import { StarViews } from "../render/starViews.ts";
+import { InterstellarView } from "../render/interstellarView.ts";
 import { CommsViews } from "../render/commsViews.ts";
 import { Hud } from "../ui/hud.ts";
 import { ShipPanel } from "../ui/shipPanel.ts";
@@ -38,6 +39,7 @@ const visibility = new Visibility();
 const views = new BodyViews(sm, visibility);
 const shipViews = new ShipViews(sm, uiRoot, visibility);
 const starViews = new StarViews(sm, uiRoot, visibility);
+const interstellarView = new InterstellarView(sm, uiRoot, visibility);
 const commsViews = new CommsViews(sm, visibility);
 const hud = new Hud(uiRoot, sim, sm, visibility);
 const transferPanel = new TransferPanel(uiRoot, sim, sm);
@@ -60,10 +62,13 @@ let fps = 60;
 /** Draw one frame from the current world state (one-way read). */
 function renderOnce(): void {
   sm.updateOrigin(world.t);
+  // Each view draws only in its own mode and parks in the other, so all are
+  // updated every frame; the cheap early-outs keep the idle set free.
   views.update(world.t);
   starViews.update(world.t);
   shipViews.update(world, world.t);
   commsViews.update(world, world.t);
+  interstellarView.update(world, world.t);
   sm.render();
   hud.update(fps, views);
   shipPanel.update(world.t);
@@ -93,6 +98,7 @@ if (import.meta.env.DEV) {
     views,
     shipViews,
     starViews,
+    interstellarView,
     commsViews,
     hud,
     shipPanel,

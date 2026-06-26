@@ -114,6 +114,52 @@ export class SceneManager {
     this.setFocusTarget(id, (t) => bodyPosition(id, t), dist);
   }
 
+  /** Camera/controls limits remembered for the in-system view while the
+   *  interstellar map borrows the single shared camera. */
+  private savedSystem?: { focusId: string; min: number; max: number };
+
+  /** Switch maps. The two views never share a frame, so this just reframes the
+   *  one camera: the interstellar view orbits Sol at its own scale and distance
+   *  limits; returning restores the in-system framing. The views themselves park
+   *  in the other mode (they read `viewMode` each frame). */
+  setViewMode(mode: ViewMode): void {
+    if (mode === this.viewMode) return;
+    this.viewMode = mode;
+    if (mode === "interstellar") {
+      this.savedSystem = {
+        focusId: this.focusId,
+        min: this.controls.minDistance,
+        max: this.controls.maxDistance,
+      };
+      this.frameInterstellar();
+    } else {
+      this.controls.minDistance = this.savedSystem?.min ?? 1e-3;
+      this.controls.maxDistance = this.savedSystem?.max ?? 5e6;
+      this.focusBody(this.savedSystem?.focusId ?? "sun");
+    }
+  }
+
+  /** Re-snap the camera to a sensible default for whichever view is active. */
+  resetView(): void {
+    if (this.viewMode === "interstellar") this.frameInterstellar();
+    else this.focusBody(this.focusId);
+  }
+
+  /** Frame the interstellar map: Sol at the render origin, camera above and back
+   *  along the ecliptic, the whole 12-ly neighbourhood in view. */
+  private frameInterstellar(): void {
+    // The interstellar view computes its own positions about Sol (the render
+    // origin), so the camera simply orbits (0,0,0); the focus point is irrelevant
+    // but kept on the Sun so the floating-origin bookkeeping stays sane.
+    this.setFocusTarget("sun", (t) => bodyPosition("sun", t));
+    this.controls.minDistance = 5;
+    this.controls.maxDistance = 5000;
+    this.controls.target.set(0, 0, 0);
+    this.camera.up.set(0, 0, 1);
+    this.camera.position.set(0, 360, 760);
+    this.controls.update();
+  }
+
   /** Reposition the camera at a distance from the focus, keeping its direction. */
   private placeCamera(dist: number): void {
     const dir = this.camera.position.clone().sub(this.controls.target);
