@@ -81,11 +81,15 @@ export class InterstellarView {
     this.sol.frustumCulled = false;
     this.root.add(this.sol);
 
+    // Screen-fixed like every other sprite in this view, so it reads as a steady
+    // halo rather than ballooning as you dolly toward Sol (minDistance is 5).
     const corona = new THREE.Sprite(new THREE.SpriteMaterial({
       map: makeGlowTexture(), color: 0xfff0cf,
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      sizeAttenuation: false, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     }));
-    corona.scale.setScalar(12);
+    // Child of the Sol point (scale 0.03), so the on-screen size composes to
+    // ~0.03·3 — a halo a few times the point.
+    corona.scale.setScalar(3);
     this.sol.add(corona);
   }
 
@@ -156,10 +160,13 @@ export class InterstellarView {
         live.add(ship.id);
         const vis = this.ships.get(ship.id) ?? this.buildShip(ship.id);
 
-        const thrusting = ship.mode === "thrust";
-        const color = thrusting ? THRUST_COLOR : COAST_COLOR;
-        (vis.marker.material as THREE.SpriteMaterial).color.setHex(color);
-        (vis.path.material as THREE.LineBasicMaterial).color.setHex(color);
+        // A flip-and-burn is under thrust the WHOLE leg — it never coasts (the
+        // trajectory is analytic, so ship.mode stays "coast" and can't tell us).
+        // Mark it as thrusting throughout; ▲ while accelerating, ▼ after the flip
+        // at the leg's midpoint.
+        const accelerating = t < (leg.tDepart + leg.tArrive) / 2;
+        (vis.marker.material as THREE.SpriteMaterial).color.setHex(THRUST_COLOR);
+        (vis.path.material as THREE.LineBasicMaterial).color.setHex(THRUST_COLOR);
 
         // Marker at the ship's true heliocentric position, scaled.
         this.toUnits(shipWorldState(ship, t).r, tmp);
@@ -173,7 +180,7 @@ export class InterstellarView {
         vis.marker.visible = true;
         vis.path.visible = true;
 
-        this.placeLabel(vis.label, vis.marker.position, w, h, true, ship.name + (thrusting ? " ▲" : ""));
+        this.placeLabel(vis.label, vis.marker.position, w, h, true, ship.name + (accelerating ? " ▲" : " ▼"));
       }
     }
 
@@ -207,6 +214,10 @@ export class InterstellarView {
     this.root.remove(vis.marker);
     this.root.remove(vis.path);
     vis.path.geometry.dispose();
+    // Release the per-ship materials (the shared `tex` map is owned for the
+    // view's lifetime — don't dispose it).
+    (vis.marker.material as THREE.Material).dispose();
+    (vis.path.material as THREE.Material).dispose();
     vis.label.remove();
     this.ships.delete(id);
   }

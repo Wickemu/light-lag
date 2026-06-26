@@ -114,28 +114,49 @@ export class SceneManager {
     this.setFocusTarget(id, (t) => bodyPosition(id, t), dist);
   }
 
-  /** Camera/controls limits remembered for the in-system view while the
-   *  interstellar map borrows the single shared camera. */
-  private savedSystem?: { focusId: string; min: number; max: number };
+  /** The exact in-system camera saved on entering the interstellar map, restored
+   *  on return — a faithful round-trip regardless of what the focus is (a ship as
+   *  readily as a body). */
+  private savedSystem?: {
+    camPos: THREE.Vector3;
+    camTarget: THREE.Vector3;
+    camUp: THREE.Vector3;
+    min: number;
+    max: number;
+  };
 
   /** Switch maps. The two views never share a frame, so this just reframes the
    *  one camera: the interstellar view orbits Sol at its own scale and distance
-   *  limits; returning restores the in-system framing. The views themselves park
-   *  in the other mode (they read `viewMode` each frame). */
+   *  limits; returning restores the exact in-system camera. The views themselves
+   *  park in the other mode (they read `viewMode` each frame). */
   setViewMode(mode: ViewMode): void {
     if (mode === this.viewMode) return;
     this.viewMode = mode;
     if (mode === "interstellar") {
       this.savedSystem = {
-        focusId: this.focusId,
+        camPos: this.camera.position.clone(),
+        camTarget: this.controls.target.clone(),
+        camUp: this.camera.up.clone(),
         min: this.controls.minDistance,
         max: this.controls.maxDistance,
       };
       this.frameInterstellar();
     } else {
-      this.controls.minDistance = this.savedSystem?.min ?? 1e-3;
-      this.controls.maxDistance = this.savedSystem?.max ?? 5e6;
-      this.focusBody(this.savedSystem?.focusId ?? "sun");
+      const s = this.savedSystem;
+      this.controls.minDistance = s?.min ?? 1e-3;
+      this.controls.maxDistance = s?.max ?? 5e6;
+      if (s) {
+        // Restore the camera verbatim. The in-system focus was never changed
+        // (the interstellar view ignores the floating origin), so the focused
+        // body/ship is still centred at the render origin = controls.target —
+        // including any focus chosen from a planner while the map was open.
+        this.camera.up.copy(s.camUp);
+        this.controls.target.copy(s.camTarget);
+        this.camera.position.copy(s.camPos);
+      } else {
+        this.focusBody("sun");
+      }
+      this.controls.update();
     }
   }
 
@@ -146,12 +167,10 @@ export class SceneManager {
   }
 
   /** Frame the interstellar map: Sol at the render origin, camera above and back
-   *  along the ecliptic, the whole 12-ly neighbourhood in view. */
+   *  along the ecliptic, the whole 12-ly neighbourhood in view. The in-system
+   *  focus is left untouched — the interstellar view computes its own positions
+   *  about Sol and never consults the floating origin. */
   private frameInterstellar(): void {
-    // The interstellar view computes its own positions about Sol (the render
-    // origin), so the camera simply orbits (0,0,0); the focus point is irrelevant
-    // but kept on the Sun so the floating-origin bookkeeping stays sane.
-    this.setFocusTarget("sun", (t) => bodyPosition("sun", t));
     this.controls.minDistance = 5;
     this.controls.maxDistance = 5000;
     this.controls.target.set(0, 0, 0);
