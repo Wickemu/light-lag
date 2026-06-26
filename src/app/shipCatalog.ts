@@ -27,7 +27,7 @@
  */
 
 import { type ShipDesign } from "./commands.ts";
-import { type Stage, exhaustVelocity } from "../core/propulsion.ts";
+import { type Stage, type Booster, exhaustVelocity } from "../core/propulsion.ts";
 import { C } from "../core/constants.ts";
 
 export type PresetCategory = "Historical" | "Current" | "Prototype" | "Sci-Fi";
@@ -56,6 +56,19 @@ const S = (name: string, dryMass: number, propMass: number, isp: number, thrust:
   propMass,
   isp,
   thrust,
+});
+
+/** A strap-on BOOSTER (parallel stage): an independent engine+tank that ignites
+ *  WITH its core stage and burns concurrently, dropping when its own propellant is
+ *  spent. `count` aggregates identical units that ignite and drop together (e.g.
+ *  Soyuz's four). Per-unit figures: dry/prop in kg, isp in s, thrust in N. */
+const B = (name: string, dryMass: number, propMass: number, isp: number, thrust: number, count = 1): Booster => ({
+  name,
+  dryMass,
+  propMass,
+  isp,
+  thrust,
+  count,
 });
 
 /** An ELECTRIC (power-limited) stage. The rated electrical power is DERIVED from
@@ -92,8 +105,8 @@ const design = (name: string, spec: DesignSpec): ShipDesign => ({
 // ════════════════════════════════════════════════════════════════════════════
 
 export const SHIP_PRESETS: ShipPreset[] = [
-  // ── HISTORICAL — launch vehicles (serial staging only; the engine cannot
-  //    honestly model parallel strap-ons, so Shuttle/Soyuz/Ariane are absent) ──
+  // ── HISTORICAL — launch vehicles (serial stacks and parallel strap-on
+  //    designs alike; the engine now models concurrent booster burns) ──
   {
     id: "saturn-v",
     name: "Saturn V",
@@ -147,6 +160,51 @@ export const SHIP_PRESETS: ShipPreset[] = [
       stages: [
         S("Stage 1", 6_736, 117_910, 296, 1_913e3), // LR-87, ~vac
         S("Stage 2", 2_719, 27_700, 316, 445e3), // LR-91, vac
+      ],
+    }),
+  },
+  {
+    id: "space-shuttle",
+    name: "Space Shuttle",
+    category: "Historical",
+    role: "launcher",
+    era: "1981–2011",
+    blurb:
+      "The definitive parallel-staged launcher: twin SRBs and the orbiter's three SSMEs all light at liftoff. The boosters burn out and drop at ~2 min while the SSMEs keep firing on the External Tank to near-orbital speed. Modeled as a core stage = SSMEs + ET (the ET is the dropped dry mass) with the two SRBs as strap-on boosters; the orbiter + cargo is the ~100 t payload, and OMS circularization is not modeled.",
+    // 2× RSRM SRB (gross ~590 t, propellant ~499 t, empty ~91 t, ~12.5 MN, Isp ~242 s SL).
+    // Core: 3× RS-25 (vacuum ~6.8 MN, Isp ~452 s) drawing the ~719 t ET (empty ~26.5 t).
+    design: design("Space Shuttle", {
+      payloadMass: 100_000, // orbiter (~78 t) + cargo
+      altitudeKm: 200,
+      inclinationDeg: 28.5,
+      stages: [
+        {
+          ...S("Orbiter + ET", 26_500, 719_000, 452, 6_000e3), // 3× RS-25, ET propellant
+          boosters: [B("SRB", 91_000, 499_000, 242, 12_450e3, 2)],
+        },
+      ],
+    }),
+  },
+  {
+    id: "soyuz",
+    name: "Soyuz (R-7)",
+    category: "Historical",
+    role: "launcher",
+    era: "1966–present",
+    blurb:
+      "Korolev's R-7 lineage and the most-flown launcher in history. Four conical strap-on boosters (the 'Korolev cross') and the core all ignite on the pad; the boosters drop at ~2 min while the core burns on to ~5 min, then a third stage finishes the job. ~7 t to LEO.",
+    // 4× Blok B/V/G/D: RD-107A, ~838 kN SL, Isp ~263 s, ~39 t propellant, ~3.8 t dry.
+    // Core Blok A: RD-108A, ~792 kN SL, Isp ~258 s, ~90 t prop. 3rd stage Blok I: RD-0110.
+    design: design("Soyuz (R-7)", {
+      payloadMass: 7_200,
+      altitudeKm: 200,
+      inclinationDeg: 51.6,
+      stages: [
+        {
+          ...S("Core (Blok A)", 6_545, 90_100, 258, 792e3),
+          boosters: [B("Strap-on", 3_784, 39_160, 263, 838_500, 4)],
+        },
+        S("Blok I", 2_355, 21_400, 326, 298e3), // 3rd stage, RD-0110
       ],
     }),
   },
@@ -273,6 +331,51 @@ export const SHIP_PRESETS: ShipPreset[] = [
     }),
   },
   {
+    id: "falcon-heavy",
+    name: "Falcon Heavy",
+    category: "Current",
+    role: "launcher",
+    era: "2018–present",
+    blurb:
+      "Three Falcon 9 cores: two side boosters strapped to a center core, all 27 Merlins lit at liftoff. The side boosters burn out and separate first; the throttled center core flies on, then the upper stage takes over. ~63.8 t to LEO expendable. Center core shown at a representative throttle so it outlives the boosters, as it does in flight.",
+    // Side boosters: full-thrust Falcon 9 first stages (~7.6 MN, Isp ~282 s SL).
+    // Center core throttled to ~70% average so it burns longer than the boosters.
+    design: design("Falcon Heavy", {
+      payloadMass: 63_800,
+      stages: [
+        {
+          // Representative ascent Isp (300 s), matching the Falcon 9 preset.
+          ...S("Center core", 25_600, 395_700, 300, 5_300e3), // throttled 9× Merlin 1D
+          boosters: [B("Side booster", 25_600, 395_700, 300, 7_607e3, 2)],
+        },
+        S("Stage 2", 3_900, 92_670, 348, 981e3), // 1× Merlin Vac
+      ],
+    }),
+  },
+  {
+    id: "ariane-5",
+    name: "Ariane 5 ECA",
+    category: "Current",
+    role: "launcher",
+    era: "2002–2023",
+    blurb:
+      "Europe's heavy-lift workhorse: two huge solid boosters (EAP) flanking the cryogenic Vulcain core (EPC), all lit on the pad. The solids drop at ~2 min; the EPC burns on for ~9 min, then the cryogenic ESC-A upper stage delivers the payload. ~20 t to LEO.",
+    // 2× EAP P241: ~6.47 MN, Isp ~275 s, ~240 t propellant, ~33 t dry.
+    // EPC H173: Vulcain 2, ~1.34 MN vac, Isp ~432 s, ~175 t prop. Upper: HM7B.
+    design: design("Ariane 5 ECA", {
+      payloadMass: 20_000,
+      altitudeKm: 260,
+      inclinationDeg: 6,
+      stages: [
+        {
+          ...S("EPC core", 14_700, 175_000, 432, 1_340e3), // Vulcain 2 (vac-weighted)
+          boosters: [B("EAP", 33_000, 240_000, 275, 6_470e3, 2)],
+        },
+        S("ESC-A", 4_540, 14_900, 446, 67e3), // HM7B cryogenic upper
+      ],
+    }),
+  },
+  {
     id: "electron",
     name: "Electron",
     category: "Current",
@@ -297,7 +400,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
     role: "launcher",
     era: "2012–2024",
     blurb:
-      "ESA's small launcher — genuinely serial (three solid stages stacked, then a liquid AVUM kick), which the engine models faithfully where strap-on rockets cannot. ~1.5 t to low orbit.",
+      "ESA's small launcher — genuinely serial: three solid stages stacked, then a liquid AVUM kick. ~1.5 t to low orbit.",
     design: design("Vega", {
       payloadMass: 1_500,
       altitudeKm: 700,
@@ -568,7 +671,9 @@ export function presetToDesign(preset: ShipPreset): ShipDesign {
     payloadMass: d.payloadMass,
     altitudeKm: d.altitudeKm,
     inclinationDeg: d.inclinationDeg,
-    stages: d.stages.map((s) => ({ ...s })),
+    // Deep-copy stages AND their boosters so editing the loaded design never
+    // mutates the shared catalog entry.
+    stages: d.stages.map((s) => ({ ...s, boosters: s.boosters?.map((b) => ({ ...b })) })),
   };
 }
 

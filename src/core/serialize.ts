@@ -30,7 +30,7 @@ import {
   type MessageInFlight, type ShipBurn, type ShipTransfer, type ShipCommand,
   type InterstellarLeg, type SpiralLeg,
 } from "./world.ts";
-import { type Stage } from "./propulsion.ts";
+import { type Stage, type Booster } from "./propulsion.ts";
 import { type Vec3 } from "./math/vec3.ts";
 import { type KeplerElements } from "./math/kepler.ts";
 
@@ -50,8 +50,18 @@ function qEl(el: KeplerElements) {
   return { a: q(el.a), e: q(el.e), i: q(el.i), Omega: q(el.Omega), omega: q(el.omega), M: q(el.M) };
 }
 
-function qStage(s: Stage) {
-  return { name: s.name, dryMass: q(s.dryMass), propMass: q(s.propMass), isp: q(s.isp), thrust: q(s.thrust) };
+function qBooster(b: Booster): Record<string, unknown> {
+  const o: Record<string, unknown> = { name: b.name, dryMass: q(b.dryMass), propMass: q(b.propMass), isp: q(b.isp), thrust: q(b.thrust) };
+  if (b.count !== undefined) o.count = b.count;
+  return o;
+}
+
+function qStage(s: Stage): Record<string, unknown> {
+  const o: Record<string, unknown> = { name: s.name, dryMass: q(s.dryMass), propMass: q(s.propMass), isp: q(s.isp), thrust: q(s.thrust) };
+  // Omit an absent or fully-spent (spliced-to-empty) booster set so a stage with
+  // no live boosters serializes identically to a plain serial stage.
+  if (s.boosters && s.boosters.length > 0) o.boosters = s.boosters.map(qBooster);
+  return o;
 }
 
 function qBurn(b: ShipBurn) {

@@ -61,8 +61,9 @@ export function spawnShip(sim: Simulation, design: ShipDesign): string {
     elements: circularOrbit(radius, design.inclinationDeg * DEG, 0, 0),
     epoch: sim.world.t,
     payloadMass: design.payloadMass,
-    // Deep-copy stages so the live ship and the design template don't alias.
-    stages: design.stages.map((s) => ({ ...s })),
+    // Deep-copy stages (and their boosters) so the live ship and the design
+    // template don't alias — the sim mutates propMass and splices spent boosters.
+    stages: design.stages.map((s) => ({ ...s, boosters: s.boosters?.map((b) => ({ ...b })) })),
     activeStage: 0,
     tau: 0,
   };

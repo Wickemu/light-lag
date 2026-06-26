@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createWorld } from "./world.ts";
 import { Simulation } from "./sim.ts";
-import { spawnShip, sendBurn, defaultDesign, planTransfer } from "../app/commands.ts";
+import { spawnShip, sendBurn, defaultDesign, planTransfer, type ShipDesign } from "../app/commands.ts";
 import { shipOsculatingElements, totalMass, shipWorldState, shipRelativeState, applyImpulsiveDv, dvRemaining, shipThermalState } from "./ships.ts";
 import { summarizeOrbit, circularOrbit } from "./orbit.ts";
 import { exhaustVelocity, propellantForDv, thrustAt, velocityFromRapidity, rapidity } from "./propulsion.ts";
@@ -535,5 +535,127 @@ describe("staging", () => {
     // After coast the burn record is cleared, so verify via remaining propellant:
     expect(ship.stages[0]!.propMass).toBeLessThan(1); // first tank emptied
     expect(ship.stages[1]!.propMass).toBeGreaterThan(0); // second still has fuel
+  });
+});
+
+describe("parallel staging (in-sim)", () => {
+  // A heavy first stage with two unequal-Isp strap-on boosters, then a small upper.
+  const heavyDesign = (): ShipDesign => ({
+    name: "Heavy", payloadMass: 3000, altitudeKm: 400, inclinationDeg: 28.5,
+    stages: [
+      {
+        name: "Core", dryMass: 5000, propMass: 50000, isp: 300, thrust: 1.2e6,
+        boosters: [{ name: "SRB", dryMass: 2000, propMass: 40000, isp: 280, thrust: 6e5, count: 2 }],
+      },
+      { name: "Upper", dryMass: 2000, propMass: 15000, isp: 340, thrust: 2.0e5 },
+    ],
+  });
+
+  // Analytic figures for the concurrent core+boosters phase (different Isp ⇒ the
+  // blend is genuine, not a no-op).
+  const veC = exhaustVelocity(300), veB = exhaustVelocity(280);
+  const F = 1.2e6 + 2 * 6e5;
+  const mdot = 1.2e6 / veC + (2 * 6e5) / veB;
+  const veEff = F / mdot;
+  const m0 = 3000 + (55000 + 2 * 42000) + 17000; // payload + core wet + boosters wet + upper wet
+
+  it("totalMass counts payload + core + live boosters + upper stage", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, heavyDesign());
+    const ship = sim.world.ships.get(id)!;
+    // 3000 payload + 55t core + 2×42t boosters + 17t upper
+    expect(totalMass(ship)).toBeCloseTo(m0, 6);
+  });
+
+  it("spends propellant at the thrust-weighted vₑ_eff = F/ṁ (single parallel phase)", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, heavyDesign());
+    const ship = sim.world.ships.get(id)!;
+    const dvTarget = 1000; // small: no reservoir empties, so vₑ_eff is constant
+
+    sendBurn(sim, id, dvTarget, "prograde");
+    flyUntilCoast(sim, id);
+
+    // Single phase: boosters survive, stage hasn't advanced.
+    expect(ship.activeStage).toBe(0);
+    expect(ship.stages[0]!.boosters!.length).toBe(1);
+
+    const boosterProp = ship.stages[0]!.boosters!.reduce((s, b) => s + b.propMass * (b.count ?? 1), 0);
+    const consumed = (50000 + 2 * 40000) - (ship.stages[0]!.propMass + boosterProp);
+    const predicted = m0 * (1 - Math.exp(-dvTarget / veEff)); // m0·(1 − e^(−Δv/vₑ_eff))
+    expect(Math.abs(consumed - predicted) / predicted).toBeLessThan(1e-4);
+
+    // Both tanks drained, in proportion to their mass flow ṁ.
+    const coreConsumed = 50000 - ship.stages[0]!.propMass;
+    const boosterConsumed = 2 * 40000 - boosterProp;
+    expect(coreConsumed / boosterConsumed).toBeCloseTo((1.2e6 / veC) / ((2 * 6e5) / veB), 2);
+  });
+
+  it("drops boosters and the dead core, advancing to the upper stage; Δv ledger closes", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, heavyDesign());
+    const ship = sim.world.ships.get(id)!;
+    const dvBefore = dvRemaining(ship);
+    const dvTarget = 5500; // > the ~4.77 km/s of stage 0: empties core then boosters
+
+    sendBurn(sim, id, dvTarget, "prograde");
+    flyUntilCoast(sim, id);
+
+    // The core empties first; the longer-lived boosters push the dead core, then
+    // both drop and the upper stage ignites.
+    expect(ship.activeStage).toBe(1);
+    expect(ship.stages[0]!.boosters?.length ?? 0).toBe(0);
+    expect(ship.stages[0]!.propMass).toBeLessThan(1);
+    expect(ship.stages[1]!.propMass).toBeGreaterThan(0);
+    // Δv is the conserved currency: remaining capacity drops by the delivered Δv.
+    const delivered = dvBefore - dvRemaining(ship);
+    expect(Math.abs(delivered - dvTarget) / dvTarget).toBeLessThan(0.01);
+  });
+
+  it("is chunk-invariant: the propellant ledger telescopes regardless of step size", () => {
+    const run = (chunk: number): number => {
+      const sim = new Simulation(createWorld(1, 0));
+      const id = spawnShip(sim, heavyDesign());
+      const ship = sim.world.ships.get(id)!;
+      sendBurn(sim, id, 1000, "prograde");
+      let guard = 0;
+      const inFlight = (): boolean => sim.world.messages.some((mm) => mm.kind === "command" && mm.targetId === id);
+      while ((ship.mode === "thrust" || inFlight()) && guard++ < 200000) sim.step(chunk);
+      return ship.stages[0]!.propMass + ship.stages[0]!.boosters!.reduce((s, b) => s + b.propMass * (b.count ?? 1), 0);
+    };
+    expect(run(10)).toBeCloseTo(run(1), 3);
+  });
+
+  it("an isp=0 booster does not hang the in-sim burn; the ship coasts with finite state", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, {
+      name: "Degenerate", payloadMass: 3000, altitudeKm: 400, inclinationDeg: 28.5,
+      stages: [{
+        name: "Core", dryMass: 5000, propMass: 50000, isp: 300, thrust: 1.2e6,
+        boosters: [{ name: "bad", dryMass: 2000, propMass: 20000, isp: 0, thrust: 5e5 }],
+      }],
+    });
+    const ship = sim.world.ships.get(id)!;
+    sendBurn(sim, id, 1000, "prograde");
+    flyUntilCoast(sim, id); // throws if the burn never completes (the hang we fixed)
+    expect(ship.mode).toBe("coast");
+    expect(Number.isFinite(ship.elements!.a)).toBe(true);
+  });
+
+  it("applyImpulsiveDv delivers a just-affordable boostered burn instead of draining then NACKing", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, {
+      name: "Edge", payloadMass: 5000, altitudeKm: 400, inclinationDeg: 28.5,
+      stages: [{
+        name: "Core", dryMass: 10000, propMass: 100000, isp: 400, thrust: 1e6,
+        boosters: [{ name: "B", dryMass: 3000, propMass: 30000, isp: 250, thrust: 1e6 }],
+      }],
+    });
+    const ship = sim.world.ships.get(id)!;
+    const full = dvRemaining(ship);
+    // dv = the whole budget plus a sub-tolerance sliver: must succeed (within the
+    // +1e-6 affordability gate), not return false after emptying the tanks.
+    expect(applyImpulsiveDv(ship, full + 5e-7)).toBe(true);
+    expect(dvRemaining(ship)).toBeLessThan(1);
   });
 });

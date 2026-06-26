@@ -82,4 +82,38 @@ describe("canonical serialization", () => {
     expect(w2.ships.get("b")!.transfer!.targetId).toBe("mars");
     expect(w2.t).toBe(w.t);
   });
+
+  it("round-trips a boostered stage (strap-ons + count) and stays hash-stable", () => {
+    const w = createWorld(3, 99);
+    const boostered: Ship = {
+      ...mkShip("heavy"),
+      stages: [
+        {
+          name: "Core", dryMass: 5000, propMass: 50000, isp: 300, thrust: 1.2e6,
+          boosters: [{ name: "SRB", dryMass: 2000, propMass: 40000, isp: 280, thrust: 6e5, count: 2 }],
+        },
+        { name: "Upper", dryMass: 2000, propMass: 15000, isp: 340, thrust: 2e5 },
+      ],
+    };
+    w.ships.set("heavy", boostered);
+
+    const s1 = serializeWorld(w);
+    const w2 = deserializeWorld(s1);
+    expect(serializeWorld(w2)).toBe(s1); // idempotent
+    expect(hashWorld(w2)).toBe(hashWorld(w));
+    const b = w2.ships.get("heavy")!.stages[0]!.boosters![0]!;
+    expect(b.count).toBe(2);
+    expect(b.propMass).toBe(40000);
+    expect(b.name).toBe("SRB");
+  });
+
+  it("a plain serial stage serializes identically to one with an empty booster set", () => {
+    const w1 = createWorld(1, 0);
+    w1.ships.set("a", mkShip("a"));
+    const w2 = createWorld(1, 0);
+    const withEmpty = mkShip("a");
+    withEmpty.stages[0]!.boosters = []; // e.g. all boosters spent and spliced
+    w2.ships.set("a", withEmpty);
+    expect(hashWorld(w2)).toBe(hashWorld(w1)); // empty set omitted, not serialized
+  });
 });

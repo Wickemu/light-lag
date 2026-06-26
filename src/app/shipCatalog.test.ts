@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from "vitest";
 import { SHIP_PRESETS, PRESETS_BY_ID, presetToDesign } from "./shipCatalog.ts";
-import { deltaVBudget, exhaustVelocity } from "../core/propulsion.ts";
+import { deltaVBudget, exhaustVelocity, stageLiftoffThrust } from "../core/propulsion.ts";
 import { C } from "../core/constants.ts";
 
 /** Faithfulness ceiling: classical Tsiolkovsky is only honest well below c. Every
@@ -34,24 +34,44 @@ describe("ship catalog", () => {
           expect(s.propMass).toBeGreaterThan(0);
           expect(s.isp).toBeGreaterThan(0);
           expect(s.thrust).toBeGreaterThan(0);
+          for (const bst of s.boosters ?? []) {
+            expect(bst.dryMass).toBeGreaterThanOrEqual(0);
+            expect(bst.propMass).toBeGreaterThan(0);
+            expect(bst.isp).toBeGreaterThan(0);
+            expect(bst.thrust).toBeGreaterThan(0);
+            expect(bst.count ?? 1).toBeGreaterThanOrEqual(1);
+            expect(Number.isInteger(bst.count ?? 1)).toBe(true);
+          }
         }
       });
 
       it("is sub-relativistic (classical engine stays honest)", () => {
         for (const s of p.design.stages) {
           expect(exhaustVelocity(s.isp)).toBeLessThan(MAX_VE);
+          for (const bst of s.boosters ?? []) expect(exhaustVelocity(bst.isp)).toBeLessThan(MAX_VE);
         }
         const b = deltaVBudget(p.design.stages, p.design.payloadMass);
         expect(b.total).toBeGreaterThan(0);
         expect(Number.isFinite(b.total)).toBe(true);
         expect(b.total).toBeLessThan(MAX_DV);
         expect(b.finalMass).toBeGreaterThan(0); // no stage burns into negative mass
+        // Liftoff thrust must clear the fully-fuelled stack (T/W > 1 at the pad)
+        // for launchers — boosters included.
+        if (p.role === "launcher") {
+          expect(stageLiftoffThrust(p.design.stages[0]!)).toBeGreaterThan(b.wetMass * 9.80665);
+        }
       });
 
       it("deep-copies cleanly (no aliasing the catalog)", () => {
         const d = presetToDesign(p);
         d.stages[0]!.propMass = -999;
         expect(p.design.stages[0]!.propMass).toBeGreaterThan(0);
+        // Boosters must be deep-copied too (the UI and sim mutate them in place).
+        const boostered = p.design.stages.findIndex((s) => (s.boosters?.length ?? 0) > 0);
+        if (boostered >= 0) {
+          d.stages[boostered]!.boosters![0]!.propMass = -999;
+          expect(p.design.stages[boostered]!.boosters![0]!.propMass).toBeGreaterThan(0);
+        }
       });
     });
   }
@@ -65,7 +85,7 @@ describe("ship catalog — performance table", () => {
     const rows = SHIP_PRESETS.map((p) => {
       const b = deltaVBudget(p.design.stages, p.design.payloadMass);
       const s0 = p.design.stages[0]!;
-      const twr = s0.thrust / (b.wetMass * G0);
+      const twr = stageLiftoffThrust(s0) / (b.wetMass * G0); // counts strap-on boosters
       const maxIsp = Math.max(...p.design.stages.map((s) => s.isp));
       return {
         name: p.name,

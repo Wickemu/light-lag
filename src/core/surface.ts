@@ -26,7 +26,7 @@
  */
 
 import { type BodyDef } from "./constants.ts";
-import { type Stage, exhaustVelocity, deltaVBudget } from "./propulsion.ts";
+import { type Stage, deltaVBudget, stageWetMass, stageBurnCost } from "./propulsion.ts";
 import { circularSpeed } from "./orbit.ts";
 import { hohmann } from "./maneuver/hohmann.ts";
 import { rk4 } from "./math/integrators.ts";
@@ -247,34 +247,24 @@ export interface SurfaceManeuverCost {
 /**
  * Propellant and burn time to deliver `dv` on a staged stack with `payload` on
  * top, walking stages exactly as the rocket equation requires (a spent stage is
- * dropped before the next ignites). Read-only — it mutates nothing. Reuses
- * deltaVBudget for the affordability headroom.
+ * dropped before the next ignites). Read-only — it mutates nothing. Booster-aware
+ * via `stageBurnCost` (concurrent core+booster reservoirs), so the propellant/burn
+ * time agree with the booster-aware `deltaVBudget` headroom; reduces to the serial
+ * closed form when there are no boosters.
  */
 export function surfaceManeuverCost(stages: Stage[], payload: number, dv: number): SurfaceManeuverCost {
   const available = deltaVBudget(stages, payload).total;
-  let current = payload + stages.reduce((s, st) => s + st.dryMass + st.propMass, 0);
+  let current = payload + stages.reduce((s, st) => s + stageWetMass(st), 0);
   let remaining = dv;
   let propellant = 0;
   let burnTime = 0;
   for (const st of stages) {
     if (remaining <= 0) break;
-    const ve = exhaustVelocity(st.isp);
-    const m0 = current;
-    const mfFull = m0 - st.propMass; // mass if this stage burns to dry
-    const stageDv = mfFull > 0 ? ve * Math.log(m0 / mfFull) : 0;
-    const mdot = st.thrust / ve; // kg/s
-    if (stageDv >= remaining) {
-      // Partial burn of this stage covers the rest.
-      const propUsed = m0 * (1 - Math.exp(-remaining / ve));
-      propellant += propUsed;
-      burnTime += propUsed / mdot;
-      remaining = 0;
-      break;
-    }
-    propellant += st.propMass;
-    burnTime += st.propMass / mdot;
-    remaining -= stageDv;
-    current = mfFull - st.dryMass; // drop the spent stage
+    const cost = stageBurnCost(st, current, remaining);
+    propellant += cost.propUsed;
+    burnTime += cost.burnTime;
+    remaining -= cost.dvDelivered;
+    current = cost.finalMass; // drop the spent stage (and its boosters)
   }
   return { dv, propellant, burnTime, feasible: available - dv };
 }

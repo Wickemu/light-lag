@@ -62,26 +62,28 @@ findings fixed. **The physics core is locked.**
 ## Next core-mechanics round — candidate priorities (highest-leverage first)
 
 A curated, ranked view *into* the backlog below — the threads most worth picking up
-next, after four expansion rounds (Solar System + landing → assists + toolkit → J2 →
-electric propulsion). Each round stays additive: pure SI, deterministic, read-time
-analytic, suite green, golden hash documented if it moves.
+next, after five expansion rounds (Solar System + landing → assists + toolkit → J2 →
+electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
+read-time analytic, suite green, golden hash documented if it moves.
 
-1. **Parallel staging / strap-on boosters / drop tanks** — serial stages only today; real
-   launchers light boosters and core together and stage asymmetrically. *(see "Parallel
-   staging".)*
+1. **Aerocapture + atmospheric-entry heating** — descent uses an aerobraking fraction
+   today; a full entry trajectory with a heat-flux/temperature budget is the next
+   atmospheric-fidelity step. *(see "Landing / takeoff".)*
 
-*(Done since last round: **in-system relativistic finite-thrust burns** — the in-sim
-integrator now composes velocity as a rapidity (capped below c), burns propellant at a
-constant proper-time rate, and tracks delivered Δv as rapidity, reducing to the classical
-integrator to f64 at sub-relativistic speeds (see "Relativistic propulsion" below). Earlier
-rounds: **stellar proper motion** (the star catalog drifts under real Gaia/Hipparcos space
-velocity; interstellar legs lead the target); low-thrust **capture/escape spirals** +
-**variable-Isp throttling**; **multi-flyby assist chains** + analytic **free-bend B-plane
-targeting**.)*
+*(Done since last round: **parallel staging / strap-on boosters** — a stage can carry
+strap-on boosters that ignite with it and burn concurrently at the thrust-weighted
+vₑ_eff = F/ṁ, each dropping as it empties while the core keeps firing; honest Δv budget,
+in-sim concurrent-burn integrator, and Falcon Heavy / Space Shuttle / Soyuz / Ariane 5
+presets (see "Parallel staging" below). Earlier rounds: **in-system relativistic
+finite-thrust burns** — the in-sim integrator composes velocity as a rapidity (capped below
+c), burns propellant at a constant proper-time rate, and tracks delivered Δv as rapidity,
+reducing to the classical integrator to f64 at sub-relativistic speeds; **stellar proper
+motion**; low-thrust **capture/escape spirals** + **variable-Isp throttling**; **multi-flyby
+assist chains** + analytic **free-bend B-plane targeting**.)*
 
 These are candidates, not a commitment — pick the highest-leverage one when the next round
-starts. Lower-priority refinements (aerocapture + entry heating, N-body/J3 perturbations, a
-defensible SNR-vs-range detection curve, comet outgassing) live in the backlog entries below.
+starts. Lower-priority refinements (N-body/J3 perturbations, a defensible SNR-vs-range
+detection curve, comet outgassing, drop-tank cross-feed) live in the backlog entries below.
 
 ## Backlog — known engine gaps (future layers)
 
@@ -118,7 +120,23 @@ defensible SNR-vs-range detection curve, comet outgassing) live in the backlog e
   thrust↔Isp↔time trade explicit (`exhaustForThrust`/`jetPower` helpers). Still to
   do: an *in-sim flyable* capture/escape spiral (the analytic leg lands first) and
   a time-optimal variable-Isp control law.
-- **Parallel staging** / strap-on boosters / drop tanks (serial stages only now).
+- **Parallel staging** — DONE: a `Stage` can carry strap-on `boosters` (an
+  independent engine+tank, with a `count` for identical units) that ignite WITH it
+  and burn concurrently. The Δv budget (`stageDeltaV`/`deltaVBudget`) decomposes a
+  boostered stage into parallel sub-phases at the thrust-weighted vₑ_eff = F/ṁ,
+  each reservoir dropping as it empties (the core's dry mass held until the stage
+  ends; a booster that outlasts the core keeps pushing the dead core). The in-sim
+  integrator (`sim.advanceBoosteredSegment`) flies it as N concurrent reservoirs in
+  one RK4 state vector on a single rapidity ledger, splitting exactly at each
+  reservoir-empty; once the last booster drops it falls through to the untouched
+  serial path. `consumeStageDv` shares the phase model with the budget so the
+  impulsive affordability check and the actual burn can never disagree. Serial
+  stacks (and the golden scenario) are byte-identical — the golden hash did not
+  move. Five presets ship it: Falcon Heavy, Space Shuttle, Soyuz, Ariane 5 (plus
+  the genuinely-serial Vega). **Still to do:** drop-tank cross-feed (a no-engine
+  reservoir feeding the core — folded into the core stage today, e.g. the Shuttle's
+  ET), and a planner-UI hint when a launcher's boostered first stage is fired from
+  LEO (boost stages don't fly in-game).
 - **Gravity assists** — DONE: flyby physics (flyby.ts), a two-leg patched-conic
   assist solver (assist.ts), and in-sim execution (a flyby-pass that bends the
   heliocentric velocity for free and continues to the target), with a "via flyby"

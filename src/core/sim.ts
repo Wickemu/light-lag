@@ -20,7 +20,7 @@
  *    chunkings only by the per-step truncation (~sub-metre, see serialize.ts).
  */
 
-import { type WorldState, type Ship, type ShipCommand, type BurnDir } from "./world.ts";
+import { type WorldState, type Ship, type ShipBurn, type ShipCommand, type BurnDir } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius } from "./orbit.ts";
@@ -28,7 +28,7 @@ import {
   activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
   interstellarProperTime, spiralElements,
 } from "./ships.ts";
-import { exhaustVelocity, thrustAt, lorentzFactor } from "./propulsion.ts";
+import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
 import { stateToElements, meanMotion } from "./math/kepler.ts";
 import { bodyState, bodyElements } from "./ephemeris.ts";
@@ -200,6 +200,24 @@ export class Simulation {
         return;
       }
 
+      // ── Parallel staging ────────────────────────────────────────────────────
+      // While the active stage has live strap-on boosters, core and boosters burn
+      // CONCURRENTLY: total thrust F = ΣFᵢ, total flow ṁ = Σṁᵢ, and the segment
+      // advances on the engines' thrust-weighted vₑ_eff = F/ṁ. Each reservoir
+      // drains at its own ṁᵢ; a booster group drops (spliced from the array) the
+      // instant it empties. The core's dry mass is carried until the whole stage
+      // is spent (`activeStage += 1`), exactly as for serial staging. The moment
+      // the last booster is gone with the core still fuelled, the array empties and
+      // the loop falls through to the serial path below — so non-boostered burns
+      // (and the golden scenario) never touch this branch.
+      const boosters = stage.boosters;
+      if (boosters && boosters.length > 0) {
+        const res = this.advanceBoosteredSegment(ship, burn, stage, boosters, t0, dt, elapsed);
+        if (res.ended) return;
+        elapsed = res.elapsed;
+        continue;
+      }
+
       const mu = BODY_BY_ID.get(ship.primary)!.mu;
       const ve = exhaustVelocity(stage.isp);
       // Thrust at the ship's heliocentric distance: a solar-electric stage is
@@ -325,6 +343,177 @@ export class Simulation {
     // Still thrusting after the full interval: r,v are valid at t0+dt; stamp the
     // epoch so shipRelativeState can extrapolate the ship's position mid-burn.
     if (ship.mode === "thrust") ship.epoch = t0 + dt;
+  }
+
+  /**
+   * One powered sub-segment of a stage burning WITH live strap-on boosters
+   * (parallel staging). Generalizes a single `advanceThrustShip` segment to N
+   * concurrent reservoirs: the core plus each booster group, each draining at its
+   * own proper-time flow ṁᵢ. The segment is split EXACTLY at the soonest of the
+   * target Δv (`cut`), any reservoir running dry (`empty`), or the γ-fidelity cap
+   * — the same analytic split the serial path uses, so the burn stays
+   * chunk-invariant. The vehicle gains rapidity at the thrust-weighted
+   * vₑ_eff = F/ṁ; there is exactly ONE rapidity ledger (`burn.dvDone`), never a
+   * per-engine one. Returns the elapsed time and whether the burn ended.
+   */
+  private advanceBoosteredSegment(
+    ship: Ship, burn: ShipBurn, stage: Stage, boosters: Booster[], t0: number, dt: number, elapsed0: number,
+  ): { elapsed: number; ended: boolean } {
+    let elapsed = elapsed0;
+    const r0 = ship.r!, v0 = ship.v!;
+    const primaryBody = BODY_BY_ID.get(ship.primary)!;
+    const mu = primaryBody.mu;
+
+    const dvRem = burn.dvTarget - burn.dvDone; // rapidity remaining
+    if (dvRem <= 1e-9) { this.endBurn(ship, t0 + elapsed); return { elapsed, ended: true }; }
+
+    // Live burning reservoirs this segment (fixed across it; a drop ENDS the
+    // segment). `idx === -1` is the core; `idx >= 0` indexes `boosters`. Booster
+    // figures are count-aggregated (N identical units ignite and drop together).
+    interface Burner { idx: number; thrust: number; ve: number; mdot: number; prop: number; tEmpty: number; }
+    const primaryPos = bodyState(primaryBody, t0 + elapsed).r;
+    const dist = length(add(primaryPos, r0));
+    // `carried` = everything NOT a burning reservoir's propellant: payload + core
+    // dry (held while the stage is active) + every booster group's dry + all upper
+    // stages (their own dry + propellant + any of their boosters). A reservoir with
+    // vₑ ≤ 0 (Isp ≤ 0) or thrust ≤ 0 is INERT — its propellant is carried as ballast
+    // rather than producing Infinity/NaN mass flow (defends degenerate designs).
+    const burners: Burner[] = [];
+    let carried = ship.payloadMass + stage.dryMass;
+    const veC = exhaustVelocity(stage.isp);
+    const fC = thrustAt(stage, dist); // chemical core: no-op; electric core: derated
+    if (stage.propMass > 1e-9 && veC > 0 && fC > 0) {
+      const mdotC = fC / veC;
+      burners.push({ idx: -1, thrust: fC, ve: veC, mdot: mdotC, prop: stage.propMass, tEmpty: stage.propMass / mdotC });
+    } else {
+      carried += stage.propMass; // spent/inert core propellant rides as ballast
+    }
+    boosters.forEach((b, i) => {
+      const n = boosterCount(b);
+      carried += b.dryMass * n; // booster structure always carried
+      const prop = b.propMass * n;
+      const veB = exhaustVelocity(b.isp);
+      const fB = b.thrust * n;
+      if (prop > 1e-9 && veB > 0 && fB > 0) {
+        const mdotB = fB / veB;
+        burners.push({ idx: i, thrust: fB, ve: veB, mdot: mdotB, prop, tEmpty: prop / mdotB });
+      } else {
+        carried += prop; // inert booster propellant
+      }
+    });
+    for (let i = ship.activeStage + 1; i < ship.stages.length; i++) {
+      const up = ship.stages[i]!;
+      carried += up.dryMass + up.propMass;
+      if (up.boosters) for (const ub of up.boosters) carried += (ub.dryMass + ub.propMass) * boosterCount(ub);
+    }
+    if (burners.length === 0) {
+      // Stage carries no live propellant: advance (mirrors the serial out-of-fuel path).
+      stage.propMass = 0;
+      ship.activeStage += 1;
+      if (!activeStage(ship)) { this.endBurn(ship, t0 + elapsed); return { elapsed, ended: true }; }
+      return { elapsed, ended: false };
+    }
+
+    const fTotal = burners.reduce((s, br) => s + br.thrust, 0);
+    const mdotTotal = burners.reduce((s, br) => s + br.mdot, 0);
+    const veEff = fTotal / mdotTotal;
+    const m0 = carried + burners.reduce((s, br) => s + br.prop, 0);
+
+    // Event split in proper time τ, converted by the segment-start γ (held across
+    // the ≤2 s segment), exactly as the serial path does.
+    const gammaSeg = lorentzFactor(length(v0));
+    const tauCut = (m0 / mdotTotal) * (1 - Math.exp(-dvRem / veEff)); // reach target rapidity
+    const tauStep = (m0 / mdotTotal) * (1 - Math.exp(-MAX_SEG_RAPIDITY / veEff)); // γ-fidelity cap
+    const tauEmptyMin = Math.min(...burners.map((br) => br.tEmpty)); // soonest reservoir dry
+    let segTau = (dt - elapsed) / gammaSeg;
+    let event: "none" | "cut" | "empty" = "none";
+    if (tauStep < segTau) { segTau = tauStep; event = "none"; }
+    if (tauCut < segTau) { segTau = tauCut; event = "cut"; }
+    if (tauEmptyMin < segTau) { segTau = tauEmptyMin; event = "empty"; }
+    const seg = segTau * gammaSeg;
+
+    const dirFor = (r: Vec3, v: Vec3): Vec3 => {
+      const f = orbitFrame(r, v);
+      switch (burn.dir) {
+        case "prograde": return f.prograde;
+        case "retrograde": return f.retrograde;
+        case "radial-out": return f.radialOut;
+        case "radial-in": return f.radialIn;
+        case "normal": return f.normal;
+        case "antinormal": return f.antinormal;
+      }
+    };
+    // State vector: [r(3), v(3), prop per burner…]. Total thrust drives a = F/m;
+    // each reservoir flows −ṁᵢ/γ in coordinate time (its own constant proper rate).
+    const deriv = (_t: number, y: number[]): number[] => {
+      const r: Vec3 = { x: y[0]!, y: y[1]!, z: y[2]! };
+      const v: Vec3 = { x: y[3]!, y: y[4]!, z: y[5]! };
+      let propSum = 0;
+      for (let i = 0; i < burners.length; i++) propSum += Math.max(y[6 + i]!, 0);
+      const m = Math.max(carried + propSum, 1e-9);
+      const rmag = Math.max(Math.hypot(r.x, r.y, r.z), 1);
+      const gfac = -mu / (rmag * rmag * rmag);
+      const dir = dirFor(r, v);
+      const at = fTotal / m;
+      const aProper: Vec3 = {
+        x: dir.x * at + r.x * gfac,
+        y: dir.y * at + r.y * gfac,
+        z: dir.z * at + r.z * gfac,
+      };
+      const a = properToCoordinateAccel(v, aProper);
+      const gv = lorentzFactor(Math.hypot(v.x, v.y, v.z));
+      const out = [v.x, v.y, v.z, a.x, a.y, a.z];
+      for (const br of burners) out.push(-br.mdot / gv);
+      return out;
+    };
+
+    const y0 = [r0.x, r0.y, r0.z, v0.x, v0.y, v0.z, ...burners.map((br) => br.prop)];
+    const y1 = rk4(y0, t0 + elapsed, seg, deriv);
+    ship.r = { x: y1[0]!, y: y1[1]!, z: y1[2]! };
+    ship.v = { x: y1[3]!, y: y1[4]!, z: y1[5]! };
+
+    let propAfterSum = 0;
+    for (let i = 0; i < burners.length; i++) {
+      const after = Math.max(y1[6 + i]!, 0);
+      burners[i]!.prop = after;
+      propAfterSum += after;
+    }
+    const mAfter = Math.max(carried + propAfterSum, 1e-9);
+    burn.dvDone += veEff * Math.log(m0 / mAfter); // single vehicle rapidity ledger
+    elapsed += seg;
+
+    // Persist integrated propellant back to the reservoirs.
+    for (const br of burners) {
+      if (br.idx === -1) stage.propMass = br.prop;
+      else { const bb = boosters[br.idx]!; bb.propMass = br.prop / boosterCount(bb); }
+    }
+
+    if (event === "cut") {
+      burn.dvDone = burn.dvTarget; // kill rounding; the analytic step lands here
+      this.endBurn(ship, t0 + elapsed);
+      return { elapsed, ended: true };
+    }
+    if (event === "empty") {
+      // Zero every reservoir that hit the shared minimum empty time (by its
+      // ANALYTIC tEmpty, not the integrated residual — robust to truncation).
+      for (const br of burners) {
+        if (br.tEmpty <= tauEmptyMin * (1 + 1e-9) + 1e-12) {
+          if (br.idx === -1) stage.propMass = 0;
+          else boosters[br.idx]!.propMass = 0;
+        }
+      }
+      // Drop spent booster groups (splice high→low so indices stay valid).
+      for (let i = boosters.length - 1; i >= 0; i--) {
+        if (boosters[i]!.propMass * boosterCount(boosters[i]!) <= 1e-9) boosters.splice(i, 1);
+      }
+      // Whole stage spent (core dry AND no boosters left) → advance to the next.
+      if (stage.propMass <= 1e-9 && boosters.length === 0) {
+        stage.propMass = 0;
+        ship.activeStage += 1;
+        if (!activeStage(ship)) { this.endBurn(ship, t0 + elapsed); return { elapsed, ended: true }; }
+      }
+    }
+    return { elapsed, ended: false };
   }
 
   /** Finish a burn at the exact event time: freeze the achieved orbit as
