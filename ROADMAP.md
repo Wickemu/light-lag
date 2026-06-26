@@ -68,9 +68,11 @@ locked by a permanent integration test suite before more gameplay is layered on.
   B-plane targeting (the executor uses a patched-conic point + charged residual).
 - **Transfer toolkit** — DONE: plane-change Δv, bi-elliptic transfers, and
   multi-revolution Lambert (wired into the porkchop).
-- **N-body perturbations & J2** (currently two-body + patched conics). J2 secular
-  precession for ship orbits is scoped and deferred (it would touch the analytic
-  propagation core + the golden-state hash).
+- **J2 oblateness** — DONE: secular nodal/apsidal precession of ship/station
+  orbits about oblate bodies (orbit.ts j2Rates), applied analytically at read time
+  (exact at any time-warp; golden-hash-neutral), with a sun-synchronous-inclination
+  helper. Still to do: full N-body perturbations, J3+ harmonics, and J2 on the
+  capture/aim geometry (the hyperbolic approach is still pure two-body).
 - **Full B-plane targeting in the planner UI** (B-plane solved at execution today).
 - **SOI-as-point departure** (parking-orbit offset dropped) — documented
   approximation; refine if close-range nav matters.
