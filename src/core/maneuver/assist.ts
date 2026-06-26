@@ -129,6 +129,94 @@ export function assistTransfer(
   };
 }
 
+export interface ChainFlyby {
+  bodyId: string;
+  t: number; // flyby time (s since J2000)
+  rp: number; // chosen periapsis radius (m)
+  dvFlyby: number; // powered Δv to bridge this flyby's |v∞|/turn mismatch (0 if free)
+  vInfIn: number; // excess speed arriving (m/s)
+  vInfOut: number; // excess speed leaving (m/s)
+  turnRequired: number; // angle between in/out excess velocities (rad)
+  turnMax: number; // largest bend a safe pass provides at vInfIn (rad)
+  unpowered: boolean; // this flyby needs no burn
+}
+
+export interface ChainAssistResult {
+  tDepart: number;
+  tArrive: number;
+  dvDepart: number; // Oberth injection from the origin parking orbit (m/s)
+  dvArrive: number; // capture at the target (m/s)
+  dvFlybyTotal: number; // summed powered-flyby Δv across all flybys (m/s)
+  dvTotal: number;
+  flybys: ChainFlyby[]; // one per intermediate body, in order
+  unpowered: boolean; // every flyby in the chain is free
+}
+
+/**
+ * Evaluate a MULTI-flyby gravity-assist chain through an arbitrary sequence of
+ * bodies — origin → flyby₁ → flyby₂ → … → target (e.g. a V-E-E-G-A tour) — for a
+ * fixed schedule. `bodyIds` lists every body in order (length ≥ 3: at least one
+ * intermediate flyby); `times` gives the epoch at each body (strictly increasing,
+ * same length as `bodyIds`). Each heliocentric leg is a Lambert arc; at every
+ * intermediate body the incoming/outgoing excess velocities define a flyby that is
+ * free when a safe pass can bend it, else charged an Oberth bridge Δv (the same
+ * per-flyby model as the single-assist solver). Returns null on any degenerate
+ * leg or out-of-order time. Generalizes `assistTransfer` (the n = 1 flyby case).
+ */
+export function chainAssist(
+  bodyIds: string[], times: number[], p: AssistParams = {},
+): ChainAssistResult | null {
+  if (bodyIds.length < 3 || bodyIds.length !== times.length) return null;
+  for (let i = 1; i < times.length; i++) if (times[i]! <= times[i - 1]!) return null;
+
+  const bodies = bodyIds.map((id) => BODY_BY_ID.get(id));
+  if (bodies.some((b) => !b)) return null;
+  const states = bodies.map((b, i) => bodyState(b!, times[i]!));
+
+  // Heliocentric Lambert legs between consecutive bodies.
+  const legs = [];
+  for (let i = 0; i < bodies.length - 1; i++) {
+    const leg = lambert(states[i]!.r, states[i + 1]!.r, times[i + 1]! - times[i]!, MU_SUN, true);
+    if (!leg) return null;
+    legs.push(leg);
+  }
+
+  // Each interior body bends the incoming leg's excess into the outgoing leg's.
+  const flybys: ChainFlyby[] = [];
+  let dvFlybyTotal = 0;
+  for (let i = 1; i < bodies.length - 1; i++) {
+    const body = bodies[i]!;
+    const vBody = states[i]!.v;
+    const vInfInVec = sub(legs[i - 1]!.v2, vBody);
+    const vInfOutVec = sub(legs[i]!.v1, vBody);
+    const vInfIn = length(vInfInVec);
+    const vInfOut = length(vInfOutVec);
+    if (vInfIn < 1e-3 || vInfOut < 1e-3) return null;
+    const m = flybyManeuver(vInfInVec, vInfOutVec, body);
+    dvFlybyTotal += m.dvFlyby;
+    flybys.push({
+      bodyId: bodyIds[i]!, t: times[i]!, rp: m.rp, dvFlyby: m.dvFlyby,
+      vInfIn, vInfOut, turnRequired: m.turnRequired,
+      turnMax: maxTurnAngle(vInfIn, body.mu, minFlybyRadius(body)),
+      unpowered: m.dvFlyby < 1,
+    });
+  }
+
+  const origin = bodies[0]!, target = bodies[bodies.length - 1]!;
+  const firstLeg = legs[0]!, lastLeg = legs[legs.length - 1]!;
+  const rParkFrom = p.rParkFrom ?? origin.radius + DEFAULT_CAPTURE_ALT;
+  const rParkTo = p.rParkTo ?? target.radius + DEFAULT_CAPTURE_ALT;
+  const dvDepart = hyperbolicBurnDv(length(sub(firstLeg.v1, states[0]!.v)), origin.mu, rParkFrom);
+  const dvArrive = hyperbolicBurnDv(length(sub(lastLeg.v2, states[states.length - 1]!.v)), target.mu, rParkTo);
+
+  return {
+    tDepart: times[0]!, tArrive: times[times.length - 1]!,
+    dvDepart, dvArrive, dvFlybyTotal,
+    dvTotal: dvDepart + dvFlybyTotal + dvArrive,
+    flybys, unpowered: flybys.every((f) => f.unpowered),
+  };
+}
+
 export interface AssistSearch extends AssistParams {
   tDepart: number;
   flybyWindow: [number, number]; // [min, max] flyby time (s since J2000)

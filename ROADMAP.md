@@ -66,19 +66,16 @@ next, after four expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion). Each round stays additive: pure SI, deterministic, read-time
 analytic, suite green, golden hash documented if it moves.
 
-1. **Multi-flyby assist chains** + **full free-bend B-plane targeting** — the R2 executor
-   bends a single flyby for free but charges the residual at a patched-conic point; a true
-   B-plane aimer and chained legs (e.g. V-E-E-G-A) are the big remaining gravity-assist
-   capability. *(see "Gravity assists" and "Full B-plane targeting in the planner UI".)*
-2. **In-system relativistic / finite-thrust burns** + **stellar proper motion** — the
+1. **In-system relativistic / finite-thrust burns** + **stellar proper motion** — the
    finite-thrust integrator is still classical, and the star catalog is fixed-epoch; both
    harden the interstellar layer. *(see "Relativistic propulsion" → Still to do.)*
-3. **Parallel staging / strap-on boosters / drop tanks** — serial stages only today; real
+2. **Parallel staging / strap-on boosters / drop tanks** — serial stages only today; real
    launchers light boosters and core together and stage asymmetrically. *(see "Parallel
    staging".)*
 
 *(Done since last round: powered low-thrust **capture/escape spirals** about a destination
-body and **variable-Isp throttling** — see "Power-limited electric thrust" below.)*
+body and **variable-Isp throttling** (see "Power-limited electric thrust"); **multi-flyby
+assist chains** + analytic **free-bend B-plane targeting** (see "Gravity assists").)*
 
 These are candidates, not a commitment — pick the highest-leverage one when the next round
 starts. Lower-priority refinements (aerocapture + entry heating, N-body/J3 perturbations, a
@@ -112,11 +109,19 @@ defensible SNR-vs-range detection curve, comet outgassing) live in the backlog e
   do: an *in-sim flyable* capture/escape spiral (the analytic leg lands first) and
   a time-optimal variable-Isp control law.
 - **Parallel staging** / strap-on boosters / drop tanks (serial stages only now).
-- **Gravity assists** — DONE (first cut): flyby physics (flyby.ts), a two-leg
-  patched-conic assist solver (assist.ts), and in-sim execution (a flyby-pass that
-  bends the heliocentric velocity for free and continues to the target), with a
-  "via flyby" planner mode. Still to do: multi-flyby chains and full free-bend
-  B-plane targeting (the executor uses a patched-conic point + charged residual).
+- **Gravity assists** — DONE: flyby physics (flyby.ts), a two-leg patched-conic
+  assist solver (assist.ts), and in-sim execution (a flyby-pass that bends the
+  heliocentric velocity for free and continues to the target), with a "via flyby"
+  planner mode. **Multi-flyby chains — DONE:** `chainAssist` evaluates an arbitrary
+  origin→fb₁→fb₂→…→target tour (e.g. V-E-E-G-A) for a fixed schedule — a Lambert arc
+  per leg, the free-or-bridged flyby model at each interior body, and a full Δv
+  ledger; it generalizes `assistTransfer` (the n=1 case, reproduced exactly).
+  **Free-bend B-plane targeting — DONE (analytic):** `bPlaneAim` solves the
+  hyperbola that rotates v∞_in into v∞_out's direction (e = 1/sin(δ/2), rp, impact
+  parameter b, and the B-vector/plane-normal aim geometry); `impactParameter` gives
+  b = rp·√((e+1)/(e−1)). Still to do: an in-sim *chained* executor (the executor
+  flies one flyby today) and a B-plane-targeted in-sim pass (it uses a patched-conic
+  point + charged residual), plus a planner-UI search over chain schedules.
 - **Transfer toolkit** — DONE: plane-change Δv, bi-elliptic transfers, and
   multi-revolution Lambert (wired into the porkchop).
 - **J2 oblateness** — DONE: secular nodal/apsidal precession of ship/station
@@ -124,7 +129,10 @@ defensible SNR-vs-range detection curve, comet outgassing) live in the backlog e
   (exact at any time-warp; golden-hash-neutral), with a sun-synchronous-inclination
   helper. Still to do: full N-body perturbations, J3+ harmonics, and J2 on the
   capture/aim geometry (the hyperbolic approach is still pure two-body).
-- **Full B-plane targeting in the planner UI** (B-plane solved at execution today).
+- **Full B-plane targeting in the planner UI** — the analytic aim (`bPlaneAim`:
+  free-bend hyperbola, impact parameter, B-vector) now exists; what remains is
+  surfacing it in the planner UI and a B-plane-targeted in-sim pass (B-plane solved
+  at execution today).
 - **SOI-as-point departure** (parking-orbit offset dropped) — documented
   approximation; refine if close-range nav matters.
 - **Validity window past 1800–2050** (the giants' 3000 BC–3000 AD b,c,s,f

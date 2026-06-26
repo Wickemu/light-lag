@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   flybyEccentricity, flybyTurnAngle, maxTurnAngle, flybyOutgoing, poweredFlybyVInfOut,
+  impactParameter, bPlaneAim,
 } from "./flyby.ts";
-import { assistTransfer, searchAssist, minFlybyRadius } from "./assist.ts";
+import { assistTransfer, chainAssist, searchAssist, minFlybyRadius } from "./assist.ts";
 import { BODY_BY_ID, JULIAN_YEAR } from "../constants.ts";
-import { length, sub } from "../math/vec3.ts";
+import { type Vec3, length, sub, dot } from "../math/vec3.ts";
 
 const JUP = BODY_BY_ID.get("jupiter")!;
 
@@ -38,6 +39,86 @@ describe("flyby physics", () => {
   it("the max turn is the closest safe pass", () => {
     expect(maxTurnAngle(6000, JUP.mu, minFlybyRadius(JUP)))
       .toBeCloseTo(flybyTurnAngle(6000, JUP.mu, minFlybyRadius(JUP)), 9);
+  });
+});
+
+describe("B-plane aim geometry", () => {
+  it("impact parameter exceeds periapsis and grows with a wider miss", () => {
+    const rpDeep = 2 * JUP.radius, rpShallow = 20 * JUP.radius;
+    expect(impactParameter(6000, JUP.mu, rpDeep)).toBeGreaterThan(rpDeep); // b = rp·√((e+1)/(e−1)) > rp
+    expect(impactParameter(6000, JUP.mu, rpShallow)).toBeGreaterThan(impactParameter(6000, JUP.mu, rpDeep));
+  });
+
+  it("solves the free-bend hyperbola that rotates v∞_in into v∞_out's direction", () => {
+    const vIn = 6000, ang = (40 * Math.PI) / 180;
+    const vInfInVec: Vec3 = { x: vIn, y: 0, z: 0 };
+    const vInfOutVec: Vec3 = { x: vIn * Math.cos(ang), y: vIn * Math.sin(ang), z: 0 };
+    const aim = bPlaneAim(vInfInVec, vInfOutVec, JUP.mu);
+
+    // The bend matches the in/out angle, and e = 1/sin(δ/2), rp = (e−1)μ/v∞².
+    expect(aim.turn).toBeCloseTo(ang, 9);
+    expect(aim.e).toBeCloseTo(1 / Math.sin(ang / 2), 9);
+    expect(aim.rp).toBeCloseTo(((aim.e - 1) * JUP.mu) / (vIn * vIn), 3);
+    expect(aim.b).toBeCloseTo(impactParameter(vIn, JUP.mu, aim.rp), 3);
+  });
+
+  it("the B-vector lies in the B-plane (⊥ v∞_in) and in the bend plane", () => {
+    const vInfInVec: Vec3 = { x: 5000, y: 1000, z: -2000 };
+    const vInfOutVec: Vec3 = { x: 3000, y: 4000, z: 1200 }; // different direction
+    const aim = bPlaneAim(vInfInVec, vInfOutVec, JUP.mu);
+    const inHat = { x: vInfInVec.x, y: vInfInVec.y, z: vInfInVec.z };
+    // bHat is a unit vector, perpendicular to the incoming asymptote…
+    expect(length(aim.bHat)).toBeCloseTo(1, 9);
+    expect(dot(aim.bHat, inHat) / length(inHat)).toBeCloseTo(0, 9);
+    // …and lies in the bend plane (perpendicular to its normal).
+    expect(dot(aim.bHat, aim.planeNormal)).toBeCloseTo(0, 9);
+    // The plane normal is ⊥ to both excess velocities.
+    expect(dot(aim.planeNormal, vInfInVec)).toBeCloseTo(0, 6);
+    expect(dot(aim.planeNormal, vInfOutVec)).toBeCloseTo(0, 6);
+  });
+});
+
+describe("multi-flyby assist chains", () => {
+  it("a single-flyby chain reproduces assistTransfer exactly (the n=1 case)", () => {
+    const td = 30 * JULIAN_YEAR, tf = 32.5 * JULIAN_YEAR, ta = 39 * JULIAN_YEAR;
+    const single = assistTransfer("earth", "jupiter", "saturn", td, tf, ta);
+    const chain = chainAssist(["earth", "jupiter", "saturn"], [td, tf, ta]);
+    expect(single).not.toBeNull();
+    expect(chain).not.toBeNull();
+    const s = single!, c = chain!;
+    expect(c.flybys).toHaveLength(1);
+    expect(c.dvDepart).toBeCloseTo(s.dvDepart, 6);
+    expect(c.dvArrive).toBeCloseTo(s.dvArrive, 6);
+    expect(c.dvFlybyTotal).toBeCloseTo(s.dvFlyby, 6);
+    expect(c.dvTotal).toBeCloseTo(s.dvTotal, 6);
+    expect(c.flybys[0]!.rp).toBeCloseTo(s.flybyRadius, 3);
+    expect(c.flybys[0]!.vInfIn).toBeCloseTo(s.vInfIn, 6);
+    expect(c.flybys[0]!.turnRequired).toBeCloseTo(s.turnRequired, 9);
+  });
+
+  it("solves a two-flyby tour (V-E-E-G-A-shaped) with a consistent ledger", () => {
+    const ys = [30, 30.8, 32.4, 35.5].map((y) => y * JULIAN_YEAR);
+    const r = chainAssist(["earth", "venus", "earth", "jupiter"], ys);
+    expect(r).not.toBeNull();
+    const c = r!;
+    // Two intermediate flybys, in time order, each a real hyperbolic pass.
+    expect(c.flybys).toHaveLength(2);
+    expect(c.flybys[0]!.t).toBeLessThan(c.flybys[1]!.t);
+    for (const f of c.flybys) {
+      expect(f.vInfIn).toBeGreaterThan(0);
+      expect(f.vInfOut).toBeGreaterThan(0);
+      expect(f.rp).toBeGreaterThanOrEqual(minFlybyRadius(BODY_BY_ID.get(f.bodyId)!) - 1);
+    }
+    // The ledger is internally consistent.
+    expect(c.dvTotal).toBeCloseTo(c.dvDepart + c.dvFlybyTotal + c.dvArrive, 3);
+    expect(c.dvFlybyTotal).toBeCloseTo(c.flybys.reduce((s, f) => s + f.dvFlyby, 0), 6);
+  });
+
+  it("rejects too-few bodies, mismatched lengths, and out-of-order times", () => {
+    expect(chainAssist(["earth", "jupiter"], [0, JULIAN_YEAR])).toBeNull(); // no flyby
+    expect(chainAssist(["earth", "jupiter", "saturn"], [0, JULIAN_YEAR])).toBeNull(); // length mismatch
+    expect(chainAssist(["earth", "jupiter", "saturn"], [0, 2 * JULIAN_YEAR, JULIAN_YEAR])).toBeNull(); // unordered
+    expect(chainAssist(["earth", "nope", "saturn"], [0, JULIAN_YEAR, 2 * JULIAN_YEAR])).toBeNull(); // bad body
   });
 });
 
