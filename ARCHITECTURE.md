@@ -40,7 +40,7 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 | `constants.ts` | Physical constants + real Solar-System body data (JPL elements, μ=GM, radii, atmospheres). |
 | `ephemeris.ts` | Analytic body state (position, velocity) at any `t`. |
 | `orbit.ts` | vis-viva, apsides, periods, maneuver frame, SOI radius, Oberth burn, J2 secular precession rates, sun-synchronous inclination. |
-| `propulsion.ts` | Rocket equation, staging, Δv budget, electric power law (`F = min(F_rated, 2ηP/vₑ)`). |
+| `propulsion.ts` | Rocket equation, staging, Δv budget, electric power law (`F = min(F_rated, 2ηP/vₑ)`), variable-Isp constant-power throttle (`variableIspBurn`: thrust↔Isp↔time trade at `F·vₑ = 2ηP`). |
 | `ships.ts` | Ship mass/state/orbit helpers; impulsive Δv (with affordability check); thermal state readout. |
 | `surface.ts` | Landing/takeoff Δv budgets: calibrated gravity-turn ascent through real exponential atmospheres, aerobraking fraction on descent. |
 | `thermal.ts` | Stefan-Boltzmann heat budget, solar flux (1/r²), detection range — the "no stealth in space" pillar. |
@@ -62,7 +62,7 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 | `maneuver/arrival.ts` | B-plane arrival targeting: hyperbolic approach to a requested periapsis altitude. |
 | `maneuver/flyby.ts` | Patched-conic gravity-flyby geometry (vₓ in/out rotation, turn angle, periapsis). |
 | `maneuver/assist.ts` | Two-leg gravity-assist solver (leg1 → flyby body → leg2 → target) + grid search for the cheapest window. |
-| `maneuver/lowThrust.ts` | Edelbaum analytic spiral: exact Δv/time/propellant for a power-limited electric transfer between near-circular orbits (and coplanar inclination change). |
+| `maneuver/lowThrust.ts` | Edelbaum analytic spiral: exact Δv/time/propellant for a power-limited electric transfer between near-circular orbits (and coplanar inclination change), plus capture/escape spirals about a single body's well (the r→∞ limit, Δv = local circular speed). |
 | `maneuver/interstellar.ts` | Relativistic brachistochrone (flip-and-burn): rapidity rocket equation, coordinate/proper time, peak Lorentz factor, mass ratio, light-lag. |
 
 ### Engine contract

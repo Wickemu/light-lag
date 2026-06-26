@@ -7,6 +7,9 @@ import {
   deltaVBudget,
   initialTWR,
   electricThrust,
+  jetPower,
+  exhaustForThrust,
+  variableIspBurn,
   type Stage,
 } from "./propulsion.ts";
 import { G0 } from "./constants.ts";
@@ -67,5 +70,46 @@ describe("electric propulsion", () => {
     expect(F).toBeCloseTo((2 * eta * power) / ve, 9);
     // Consistency: jet power ½F·ve should be η·P.
     expect(0.5 * F * ve).toBeCloseTo(eta * power, 6);
+  });
+});
+
+describe("variable specific impulse (constant power)", () => {
+  const power = 200e3, eta = 0.6;
+
+  it("jetPower is η·P and underwrites the F·vₑ = 2·jetPower identity", () => {
+    expect(jetPower(power, eta)).toBeCloseTo(eta * power, 6);
+    const ve = 40000;
+    const F = electricThrust(power, ve, eta);
+    expect(F * ve).toBeCloseTo(2 * jetPower(power, eta), 3);
+  });
+
+  it("exhaustForThrust inverts electricThrust", () => {
+    const ve = 50000;
+    const F = electricThrust(power, ve, eta);
+    expect(exhaustForThrust(power, eta, F)).toBeCloseTo(ve, 3);
+  });
+
+  it("at fixed power, dialling Isp UP cuts thrust and propellant but lengthens the burn", () => {
+    const m0 = 5000, dv = 3000;
+    const lo = variableIspBurn(power, eta, 20000, m0, dv); // low Isp
+    const hi = variableIspBurn(power, eta, 40000, m0, dv); // 2× Isp
+
+    // F = 2ηP/vₑ: doubling vₑ halves thrust.
+    expect(hi.thrust).toBeCloseTo(lo.thrust / 2, 6);
+    // Less mass thrown at higher exhaust speed.
+    expect(hi.propellant).toBeLessThan(lo.propellant);
+    // …but the gentler thrust makes the burn longer (time ∝ vₑ).
+    expect(hi.time).toBeGreaterThan(lo.time);
+    expect(hi.isp).toBeCloseTo(40000 / G0, 6);
+  });
+
+  it("the burn is self-consistent: F=2ηP/vₑ, ṁ=F/vₑ, time=prop/ṁ, Δv from Tsiolkovsky", () => {
+    const m0 = 5000, dv = 2500, ve = 30000;
+    const b = variableIspBurn(power, eta, ve, m0, dv);
+    expect(b.thrust).toBeCloseTo((2 * eta * power) / ve, 6);
+    expect(b.mdot).toBeCloseTo(b.thrust / ve, 9);
+    expect(b.time).toBeCloseTo(b.propellant / b.mdot, 3);
+    // Δv recovered: vₑ·ln(m0/(m0−prop)) = dv.
+    expect(ve * Math.log(m0 / (m0 - b.propellant))).toBeCloseTo(dv, 6);
   });
 });

@@ -83,6 +83,56 @@ export function thrustAt(stage: Stage, r: number): number {
   return Math.min(stage.thrust, electricThrust(availablePowerW(stage.electric, r), ve, stage.electric.eta));
 }
 
+// ── Variable specific impulse (constant-power throttling) ────────────────────
+//
+// A fixed-Isp ion engine throws mass at one speed; a VARIABLE-Isp drive (VASIMR,
+// a throttled gridded ion PPU) trades thrust for exhaust velocity at a fixed input
+// power. The constraint is the jet-power identity F·vₑ = 2·η·P: at constant power,
+// dialling the Isp UP (more vₑ) drops the thrust proportionally — frugal with
+// propellant but slow — while dialling it DOWN buys thrust at the cost of mass
+// flow. Same hardware, same watts; the pilot picks the operating point per leg.
+
+/** Jet (beam) power η·P (W) delivered to the exhaust — the budget F·vₑ/2 is drawn
+ *  from. Half the input electrical power lost to η goes nowhere useful. */
+export function jetPower(power: number, eta: number): number {
+  return eta * power;
+}
+
+/** The exhaust velocity vₑ (m/s) a constant-power drive must run at to produce a
+ *  given `thrust`: vₑ = 2·η·P / F. The variable-Isp knob inverted — choose a
+ *  thrust, read off the Isp (vₑ/g₀) it forces. Higher thrust ⇒ lower Isp. */
+export function exhaustForThrust(power: number, eta: number, thrust: number): number {
+  return (2 * eta * power) / thrust;
+}
+
+export interface VariableIspBurn {
+  ve: number; // chosen exhaust velocity (m/s)
+  isp: number; // = ve/g₀ (s)
+  thrust: number; // resulting thrust at the fixed power (N) — F = 2ηP/vₑ
+  propellant: number; // kg burned to deliver dv from m0
+  mdot: number; // mass-flow ṁ = F/vₑ (kg/s)
+  time: number; // burn time = propellant / ṁ (s)
+}
+
+/**
+ * Operate a constant-power electric drive at a CHOSEN exhaust velocity vₑ (the
+ * variable-Isp knob) to deliver `dv` from start mass `m0`. At fixed power the
+ * thrust follows F = 2ηP/vₑ, so a higher Isp spends less propellant (∝ 1/vₑ for
+ * small Δv) but produces less thrust and a longer burn (time ∝ vₑ). This is the
+ * thrust↔Isp↔time trade made explicit; `power` is the power actually available
+ * at the craft's distance (use availablePowerW). Reduces to the fixed-Isp case
+ * when vₑ is held at the engine's nominal value.
+ */
+export function variableIspBurn(
+  power: number, eta: number, ve: number, m0: number, dv: number,
+): VariableIspBurn {
+  const thrust = electricThrust(power, ve, eta);
+  const propellant = propellantForDv(ve, m0, dv);
+  const mdot = ve > 0 ? thrust / ve : 0;
+  const time = mdot > 0 ? propellant / mdot : Infinity;
+  return { ve, isp: ve / G0, thrust, propellant, mdot, time };
+}
+
 export interface DvBudget {
   total: number; // m/s, sum over all stages
   perStage: number[]; // m/s per stage, in firing order

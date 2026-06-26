@@ -66,21 +66,19 @@ next, after four expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion). Each round stays additive: pure SI, deterministic, read-time
 analytic, suite green, golden hash documented if it moves.
 
-1. **Powered low-thrust capture/escape spirals about a destination body** + **variable-Isp
-   throttling** — the natural next step now that *heliocentric* electric transfers fly.
-   Extends the analytic `SpiralLeg` to spiral down into / out of a target body's well, and
-   lets a drive trade thrust for Isp at fixed power (`F·vₑ = 2ηP`). *(see "Power-limited
-   electric thrust" → Still to do.)*
-2. **Multi-flyby assist chains** + **full free-bend B-plane targeting** — the R2 executor
+1. **Multi-flyby assist chains** + **full free-bend B-plane targeting** — the R2 executor
    bends a single flyby for free but charges the residual at a patched-conic point; a true
    B-plane aimer and chained legs (e.g. V-E-E-G-A) are the big remaining gravity-assist
    capability. *(see "Gravity assists" and "Full B-plane targeting in the planner UI".)*
-3. **In-system relativistic / finite-thrust burns** + **stellar proper motion** — the
+2. **In-system relativistic / finite-thrust burns** + **stellar proper motion** — the
    finite-thrust integrator is still classical, and the star catalog is fixed-epoch; both
    harden the interstellar layer. *(see "Relativistic propulsion" → Still to do.)*
-4. **Parallel staging / strap-on boosters / drop tanks** — serial stages only today; real
+3. **Parallel staging / strap-on boosters / drop tanks** — serial stages only today; real
    launchers light boosters and core together and stage asymmetrically. *(see "Parallel
    staging".)*
+
+*(Done since last round: powered low-thrust **capture/escape spirals** about a destination
+body and **variable-Isp throttling** — see "Power-limited electric thrust" below.)*
 
 These are candidates, not a commitment — pick the highest-leverage one when the next round
 starts. Lower-priority refinements (aerocapture + entry heating, N-body/J3 perturbations, a
@@ -101,9 +99,18 @@ defensible SNR-vs-range detection curve, comet outgassing) live in the backlog e
   as an analytic Edelbaum spiral leg (`Δv = √(v0²+v1²−2v0v1·cos(½π·Δi))`, semi-major
   axis linear, phase in closed form) — committed with Δv/propellant charged up front
   and exact at any time-warp, rather than an impractical months-long stepped burn.
-  Five solar-electric + one VASIMR craft ship with the catalog. Still to do:
-  variable-Isp throttling and a powered low-thrust capture/escape spiral about a
-  destination body.
+  Five solar-electric + one VASIMR craft ship with the catalog.
+  **Capture/escape spirals — DONE:** the analytic Edelbaum leg now takes the r→∞
+  limit to spiral a single body's well — `spiralEscapeDv`/`spiralCaptureDv` (= the
+  local circular speed, e.g. ~7.7 km/s to spiral off LEO, more than the impulsive
+  `(√2−1)·v_circ` but cheap in propellant at electric Isp) and their
+  `…Transfer` legs (Δv/time/propellant). The heliocentric spiral arrives matched
+  (vInf ≈ 0), so the well-spiral is internally consistent: a rendezvous, not a
+  braking burn. **Variable-Isp throttling — DONE:** `variableIspBurn` operates a
+  constant-power drive at a chosen exhaust velocity (`F = 2ηP/vₑ`), making the
+  thrust↔Isp↔time trade explicit (`exhaustForThrust`/`jetPower` helpers). Still to
+  do: an *in-sim flyable* capture/escape spiral (the analytic leg lands first) and
+  a time-optimal variable-Isp control law.
 - **Parallel staging** / strap-on boosters / drop tanks (serial stages only now).
 - **Gravity assists** — DONE (first cut): flyby physics (flyby.ts), a two-leg
   patched-conic assist solver (assist.ts), and in-sim execution (a flyby-pass that
