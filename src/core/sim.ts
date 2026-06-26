@@ -42,6 +42,11 @@ import { type Vec3, add, sub, scale, normalize, length, cross } from "./math/vec
 /** Sub-step grid spacing during powered flight (s). LEO period is ~5500 s, so a
  *  2 s grid keeps RK4 trajectory error negligible. */
 const MAX_THRUST_STEP = 2;
+/** Max rapidity (m/s) a single thrust segment may deliver. Caps the segment when a
+ *  burn is violently relativistic so γ varies little across it — bounding both the
+ *  frozen-γ proper↔coordinate conversion error and any superluminal RK4 sub-step.
+ *  ≈0.003c; a no-op sub-relativistically (a 2 s segment then gains far less). */
+const MAX_SEG_RAPIDITY = 1e6;
 /** While any ship is thrusting, the warp is capped so burns stay watchable and
  *  the sub-step count per frame stays bounded. */
 const THRUST_WARP_CAP = 60;
@@ -180,9 +185,10 @@ export class Simulation {
    * below c) rather than linearly. Propellant burns at a constant PROPER-time rate
    * (the engine operates in its own frame), and `burn.dvDone`/`dvTarget` are an
    * accumulated/target RAPIDITY (`ve·ln(m₀/m_f)` = what the rocket equation
-   * delivers). All of this reduces to the Newtonian integrator to machine
-   * precision at the sub-relativistic speeds every preset ship flies; the
-   * relativistic regime is a torchship doing a powered in-system burn.
+   * delivers). All of this reduces to the Newtonian integrator at the
+   * sub-relativistic speeds every preset ship flies (γ−1 ~ 3e-10 in LEO, so to
+   * ~1e-9 relative — exactly only at v = 0); the relativistic regime is a torchship
+   * doing a powered in-system burn.
    */
   private advanceThrustShip(ship: Ship, t0: number, dt: number): void {
     let elapsed = 0;
@@ -221,16 +227,20 @@ export class Simulation {
       }
 
       // The engine burns propellant and gains rapidity at a constant PROPER-time
-      // rate, so the analytic event times below are solved in proper time τ (the
-      // exact classical formulas, now in τ) and converted to coordinate time by the
-      // segment-start Lorentz factor. γ_seg is held constant across the ≤2 s segment
-      // — β changes negligibly over 2 s even at extreme proper acceleration. At
-      // v ≪ c, γ_seg = 1 and τ = coordinate time, recovering the classical split.
+      // rate, so the event times below are solved in proper time τ (the exact
+      // classical formulas, now in τ) and converted to coordinate time by the
+      // segment-start Lorentz factor γ_seg, held constant across the segment. That
+      // freeze is only first-order in the per-segment β change, so the segment is
+      // additionally capped (tauStep) to a small rapidity gain — keeping γ ≈ const
+      // across it. At v ≪ c, γ_seg = 1, τ = coordinate time, and the cap never binds,
+      // recovering the classical split exactly.
       const gammaSeg = lorentzFactor(length(ship.v));
       const tauCut = (m0 / mdot) * (1 - Math.exp(-dvRem / ve)); // proper time to target rapidity
       const tauEmpty = stage.propMass / mdot; // proper time to empty tank
+      const tauStep = (m0 / mdot) * (1 - Math.exp(-MAX_SEG_RAPIDITY / ve)); // γ-fidelity cap
       let segTau = (dt - elapsed) / gammaSeg; // available proper time this interval
       let event: "none" | "cut" | "empty" = "none";
+      if (tauStep < segTau) { segTau = tauStep; event = "none"; } // soft cap (no event)
       if (tauCut < segTau) { segTau = tauCut; event = "cut"; }
       if (tauEmpty < segTau) { segTau = tauEmpty; event = "empty"; }
       const seg = segTau * gammaSeg; // coordinate-time length of the segment
@@ -251,14 +261,17 @@ export class Simulation {
         const r: Vec3 = { x: y[0]!, y: y[1]!, z: y[2]! };
         const v: Vec3 = { x: y[3]!, y: y[4]!, z: y[5]! };
         const prop = y[6]!;
-        const m = carried + Math.max(prop, 0);
-        const rmag = Math.hypot(r.x, r.y, r.z);
+        const m = Math.max(carried + Math.max(prop, 0), 1e-9); // floor: never divide by 0 mass
+        const rmag = Math.max(Math.hypot(r.x, r.y, r.z), 1); // floor: never divide by 0 radius
         const gfac = -mu / (rmag * rmag * rmag);
         const dir = dirFor(r, v);
         const at = thrust / m;
-        // Proper-frame specific force = thrust + gravity, both as flat-space forces
-        // in the inertial primary frame; convert to the coordinate 3-acceleration
-        // with SR (reduces to gravity + thrust/m at v ≪ c, caps |v| below c).
+        // Specific force = thrust (a genuine proper/rest-frame engine push) +
+        // Newtonian gravity, both run through the proper→coordinate SR transform.
+        // Treating gravity as a proper-frame force is an approximation, but it is
+        // exact at γ = 1 (where gravity matters, in the well) and negligible at
+        // relativistic β (where the ship is far out and gravity ≈ 0), so the seam
+        // is harmless. Reduces to gravity + thrust/m at v ≪ c; caps |v| below c.
         const aProper: Vec3 = {
           x: dir.x * at + r.x * gfac,
           y: dir.y * at + r.y * gfac,
@@ -286,10 +299,10 @@ export class Simulation {
       // split-invariant (an integral does not care how the interval is chunked), so
       // the rapidity ledger telescopes and the burn stays chunk-invariant. Delivered
       // rapidity over the segment is ve·ln(m_before/m_after) (dφ = −ve·dm/m), which
-      // is the engine's frame-invariant Δv currency. At v ≪ c (γ = 1) the rate is
+      // is the engine's frame-invariant Δv currency. At v ≪ c (γ → 1) the rate is
       // −ṁ, the integral is exact and linear, and both lines reduce to the classical
-      // Tsiolkovsky bookkeeping to machine precision.
-      const mAfter = carried + Math.max(y1[6]!, 0);
+      // Tsiolkovsky bookkeeping (γ−1 ~ 3e-10 in LEO).
+      const mAfter = Math.max(carried + Math.max(y1[6]!, 0), 1e-9); // floor: never log(m0/0)
       stage.propMass = Math.max(y1[6]!, 0);
       burn.dvDone += ve * Math.log(m0 / mAfter);
       elapsed += seg;

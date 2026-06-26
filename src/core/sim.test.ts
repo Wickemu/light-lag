@@ -84,8 +84,10 @@ describe("relativistic finite-thrust burn", () => {
     expect(target).toBeLessThan(dvRemaining(ship)); // affordable → ACK, not NACK
     sendBurn(sim, id, target, "prograde");
 
-    // Step through the (light-lagged) command delivery and the whole burn,
-    // sampling the primary-relative speed finely so we catch any c crossing.
+    // Step through the (light-lagged) command delivery and the whole burn, sampling
+    // the primary-relative speed at each integrator boundary. (Sub-luminality is
+    // guaranteed by the |v|<c clamp inside properToCoordinateAccel, not by sampling
+    // density; this just confirms it at the boundaries.)
     const inFlight = () => sim.world.messages.some((m) => m.kind === "command" && m.targetId === id);
     let maxSpeed = 0, guard = 0;
     while ((ship.mode === "thrust" || inFlight()) && guard++ < 1_000_000) {
@@ -111,6 +113,27 @@ describe("relativistic finite-thrust burn", () => {
     const propConsumed = propBefore - ship.stages[0]!.propMass;
     const expectedProp = m0 * (1 - Math.exp(-target / VE));
     expect(Math.abs(propConsumed - expectedProp) / expectedProp).toBeLessThan(0.005);
+  });
+
+  it("handles a non-prograde (radial-out) relativistic burn without exceeding c or blowing up", () => {
+    // Prograde burns are longitudinal (α/γ³). A 'radial-out' burn starts transverse
+    // to the orbital velocity — exercising the α/γ² channel and the curving-path
+    // integration — while still speeding the ship up to relativistic β. It must stay
+    // sub-luminal and finite throughout.
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, torchDesign());
+    const ship = sim.world.ships.get(id)!;
+    sendBurn(sim, id, 2e8, "radial-out");
+    const inFlight = () => sim.world.messages.some((m) => m.kind === "command" && m.targetId === id);
+    let maxSpeed = 0, guard = 0;
+    while ((ship.mode === "thrust" || inFlight()) && guard++ < 1_000_000) {
+      sim.step(1);
+      const s = length(shipRelativeState(ship, sim.world.t).v);
+      expect(Number.isFinite(s)).toBe(true);
+      maxSpeed = Math.max(maxSpeed, s);
+    }
+    expect(maxSpeed).toBeLessThan(C);
+    expect(maxSpeed).toBeGreaterThan(0.3 * C); // the burn actually reached relativistic speed
   });
 
   it("a sub-relativistic burn is identical to the classical result (reduction)", () => {
