@@ -33,6 +33,52 @@ export function maxTurnAngle(vInf: number, mu: number, rpMin: number): number {
   return flybyTurnAngle(vInf, mu, rpMin);
 }
 
+/** Hyperbolic impact parameter b — the perpendicular miss-distance of the incoming
+ *  asymptote from the body centre: b = |a|·√(e²−1) = rp·√((e+1)/(e−1)), with
+ *  |a| = μ/v∞². This is the targeting handle a B-plane aim actually controls: pick
+ *  b (and its direction in the B-plane), and the periapsis — hence the bend — follows. */
+export function impactParameter(vInf: number, mu: number, rp: number): number {
+  const e = flybyEccentricity(vInf, mu, rp);
+  return rp * Math.sqrt((e + 1) / (e - 1));
+}
+
+export interface BPlaneAim {
+  turn: number; // bend angle between in/out asymptotes (rad)
+  e: number; // hyperbola eccentricity that bends by exactly `turn`
+  rp: number; // periapsis radius for that bend at v∞_in (m)
+  b: number; // impact-parameter magnitude (m)
+  bHat: Vec3; // unit B-vector: in the B-plane (⊥ v∞_in), in the bend plane
+  planeNormal: Vec3; // unit normal of the flyby plane (v̂∞_in × v̂∞_out)
+}
+
+/**
+ * The free-bend B-plane aim that rotates the incoming excess velocity into the
+ * direction of the outgoing one (an unpowered pass preserves |v∞|, so only the
+ * DIRECTION is targeted). Returns the hyperbola (e, rp) that bends by exactly the
+ * required angle, the impact parameter b, and the B-vector direction — the
+ * perpendicular aim offset that, threaded through the body's B-plane, produces the
+ * bend. The B-plane is ⊥ to v∞_in; the trajectory curves toward periapsis, so the
+ * B-vector points the opposite way (toward where the asymptote pierces the plane).
+ */
+export function bPlaneAim(vInfInVec: Vec3, vInfOutVec: Vec3, mu: number): BPlaneAim {
+  const vIn = length(vInfInVec);
+  const inHat = normalize(vInfInVec);
+  const outHat = normalize(vInfOutVec);
+  const cosT = Math.max(-1, Math.min(1, dot(inHat, outHat)));
+  const turn = Math.max(Math.acos(cosT), 1e-9); // guard the no-bend limit (b → ∞)
+  const e = 1 / Math.sin(turn / 2); // eccentricity that bends by `turn`
+  const rp = ((e - 1) * mu) / (vIn * vIn); // periapsis for this e at v∞_in
+  const b = rp * Math.sqrt((e + 1) / (e - 1));
+  // Bend direction = outHat's component ⊥ inHat; periapsis is on that side, so the
+  // B-vector (the asymptote's piercing point) sits on the opposite side.
+  const perp = sub(outHat, scale(inHat, dot(outHat, inHat)));
+  const bHat = length(perp) > 1e-12
+    ? scale(normalize(perp), -1)
+    : normalize(cross(inHat, { x: 0, y: 0, z: 1 }));
+  const planeNormal = normalize(cross(vInfInVec, vInfOutVec));
+  return { turn, e, rp, b, bHat, planeNormal };
+}
+
 /** Rodrigues rotation of `v` about unit axis `k` by angle `theta`. */
 function rotateAbout(v: Vec3, k: Vec3, theta: number): Vec3 {
   const c = Math.cos(theta), s = Math.sin(theta);
