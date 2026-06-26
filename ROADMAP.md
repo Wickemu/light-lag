@@ -61,10 +61,17 @@ locked by a permanent integration test suite before more gameplay is layered on.
   reactor into the *actual* thrust (electric engines are a fixed operating point
   today; thermal is a readout). `a_max = 2ηP/(vₑ·m)`.
 - **Parallel staging** / strap-on boosters / drop tanks (serial stages only now).
-- **N-body perturbations & J2** (currently two-body + patched conics); multi-SOI
-  flyby chains; gravity assists as a planned maneuver.
-- **Multi-revolution Lambert** + full B-plane targeting in the planner UI
-  (single-rev now; B-plane solved at execution).
+- **Gravity assists** — DONE (first cut): flyby physics (flyby.ts), a two-leg
+  patched-conic assist solver (assist.ts), and in-sim execution (a flyby-pass that
+  bends the heliocentric velocity for free and continues to the target), with a
+  "via flyby" planner mode. Still to do: multi-flyby chains and full free-bend
+  B-plane targeting (the executor uses a patched-conic point + charged residual).
+- **Transfer toolkit** — DONE: plane-change Δv, bi-elliptic transfers, and
+  multi-revolution Lambert (wired into the porkchop).
+- **N-body perturbations & J2** (currently two-body + patched conics). J2 secular
+  precession for ship orbits is scoped and deferred (it would touch the analytic
+  propagation core + the golden-state hash).
+- **Full B-plane targeting in the planner UI** (B-plane solved at execution today).
 - **SOI-as-point departure** (parking-orbit offset dropped) — documented
   approximation; refine if close-range nav matters.
 - **Validity window past 1800–2050** (the giants' 3000 BC–3000 AD b,c,s,f
@@ -78,12 +85,12 @@ locked by a permanent integration test suite before more gameplay is layered on.
   SNR>1 threshold — refine for a fully defensible SNR-vs-range curve.
 - **Landing / takeoff** — DONE (first cut): a calibrated gravity-turn ascent Δv
   budget through real exponential atmospheres + an aerobraking descent model, with
-  in-sim land/launch. Still to do: full aerocapture trajectories, a co-rotating
-  landed-ship position (the landed state is a surface-skimming placeholder today),
-  and atmospheric-entry heating.
-- **More bodies** — DONE: 37 bodies (dwarfs, asteroids, gas-giant & other moons)
-  on the new fixed-J2000-conic (`FixedHelioRow`) + `MoonRow` paths, Horizons-checked.
-  Still to do: irregular-moon precession, more TNOs/asteroids, and comets.
+  in-sim land/launch and co-rotating landed ships (sit on the surface at surface
+  speed). Still to do: full aerocapture trajectories and atmospheric-entry heating.
+- **More bodies** — DONE: 43 bodies (dwarfs, asteroids, gas-giant & other moons,
+  plus TNOs and comets) on the fixed-J2000-conic (`FixedHelioRow`) + `MoonRow`
+  paths, Horizons-checked. Still to do: irregular-moon precession, more small
+  bodies, comet outgassing/non-gravitational forces.
 - Minor fidelity: EMB-vs-Earth-centre ~4671 km offset; Moon & small-body two-body
   precession drift over years; the Pluto–Charon barycentre approximation.
 

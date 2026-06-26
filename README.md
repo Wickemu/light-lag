@@ -30,12 +30,16 @@ that no amount of engineering can wish away.
 
 **Phase 1 complete** — a deterministic physics core and a flyable, to-scale 3D Solar System.
 
-- Real JPL ephemeris for **37 bodies** — the 8 planets, the dwarf planets (Ceres, Pluto, Eris,
-  Haumea, Makemake), major asteroids (Vesta, Pallas), and the gas-giant & other moons (Galileans,
-  Titan + six Saturnians, five Uranians, Triton, Phobos/Deimos, Charon); analytic Keplerian
-  propagation exact at any time-warp, cross-checked to machine precision at J2000 vs Horizons.
+- Real JPL ephemeris for **43 bodies** — the 8 planets, the dwarf planets, major asteroids, the
+  gas-giant & other moons (Galileans, Titan + six Saturnians, five Uranians, Triton, Phobos/Deimos,
+  Charon), and TNOs + comets (Sedna, Quaoar, Gonggong, Orcus, 1P/Halley, 2P/Encke); analytic
+  Keplerian propagation exact at any time-warp, cross-checked to machine precision at J2000 vs Horizons.
+- **Transfer toolkit**: Hohmann, Lambert (now multi-revolution), porkchop launch windows, bi-elliptic
+  transfers, plane changes, and **gravity-assist flybys** — plan an Earth→Jupiter→Saturn slingshot and
+  watch the heliocentric energy jump at the flyby (the bend is free).
 - **Landing & takeoff** Δv/propellant budgeting: a calibrated gravity-turn ascent through real
-  exponential atmospheres (Earth→LEO ≈ 9.3 km/s, Moon ≈ 1.9, Mars ≈ 4.0), aerobraking on descent.
+  exponential atmospheres (Earth→LEO ≈ 9.3 km/s, Moon ≈ 1.9, Mars ≈ 4.0), aerobraking on descent,
+  and ships that sit on the surface co-rotating with the body.
 - **Interstellar** first steps: a relativistic propulsion layer (rapidity rocket equation +
   constant-proper-accel brachistochrone), the ~27 nearest star systems, a transit estimator, and
   an in-sim flyable flip-and-burn where the crew clock and Earth clock visibly diverge.
