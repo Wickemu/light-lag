@@ -11,8 +11,9 @@
  *   Tab / Shift+Tab — cycle focus forward / backward
  *   WASD / ↑↓←→  — orbit camera (held; smooth)
  *   + / - (=/_)  — zoom in / out (held; smooth)
- *   R / Home     — reset camera distance for current focus
+ *   R / Home     — reset camera framing for the active view
  *   V            — cycle view presets (isometric → top-down → edge-on)
+ *   M            — toggle in-system orrery ⇄ interstellar map
  *   F            — toggle ship / flight panel
  *   Escape       — close transfer planner (then ship panel if already closed)
  */
@@ -99,12 +100,15 @@ export class KeyboardManager {
       return;
     }
 
+    // ── View switch ──────────────────────────────────────────────────────────
+    if (k === "m" || k === "M") { this.hud.toggleView(); return; }
+
     // ── Camera controls ──────────────────────────────────────────────────────
     if (k === "v" || k === "V") { this.snapView(); return; }
 
     if (k === "Home" || k === "r" || k === "R") {
-      // Re-snap to a sensible distance for the current focus body.
-      this.sm.focusBody(this.sm.focusId);
+      // Re-snap to a sensible framing for whichever view is active.
+      this.sm.resetView();
       return;
     }
 

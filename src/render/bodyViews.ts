@@ -232,8 +232,23 @@ export class BodyViews {
     node.add(mesh);
   }
 
+  /** Park every body's marker, sphere and orbit (interstellar view is active). */
+  private hideAll(): void {
+    for (const vis of this.visuals) {
+      vis.marker.visible = false;
+      vis.node.visible = false;
+      if (vis.orbit) vis.orbit.visible = false;
+    }
+  }
+
   /** Reposition everything for sim time t. Origin must already be updated. */
   update(t: number): void {
+    // The orrery only exists in the in-system view; the interstellar map draws
+    // its own (Sol collapses to a point there).
+    if (this.sm.viewMode !== "system") {
+      this.hideAll();
+      return;
+    }
     const tmp = new THREE.Vector3();
     const orbitsOn = this.vis.layer("orbits");
     for (const vis of this.visuals) {

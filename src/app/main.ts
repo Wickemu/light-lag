@@ -17,6 +17,7 @@ import { ShipViews } from "../render/shipViews.ts";
 import { TrajectoryViews } from "../render/trajectoryViews.ts";
 import { ForceViews } from "../render/forceViews.ts";
 import { StarViews } from "../render/starViews.ts";
+import { InterstellarView } from "../render/interstellarView.ts";
 import { CommsViews } from "../render/commsViews.ts";
 import { Hud } from "../ui/hud.ts";
 import { ScaleBar } from "../ui/scaleBar.ts";
@@ -43,6 +44,7 @@ const shipViews = new ShipViews(sm, uiRoot, visibility);
 const trajectoryViews = new TrajectoryViews(sm, sim, visibility);
 const forceViews = new ForceViews(sm, visibility);
 const starViews = new StarViews(sm, uiRoot, visibility);
+const interstellarView = new InterstellarView(sm, uiRoot, visibility);
 const commsViews = new CommsViews(sm, visibility);
 const hud = new Hud(uiRoot, sim, sm, visibility);
 const scaleBar = new ScaleBar(uiRoot, sm);
@@ -66,12 +68,15 @@ let fps = 60;
 /** Draw one frame from the current world state (one-way read). */
 function renderOnce(): void {
   sm.updateOrigin(world.t);
+  // Each view draws only in its own mode and parks in the other, so all are
+  // updated every frame; the cheap early-outs keep the idle set free.
   views.update(world.t);
   starViews.update(world.t);
   shipViews.update(world, world.t);
   trajectoryViews.update(world, world.t);
   forceViews.update(world, world.t);
   commsViews.update(world, world.t);
+  interstellarView.update(world, world.t);
   sm.render();
   hud.update(fps, views);
   scaleBar.update();
@@ -104,6 +109,7 @@ if (import.meta.env.DEV) {
     trajectoryViews,
     forceViews,
     starViews,
+    interstellarView,
     commsViews,
     hud,
     shipPanel,

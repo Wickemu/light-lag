@@ -54,6 +54,8 @@ export class Hud {
   private focusBody!: HTMLElement;
   private fpsEl!: HTMLElement;
   private labelLayer!: HTMLElement;
+  private systemBtn!: HTMLButtonElement;
+  private interstellarBtn!: HTMLButtonElement;
   private labels = new Map<string, HTMLElement>();
   private listButtons = new Map<string, HTMLButtonElement>();
   // Show/hide controls: eye toggles per body and per kind, layer chips, and the
@@ -75,6 +77,7 @@ export class Hud {
     this.build();
     this.vis.onChange(() => this.refreshVisibilityUI());
     this.refreshVisibilityUI();
+    this.refreshViewSwitch();
   }
 
   private build(): void {
@@ -105,6 +108,16 @@ export class Hud {
     warpRow.append(down, this.pauseBtn, up, this.warpEl);
     clock.append(this.dateEl, warpRow);
     this.root.appendChild(clock);
+
+    // Two-state map switch: the in-system orrery vs. the to-scale interstellar
+    // neighbourhood. (Keyboard: M.)
+    const viewSwitch = el("div", "panel view-switch");
+    this.systemBtn = button("System", () => this.setView("system"));
+    this.interstellarBtn = button("Interstellar", () => this.setView("interstellar"));
+    this.systemBtn.title = "In-system orrery (M)";
+    this.interstellarBtn.title = "Interstellar map (M)";
+    viewSwitch.append(this.systemBtn, this.interstellarBtn);
+    this.root.appendChild(viewSwitch);
 
     // Body selector + visibility (right). With 43 bodies the flat list ran
     // off-screen, so the panel scrolls (under a sticky head) and the bodies are
@@ -165,6 +178,7 @@ export class Hud {
       [", .", "warp"],
       ["1–8", "focus"],
       ["tab", "cycle"],
+      ["M", "map"],
       ["F", "ships"],
       ["V", "angle"],
       ["R", "reset"],
@@ -227,7 +241,25 @@ export class Hud {
     }
   }
 
+  /** Switch the active map. Exposed for the keyboard (M) and the HUD buttons. */
+  setView(mode: "system" | "interstellar"): void {
+    this.sm.setViewMode(mode);
+    this.refreshViewSwitch();
+  }
+
+  toggleView(): void {
+    this.setView(this.sm.viewMode === "system" ? "interstellar" : "system");
+  }
+
+  private refreshViewSwitch(): void {
+    this.systemBtn.classList.toggle("active", this.sm.viewMode === "system");
+    this.interstellarBtn.classList.toggle("active", this.sm.viewMode === "interstellar");
+  }
+
   focus(id: string): void {
+    // Choosing a body implies the in-system view — return from the interstellar
+    // map if we're on it, then frame the body.
+    if (this.sm.viewMode !== "system") this.setView("system");
     this.sm.focusBody(id);
     for (const [bid, btn] of this.listButtons) {
       const active = bid === id;
@@ -327,7 +359,8 @@ export class Hud {
   private updateLabels(views: BodyViews): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const labelsOn = this.vis.layer("labels");
+    // Body labels belong to the in-system view; the interstellar map draws its own.
+    const labelsOn = this.vis.layer("labels") && this.sm.viewMode === "system";
     for (const anchor of views.labelAnchors()) {
       const lbl = this.labels.get(anchor.id);
       if (!lbl) continue;
