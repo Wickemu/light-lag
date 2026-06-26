@@ -7,6 +7,7 @@
 
 import { type Vec3, cross, normalize, neg } from "./math/vec3.ts";
 import { type KeplerElements } from "./math/kepler.ts";
+import { JULIAN_YEAR } from "./constants.ts";
 
 /** vis-viva: orbital speed at radius r on an orbit of semi-major axis a. */
 export function visVivaSpeed(mu: number, r: number, a: number): number {
@@ -59,6 +60,47 @@ export function planeChangeDv(v: number, di: number): number {
  */
 export function combinedPlaneChangeDv(v1: number, v2: number, di: number): number {
   return Math.sqrt(v1 * v1 + v2 * v2 - 2 * v1 * v2 * Math.cos(di));
+}
+
+/** Secular precession rates (rad/s) of a near-circular/elliptic orbit from a
+ *  body's J2 oblateness — the leading non-spherical gravity term. The node
+ *  regresses (Ω̇ < 0 for prograde), the apsides precess, and the mean anomaly
+ *  picks up a small secular rate. These are LINEAR in time, so they keep the
+ *  analytic propagation exact at any time-warp. Zero if J2 is absent or the orbit
+ *  is unbound. */
+export interface J2Rates {
+  nodeDot: number; // Ω̇ (rad/s) — nodal regression
+  periDot: number; // ω̇ (rad/s) — apsidal precession
+  anomalyDot: number; // secular Ṁ from J2 (rad/s)
+}
+
+export function j2Rates(mu: number, R: number, J2: number, a: number, e: number, i: number): J2Rates {
+  if (!J2 || a <= 0 || e >= 1) return { nodeDot: 0, periDot: 0, anomalyDot: 0 };
+  const n = Math.sqrt(mu / (a * a * a)); // mean motion
+  const p = a * (1 - e * e); // semi-latus rectum
+  const f = n * J2 * (R / p) * (R / p);
+  const ci = Math.cos(i);
+  return {
+    nodeDot: -1.5 * f * ci,
+    periDot: 0.75 * f * (5 * ci * ci - 1), // frozen apsides at the critical i ≈ 63.43°
+    anomalyDot: 0.75 * f * Math.sqrt(1 - e * e) * (3 * ci * ci - 1),
+  };
+}
+
+/**
+ * The inclination of a SUN-SYNCHRONOUS orbit: the J2 nodal regression exactly
+ * matches the body's ~1 rev/year around the Sun, so the orbit plane keeps a fixed
+ * angle to the Sun. Returns the inclination (rad, > 90° — retrograde) or null if
+ * no inclination achieves it at this altitude. (For Earth at ~700 km this is the
+ * familiar ≈ 98°.)
+ */
+export function sunSyncInclination(mu: number, R: number, J2: number, a: number, e = 0): number | null {
+  if (!J2 || a <= 0) return null;
+  const n = Math.sqrt(mu / (a * a * a));
+  const p = a * (1 - e * e);
+  const cosi = -(2 * Math.PI) / JULIAN_YEAR / (1.5 * n * J2 * (R / p) * (R / p));
+  if (Math.abs(cosi) > 1) return null;
+  return Math.acos(cosi);
 }
 
 /** Specific orbital energy (J/kg). Negative = bound. */
