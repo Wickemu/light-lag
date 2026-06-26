@@ -85,8 +85,30 @@ export function interstellarProperTime(leg: InterstellarLeg, t: number): number 
   return 2 * tauAt(T / 2) - tauAt(T - tc); // symmetric deceleration half
 }
 
+/** Parent-relative state of a ship sitting on the surface, co-rotating with the
+ *  body: the landing-site body-fixed direction is rotated by θ(t)=Ω·t (about the
+ *  ecliptic-Z axis — a documented approximation that neglects axial tilt) and the
+ *  velocity is ω×r, so the ship moves at SURFACE speed, not orbital speed. */
+export function landedRelativeState(ship: Ship, t: number): State {
+  const leg = ship.landed!;
+  const body = BODY_BY_ID.get(leg.bodyId);
+  if (!body) return { r: { x: 0, y: 0, z: 0 }, v: { x: 0, y: 0, z: 0 } };
+  const T = body.rotationPeriod ?? 0;
+  const om = T !== 0 ? (2 * Math.PI) / T : 0; // signed angular rate (retrograde T < 0)
+  const th = om * t;
+  const c = Math.cos(th), s = Math.sin(th);
+  const d = leg.surfaceDir;
+  const r = {
+    x: (d.x * c - d.y * s) * body.radius,
+    y: (d.x * s + d.y * c) * body.radius,
+    z: d.z * body.radius,
+  };
+  return { r, v: { x: -om * r.y, y: om * r.x, z: 0 } }; // ω × r
+}
+
 /** State of the ship relative to its primary (the Earth-centred frame, etc.). */
 export function shipRelativeState(ship: Ship, t: number): State {
+  if (ship.landed) return landedRelativeState(ship, t);
   if (ship.interstellarLeg) return interstellarLegState(ship.interstellarLeg, t);
   if (ship.mode === "thrust" && ship.r && ship.v) {
     // Linear extrapolation from the integrated state's valid time, so callers
@@ -152,6 +174,10 @@ export function applyImpulsiveDv(ship: Ship, dv: number): boolean {
  *  An interstellar ship is not on a closed orbit; callers should check
  *  ship.interstellarLeg first — this returns a far placeholder to avoid crashing. */
 export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
+  if (ship.landed) {
+    const b = BODY_BY_ID.get(ship.landed.bodyId);
+    return { a: b?.radius ?? 1, e: 0, i: 0, Omega: 0, omega: 0, M: 0 };
+  }
   if (ship.interstellarLeg) {
     return { a: length(interstellarLegState(ship.interstellarLeg, t).r), e: 0, i: 0, Omega: 0, omega: 0, M: 0 };
   }

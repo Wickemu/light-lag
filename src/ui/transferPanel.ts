@@ -13,7 +13,8 @@ import { type Simulation } from "../core/sim.ts";
 import { type SceneManager } from "../render/SceneManager.ts";
 import { computePorkchop, type Porkchop, type PorkCell } from "../core/maneuver/porkchop.ts";
 import { hohmann, synodicPeriod } from "../core/maneuver/hohmann.ts";
-import { planTransfer } from "../app/commands.ts";
+import { searchAssist, type AssistResult } from "../core/maneuver/assist.ts";
+import { planTransfer, planAssist } from "../app/commands.ts";
 import { dvRemaining, shipWorldState, shipOsculatingElements } from "../core/ships.ts";
 import { periapsisRadius, orbitalPeriod } from "../core/orbit.ts";
 import { bodyElements } from "../core/ephemeris.ts";
@@ -36,8 +37,11 @@ export class TransferPanel {
   private targetSel!: HTMLSelectElement;
   private axisEl!: HTMLElement;
 
+  private viaSel!: HTMLSelectElement;
   private shipId: string | null = null;
   private targetId = "mars";
+  private viaId = ""; // "" = direct; otherwise a flyby body id
+  private assist: AssistResult | null = null;
   private pork: Porkchop | null = null;
   private selI = -1;
   private selJ = -1;
@@ -71,6 +75,24 @@ export class TransferPanel {
     };
     head.appendChild(this.targetSel);
     this.panel.appendChild(head);
+
+    // Optional gravity-assist flyby body. "Direct" = no assist.
+    const viaRow = div("transfer-head");
+    viaRow.appendChild(div("panel-label", "VIA FLYBY"));
+    this.viaSel = document.createElement("select");
+    this.viaSel.className = "target-sel";
+    const none = document.createElement("option");
+    none.value = ""; none.textContent = "— Direct (no assist) —";
+    this.viaSel.appendChild(none);
+    for (const id of TARGETS) {
+      const o = document.createElement("option");
+      o.value = id;
+      o.textContent = BODY_BY_ID.get(id)!.name;
+      this.viaSel.appendChild(o);
+    }
+    this.viaSel.onchange = () => { this.viaId = this.viaSel.value; this.recompute(); };
+    viaRow.appendChild(this.viaSel);
+    this.panel.appendChild(viaRow);
 
     this.canvas = document.createElement("canvas");
     this.canvas.width = CANVAS_W;
@@ -146,12 +168,36 @@ export class TransferPanel {
       rParkFrom,
       rParkTo,
     });
+
+    // Gravity-assist search (when a flyby body is chosen): scan a few departure
+    // dates, and for each grid the flyby/arrival times, keeping the cheapest.
+    this.assist = null;
+    if (this.viaId && this.viaId !== this.targetId && this.viaId !== fromId) {
+      const aFly = bodyElements(BODY_BY_ID.get(this.viaId)!, t0)?.a ?? aFrom;
+      const tofToFly = hohmann(MU_SUN, aFrom, aFly).tof;
+      const tofFlyToTgt = hohmann(MU_SUN, aFly, aTo).tof;
+      let best: AssistResult | null = null;
+      for (let k = 0; k < 8; k++) {
+        const tDep = t0 + (depSpan * k) / 7;
+        const r = searchAssist(fromId, this.viaId, this.targetId, {
+          tDepart: tDep,
+          flybyWindow: [tDep + 0.6 * tofToFly, tDep + 1.6 * tofToFly],
+          arriveWindow: [tDep + 0.6 * tofToFly + 0.5 * tofFlyToTgt, tDep + 1.6 * tofToFly + 2.2 * tofFlyToTgt],
+          rParkFrom,
+          rParkTo,
+          steps: 16,
+        });
+        if (r && (!best || r.dvTotal < best.dvTotal)) best = r;
+      }
+      this.assist = best;
+    }
     this.selectBest();
   }
 
   private selectBest(): void {
     if (!this.pork || !this.pork.best) {
       this.draw();
+      if (this.viaId) { this.updateReadout(); return; } // assist mode draws its own readout
       this.readout.textContent = "No transfer solution in range.";
       return;
     }
@@ -234,8 +280,38 @@ export class TransferPanel {
   }
 
   private updateReadout(): void {
-    const cell = this.selectedCell();
     const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
+
+    // Gravity-assist mode: show the assisted plan and compare to the direct best.
+    if (this.viaId && ship) {
+      const a = this.assist;
+      if (!a) {
+        this.readout.innerHTML = `No usable ${BODY_BY_ID.get(this.viaId)?.name ?? this.viaId} assist in range.`;
+        this.commitBtn.disabled = true;
+        return;
+      }
+      const haveDv = dvRemaining(ship);
+      const need = a.dvDepart + a.dvFlyby; // the ship must afford injection + flyby burn
+      const feasible = need <= haveDv;
+      const directBest = this.pork?.best?.total;
+      this.axisEl.innerHTML = `<span>gravity assist via ${BODY_BY_ID.get(this.viaId)!.name}</span>`;
+      this.readout.innerHTML =
+        kv("Depart", formatDate(a.tDepart)) +
+        kv(`Flyby ${BODY_BY_ID.get(this.viaId)!.name}`, `${formatDate(a.tFlyby)} · ${(a.flybyRadius / 1000).toFixed(0)} km, turn ${((a.turnRequired * 180) / Math.PI).toFixed(0)}°`) +
+        kv("Arrive", formatDate(a.tArrive)) +
+        kv("Injection Δv", `${(a.dvDepart / 1000).toFixed(3)} km/s`) +
+        kv("Flyby Δv", `${(a.dvFlyby / 1000).toFixed(3)} km/s${a.unpowered ? " (free)" : ""}`) +
+        kv("Capture Δv", `${(a.dvArrive / 1000).toFixed(3)} km/s`) +
+        kv("Total Δv", `${(a.dvTotal / 1000).toFixed(3)} km/s`) +
+        (directBest ? kv("Direct best Δv", `${(directBest / 1000).toFixed(3)} km/s`) : "") +
+        (feasible
+          ? `<div class="ok">✓ injection + flyby within budget</div>`
+          : `<div class="warn">✗ exceeds Δv budget</div>`);
+      this.commitBtn.disabled = !feasible;
+      return;
+    }
+
+    const cell = this.selectedCell();
     if (!cell || !ship || !isFinite(cell.total)) {
       this.readout.textContent = "No solution for this cell.";
       this.commitBtn.disabled = true;
@@ -260,8 +336,19 @@ export class TransferPanel {
   }
 
   private commit(): void {
+    if (!this.shipId) return;
+    if (this.viaId && this.assist) {
+      const a = this.assist;
+      if (!planAssist(this.sim, this.shipId, this.viaId, this.targetId, a.tDepart, a.tFlyby, a.tArrive)) return;
+      this.sm.setFocusTarget(this.shipId, (t) => {
+        const s = this.sim.world.ships.get(this.shipId!);
+        return s ? shipWorldState(s, t).r : { x: 0, y: 0, z: 0 };
+      }, 500);
+      this.close();
+      return;
+    }
     const cell = this.selectedCell();
-    if (!cell || !this.shipId) return;
+    if (!cell) return;
     const plan = planTransfer(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT);
     if (!plan) return;
     // Focus the ship and let the player fast-forward to the window.

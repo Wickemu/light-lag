@@ -59,11 +59,18 @@ function qBurn(b: ShipBurn) {
 }
 
 function qTransfer(t: ShipTransfer) {
-  return {
+  const o: Record<string, unknown> = {
     targetId: t.targetId, tDepart: q(t.tDepart), tArrive: q(t.tArrive),
     dvDepart: q(t.dvDepart), dvArrive: q(t.dvArrive),
     departed: t.departed, inSoi: t.inSoi, arrived: t.arrived,
   };
+  if (t.flyby) {
+    o.flyby = {
+      bodyId: t.flyby.bodyId, tFlyby: q(t.flyby.tFlyby),
+      dvBurn: q(t.flyby.dvBurn), done: t.flyby.done,
+    };
+  }
+  return o;
 }
 
 function qLeg(l: InterstellarLeg) {
@@ -87,7 +94,7 @@ function qShip(s: Ship): Record<string, unknown> {
   if (s.burn) o.burn = qBurn(s.burn);
   if (s.transfer) o.transfer = qTransfer(s.transfer);
   if (s.interstellarLeg) o.interstellarLeg = qLeg(s.interstellarLeg);
-  if (s.landed) o.landed = { bodyId: s.landed.bodyId };
+  if (s.landed) o.landed = { bodyId: s.landed.bodyId, surfaceDir: qv(s.landed.surfaceDir) };
   o.stages = s.stages.map(qStage);
   return o;
 }

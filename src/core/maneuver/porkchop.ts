@@ -11,7 +11,31 @@ import { BODY_BY_ID } from "../constants.ts";
 import { bodyState } from "../ephemeris.ts";
 import { length, sub } from "../math/vec3.ts";
 import { hyperbolicBurnDv } from "../orbit.ts";
-import { lambert } from "./lambert.ts";
+import { lambert, type LambertSolution } from "./lambert.ts";
+
+/** Best Lambert leg over the direct and the first couple of multi-rev branches,
+ *  scored by the characteristic energy (departure + arrival v∞²). A long-TOF cell
+ *  that a 1- or 2-rev transfer flies more cheaply than the direct path picks the
+ *  cheaper branch — the multi-rev island the direct solver can't see. */
+function bestLeg(r1: { x: number; y: number; z: number }, r2: { x: number; y: number; z: number },
+  tof: number, mu: number, vDep: { x: number; y: number; z: number },
+  vArr: { x: number; y: number; z: number }): LambertSolution | null {
+  let best: LambertSolution | null = null;
+  let bestC3 = Infinity;
+  const consider = (sol: LambertSolution | null): void => {
+    if (!sol) return;
+    const vInfDep = length(sub(sol.v1, vDep));
+    const vInfArr = length(sub(sol.v2, vArr));
+    const c3 = vInfDep * vInfDep + vInfArr * vInfArr;
+    if (c3 < bestC3) { bestC3 = c3; best = sol; }
+  };
+  consider(lambert(r1, r2, tof, mu, true));
+  for (let n = 1; n <= 2; n++) {
+    consider(lambert(r1, r2, tof, mu, true, { nrev: n, lowPath: true }));
+    consider(lambert(r1, r2, tof, mu, true, { nrev: n, lowPath: false }));
+  }
+  return best;
+}
 
 export interface PorkCell {
   depT: number; // departure time (s since J2000)
@@ -73,7 +97,7 @@ export function computePorkchop(p: PorkchopParams): Porkchop {
       const arrT = depT + tof;
       const arrState = bodyState(to, arrT);
 
-      const sol = lambert(depState.r, arrState.r, tof, muSun, true);
+      const sol = bestLeg(depState.r, arrState.r, tof, muSun, depState.v, arrState.v);
       let dvDepart = Infinity, dvArrive = Infinity, total = Infinity;
       if (sol) {
         const vInfDep = length(sub(sol.v1, depState.v));

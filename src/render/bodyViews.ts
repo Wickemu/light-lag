@@ -22,6 +22,7 @@ const MARKER_SCALE: Record<BodyKind, number> = {
   dwarf: 0.016,
   asteroid: 0.012,
   moon: 0.013,
+  comet: 0.011,
 };
 
 function makeDotTexture(): THREE.Texture {

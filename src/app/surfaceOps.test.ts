@@ -2,10 +2,11 @@ import { describe, it, expect } from "vitest";
 import { createWorld } from "../core/world.ts";
 import { Simulation } from "../core/sim.ts";
 import { spawnShip, defaultDesign, landShip, launchShip } from "./commands.ts";
-import { dvRemaining } from "../core/ships.ts";
+import { dvRemaining, shipRelativeState } from "../core/ships.ts";
 import { circularOrbit } from "../core/orbit.ts";
 import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
 import { BODY_BY_ID } from "../core/constants.ts";
+import { length } from "../core/math/vec3.ts";
 
 const MOON = BODY_BY_ID.get("moon")!;
 
@@ -33,6 +34,21 @@ describe("landing and launch", () => {
     expect(ship.landed?.bodyId).toBe("moon");
     // Δv fell by ~the descent cost (propellant was spent).
     expect(dvBefore - dvRemaining(ship)).toBeGreaterThan(1500);
+  });
+
+  it("a landed ship sits on the surface, moving at SURFACE speed, not orbital speed", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = moonShip(sim);
+    landShip(sim, id);
+    const ship = sim.world.ships.get(id)!;
+    const t = sim.world.t;
+    // Distance from the Moon's centre is its radius (on the surface).
+    const rel = shipRelativeState(ship, t);
+    expect(length(rel.r) / MOON.radius).toBeCloseTo(1, 3);
+    // Surface speed = 2πR/T_rot ≈ 4.6 m/s — three orders below lunar orbital speed.
+    const surfaceSpeed = (2 * Math.PI * MOON.radius) / Math.abs(MOON.rotationPeriod!);
+    expect(length(rel.v)).toBeCloseTo(surfaceSpeed, 0);
+    expect(length(rel.v)).toBeLessThan(50); // not the ~1.6 km/s of a surface-skimming orbit
   });
 
   it("a landed ship can launch back to orbit, paying the ascent Δv, clearing landed", () => {
@@ -69,7 +85,8 @@ describe("landing and launch", () => {
 
     const json = serializeWorld(sim.world);
     const restored = deserializeWorld(json);
-    expect(restored.ships.get(id)!.landed).toEqual({ bodyId: "moon" });
+    expect(restored.ships.get(id)!.landed!.bodyId).toBe("moon");
+    expect(restored.ships.get(id)!.landed!.surfaceDir).toBeDefined();
     expect(hashWorld(restored)).toBe(hashWorld(sim.world));
   });
 });

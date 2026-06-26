@@ -41,6 +41,26 @@ export function hyperbolicBurnDv(vInf: number, mu: number, rPark: number): numbe
   return vPeri - vPark;
 }
 
+/**
+ * Δv for a PURE plane change of angle `di` (rad) at orbital speed `v`: rotating
+ * the velocity vector by `di` without changing its magnitude is an isoceles
+ * triangle, so Δv = 2·v·sin(di/2). This is why plane changes are done at apoapsis
+ * (where v is lowest) — the cost scales directly with the speed you turn.
+ */
+export function planeChangeDv(v: number, di: number): number {
+  return 2 * v * Math.sin(di / 2);
+}
+
+/**
+ * Δv for a COMBINED maneuver that both changes speed (v1 → v2) and rotates the
+ * velocity by `di` (rad), in a single burn — the law of cosines on the velocity
+ * triangle: √(v1² + v2² − 2·v1·v2·cos di). Reduces to |v2 − v1| when di = 0 and to
+ * planeChangeDv when v1 = v2. Always ≤ doing the two separately.
+ */
+export function combinedPlaneChangeDv(v1: number, v2: number, di: number): number {
+  return Math.sqrt(v1 * v1 + v2 * v2 - 2 * v1 * v2 * Math.cos(di));
+}
+
 /** Specific orbital energy (J/kg). Negative = bound. */
 export function specificEnergy(mu: number, a: number): number {
   return -mu / (2 * a);

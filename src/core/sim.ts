@@ -31,7 +31,9 @@ import { stateToElements, meanMotion } from "./math/kepler.ts";
 import { bodyState, bodyElements } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
 import { aimArrival } from "./maneuver/arrival.ts";
-import { BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
+import { lambert } from "./maneuver/lambert.ts";
+import { flybyManeuver } from "./maneuver/assist.ts";
+import { type BodyDef, BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
 import { type Vec3, add, sub, scale, normalize, length, cross } from "./math/vec3.ts";
 
 /** Sub-step grid spacing during powered flight (s). LEO period is ~5500 s, so a
@@ -289,6 +291,7 @@ export class Simulation {
     if (!ship) return;
     switch (ev.kind) {
       case "transfer-depart": this.executeDeparture(ship, ev.t); break;
+      case "flyby-pass": this.executeFlyby(ship, ev.t); break;
       case "soi-crossing": this.enterSoi(ship); break;
       case "soi-exit": this.exitSoi(ship); break;
       case "capture": this.captureAtPeriapsis(ship); break;
@@ -392,6 +395,14 @@ export class Simulation {
     if (!depBody || !target) return;
 
     const t = this.world.t; // == tr.tDepart
+
+    // Gravity-assist mission: leg 1 aims at the FLYBY body (a patched-conic point),
+    // and a flyby-pass event handles the bend + the leg toward the final target.
+    if (tr.flyby && !tr.flyby.done) {
+      this.executeAssistDeparture(ship, tr, t, depBody);
+      return;
+    }
+
     const depState = bodyState(depBody, t);
     const rCapture = target.radius + DEFAULT_CAPTURE_ALT;
     const aim = aimArrival(depBody, target, t, tr.tArrive, rCapture);
@@ -423,6 +434,76 @@ export class Simulation {
     ship.elements = stateToElements(depState.r, aim.v1, MU_SUN);
     ship.epoch = t;
 
+    this.events.push({ t: aim.tSoi, kind: "soi-crossing", entityId: ship.id });
+  }
+
+  /**
+   * Departure of a gravity-assist mission: seed the ship on the heliocentric leg
+   * to the FLYBY body's centre (a patched-conic flyby point) with the Lambert
+   * velocity, pay the Oberth injection, and schedule the flyby-pass.
+   */
+  private executeAssistDeparture(ship: Ship, tr: NonNullable<Ship["transfer"]>, t: number, depBody: BodyDef): void {
+    const flybyBody = BODY_BY_ID.get(tr.flyby!.bodyId);
+    if (!flybyBody) return;
+    const depState = bodyState(depBody, t);
+    const fbState = bodyState(flybyBody, tr.flyby!.tFlyby);
+    const leg1 = lambert(depState.r, fbState.r, tr.flyby!.tFlyby - t, MU_SUN, true);
+    if (!leg1) return; // degenerate; leave un-departed for re-planning
+
+    const vInf = length(sub(leg1.v1, depState.v));
+    const parkEl = shipOsculatingElements(ship, t);
+    const rPark = periapsisRadius(parkEl.a, parkEl.e);
+    const dv = hyperbolicBurnDv(vInf, depBody.mu, rPark);
+    if (!applyImpulsiveDv(ship, dv)) return; // can't afford injection — stay parked
+
+    tr.departed = true;
+    tr.dvDepart = dv;
+    ship.primary = "sun";
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = stateToElements(depState.r, leg1.v1, MU_SUN);
+    ship.epoch = t;
+    this.events.push({ t: tr.flyby!.tFlyby, kind: "flyby-pass", entityId: ship.id });
+  }
+
+  /**
+   * The gravity-assist flyby itself (patched-conic, instantaneous at heliocentric
+   * scale, mirroring the SOI-as-point departure idealization). The ship is at the
+   * flyby body; the body-relative excess velocity is rotated toward the leg-2
+   * direction for FREE (the slingshot), only the excess-speed mismatch is charged
+   * (an Oberth periapsis burn), and the ship continues to the final target.
+   */
+  private executeFlyby(ship: Ship, evT: number): void {
+    const tr = ship.transfer;
+    if (!tr || !tr.flyby || tr.flyby.done) return;
+    if (Math.abs(evT - tr.flyby.tFlyby) > 1) return; // stale
+    const flybyBody = BODY_BY_ID.get(tr.flyby.bodyId);
+    const target = BODY_BY_ID.get(tr.targetId);
+    if (!flybyBody || !target) return;
+
+    const t = this.world.t;
+    const shipHelio = shipRelativeState(ship, t); // heliocentric (primary == sun)
+    const fb = bodyState(flybyBody, t);
+
+    // Leg 2 aims the capture at the final target (B-plane), giving the heliocentric
+    // velocity the ship must leave the flyby with.
+    const rCapture = target.radius + DEFAULT_CAPTURE_ALT;
+    const aim = aimArrival(flybyBody, target, t, tr.tArrive, rCapture);
+    if (!aim) return; // re-plannable
+
+    const vInfIn = sub(shipHelio.v, fb.v); // body-relative excess in
+    const vInfOut = sub(aim.v1, fb.v); // body-relative excess out (leg-2 departure)
+    const man = flybyManeuver(vInfIn, vInfOut, flybyBody);
+    if (!applyImpulsiveDv(ship, man.dvFlyby)) return; // can't afford the residual burn
+
+    tr.flyby.done = true;
+    tr.flyby.dvBurn = man.dvFlyby;
+    // Continue on the leg-2 heliocentric conic from the (continuous) flyby point.
+    ship.primary = "sun";
+    ship.mode = "coast";
+    ship.elements = stateToElements(shipHelio.r, aim.v1, MU_SUN);
+    ship.epoch = t;
     this.events.push({ t: aim.tSoi, kind: "soi-crossing", entityId: ship.id });
   }
 

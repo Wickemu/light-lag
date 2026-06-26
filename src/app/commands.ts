@@ -11,15 +11,16 @@ import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir } from "../core/world.ts";
 import { type Stage, exhaustVelocity } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
-import { shipOsculatingElements, shipWorldState, activeStage, totalMass, applyImpulsiveDv } from "../core/ships.ts";
+import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, applyImpulsiveDv } from "../core/ships.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
+import { assistTransfer, type AssistResult } from "../core/maneuver/assist.ts";
 import { STAR_BY_ID } from "../core/stars.ts";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
 } from "../core/surface.ts";
 import { bodyState } from "../core/ephemeris.ts";
 import { lambert } from "../core/maneuver/lambert.ts";
-import { length, sub } from "../core/math/vec3.ts";
+import { length, sub, normalize } from "../core/math/vec3.ts";
 import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 
 export interface ShipDesign {
@@ -131,6 +132,39 @@ export function cancelTransfer(sim: Simulation, shipId: string): void {
   if (ship) ship.transfer = undefined;
 }
 
+/**
+ * Plan and schedule a single-flyby gravity-assist mission: leg 1 to `flybyId`,
+ * a slingshot past it, then leg 2 to `targetId`. Records the transfer (with its
+ * flyby leg) and queues the departure; the sim flies depart → flyby-pass → capture
+ * using the existing patched-conic machinery. Returns the assist estimate or null.
+ */
+export function planAssist(
+  sim: Simulation,
+  shipId: string,
+  flybyId: string,
+  targetId: string,
+  tDepart: number,
+  tFlyby: number,
+  tArrive: number,
+): AssistResult | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || tFlyby <= tDepart || tArrive <= tFlyby) return null;
+  const depBody = BODY_BY_ID.get(ship.primary);
+  if (!depBody) return null;
+  const el = shipOsculatingElements(ship, sim.world.t);
+  const rParkFrom = periapsisRadius(el.a, el.e);
+  const res = assistTransfer(ship.primary, flybyId, targetId, tDepart, tFlyby, tArrive, { rParkFrom });
+  if (!res) return null;
+  ship.transfer = {
+    targetId, tDepart, tArrive,
+    dvDepart: res.dvDepart, dvArrive: res.dvArrive,
+    departed: false, inSoi: false, arrived: false,
+    flyby: { bodyId: flybyId, tFlyby, dvBurn: res.dvFlyby, done: false },
+  };
+  sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
+  return res;
+}
+
 // ── Surface operations: landing & takeoff ────────────────────────────────────
 
 /** The vehicle-specific ascent/descent parameters of a ship at a body: its real
@@ -216,12 +250,21 @@ export function landShip(sim: Simulation, shipId: string): SurfaceOp | null {
   if (cost.feasible < 0 || !applyImpulsiveDv(ship, desc.dvTotal)) {
     return { dv: desc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: false };
   }
+  // Land directly below the current orbital position; store the site as a
+  // body-fixed direction (de-rotate the inertial direction by the body's rotation
+  // angle) so the ship co-rotates with the surface from here on.
+  const t = sim.world.t;
+  const dir = normalize(shipRelativeState(ship, t).r);
+  const T = body.rotationPeriod ?? 0;
+  const om = T !== 0 ? (2 * Math.PI) / T : 0;
+  const c = Math.cos(-om * t), s = Math.sin(-om * t);
+  const surfaceDir = { x: dir.x * c - dir.y * s, y: dir.x * s + dir.y * c, z: dir.z };
   ship.mode = "coast";
   ship.r = undefined;
   ship.v = undefined;
-  ship.elements = circularOrbit(body.radius, el.i, el.Omega, 0); // placeholder; ship is "on the surface"
-  ship.epoch = sim.world.t;
-  ship.landed = { bodyId: body.id };
+  ship.elements = undefined;
+  ship.epoch = t;
+  ship.landed = { bodyId: body.id, surfaceDir };
   return { dv: desc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: true };
 }
 
@@ -243,11 +286,13 @@ export function launchShip(sim: Simulation, shipId: string, altitudeKm: number):
   if (cost.feasible < 0 || !applyImpulsiveDv(ship, asc.dvTotal)) {
     return { dv: asc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: false };
   }
-  const prev = ship.elements;
+  // Insert into a circular orbit; the launch-site latitude is the minimum
+  // inclination reachable from there.
+  const incl = Math.asin(Math.max(-1, Math.min(1, ship.landed.surfaceDir.z)));
   ship.mode = "coast";
   ship.r = undefined;
   ship.v = undefined;
-  ship.elements = circularOrbit(body.radius + alt, prev?.i ?? 0, prev?.Omega ?? 0, 0);
+  ship.elements = circularOrbit(body.radius + alt, Math.abs(incl), 0, 0);
   ship.epoch = sim.world.t;
   ship.landed = undefined;
   return { dv: asc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: true };

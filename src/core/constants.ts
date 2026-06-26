@@ -111,7 +111,7 @@ export interface Atmosphere {
   scaleHeight: number;     // H, m
 }
 
-export type BodyKind = "star" | "planet" | "dwarf" | "asteroid" | "moon";
+export type BodyKind = "star" | "planet" | "dwarf" | "asteroid" | "moon" | "comet";
 
 export interface BodyDef {
   id: string;
@@ -399,6 +399,36 @@ export const BODIES: BodyDef[] = [
     kind: "moon", color: 0xd4c8b8,
     rotationPeriod: 507726.0, hasSurface: true,
     moon: { a: 3.547659e8, e: 6.368939270099938e-06, i: 130.2557894944188, node: 215.8516384153697, nodeDot: 0, peri: 74.71431790690689, periDot: 0, M0: 359.9145795589976, MDot: 61.26138326 },
+  },
+  {
+    id: "quaoar", name: "Quaoar", parent: "sun", mu: 8e10, radius: 5.45e5,
+    kind: "dwarf", color: 0xb89a86, hasSurface: true,
+    helio: { a: 43.13300738, e: 0.0395100738, i: 8.00508947, node: 189.07999045, peri: 163.78549070, M0: 258.95550934 },
+  },
+  {
+    id: "sedna", name: "Sedna", parent: "sun", mu: 5.3e10, radius: 4.95e5,
+    kind: "dwarf", color: 0xa05030, hasSurface: true,
+    helio: { a: 549.87326861, e: 0.8609804671, i: 11.92524942, node: 144.31692861, peri: 310.73286356, M0: 357.90147667 },
+  },
+  {
+    id: "gonggong", name: "Gonggong", parent: "sun", mu: 1.17e11, radius: 6.15e5,
+    kind: "dwarf", color: 0xa86a5a, hasSurface: true,
+    helio: { a: 67.05123024, e: 0.4995732868, i: 30.71460913, node: 336.87541457, peri: 206.94088653, M0: 94.20399154 },
+  },
+  {
+    id: "orcus", name: "Orcus", parent: "sun", mu: 4.2e10, radius: 4.55e5,
+    kind: "dwarf", color: 0x9aa6b0, hasSurface: true,
+    helio: { a: 39.26252229, e: 0.2257511424, i: 20.53929450, node: 268.45724311, peri: 73.75098678, M0: 150.04005960 },
+  },
+  {
+    id: "halley", name: "1P/Halley", parent: "sun", mu: 1.5e4, radius: 5.5e3,
+    kind: "comet", color: 0xcfd8e0, hasSurface: true,
+    helio: { a: 17.92150741, e: 0.9672702024, i: 162.19604262, node: 59.50786535, peri: 112.44962203, M0: 65.84890058 },
+  },
+  {
+    id: "encke", name: "2P/Encke", parent: "sun", mu: 7e2, radius: 2.4e3,
+    kind: "comet", color: 0xcfd8e0, hasSurface: true,
+    helio: { a: 2.21753963, e: 0.8470517263, i: 11.76429574, node: 334.62961233, peri: 186.47268752, M0: 284.74223251 },
   },
 ];
 
