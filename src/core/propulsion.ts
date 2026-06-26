@@ -25,9 +25,35 @@ export interface ElectricSource {
   solar: boolean; // true: P ∝ (AU/r)²; false: nuclear (constant)
 }
 
+/**
+ * A strap-on booster: an independent engine + tank bolted to a parent stage that
+ * ignites WITH it and burns concurrently (parallel staging), dropping the instant
+ * its own propellant is spent while the core keeps firing. This is the real
+ * liftoff configuration of the Space Shuttle, Soyuz, Falcon Heavy, Ariane 5, and
+ * the SRB-augmented EELVs. A booster has the same shape as a chemical/solid
+ * `Stage` minus the nesting and electric power source — boosters never nest and
+ * are always thrust-limited (chemical/solid).
+ *
+ * `count` (default 1) aggregates identical boosters that ignite and drop together
+ * (e.g. Soyuz's four), letting the catalog state true PER-UNIT figures; the
+ * budget and integrator multiply `thrust`, `dryMass`, `propMass`, and ṁ by it.
+ * A drop tank (a propellant reservoir feeding the core's engine, no engine of its
+ * own) is NOT a booster — a zero-thrust booster would never drain — and is out of
+ * scope; fold such a tank into its core stage (e.g. the Shuttle's external tank).
+ */
+export interface Booster {
+  name: string;
+  dryMass: number; // kg, structure dropped when this booster is spent (per unit)
+  propMass: number; // kg, propellant (per unit)
+  isp: number; // s, specific impulse
+  thrust: number; // N — rated/max thrust (per unit)
+  count?: number; // identical units igniting/dropping together (default 1)
+}
+
 /** A propulsion stage: its own structure (dry) and propellant, plus its engine.
  *  An `electric` stage is power-limited: its `thrust` is the rated value at full
- *  power (1 AU for solar), and the real thrust derates with distance. */
+ *  power (1 AU for solar), and the real thrust derates with distance. Optional
+ *  `boosters` ignite WITH this stage and burn in parallel (see `Booster`). */
 export interface Stage {
   name: string;
   dryMass: number; // kg, structure that is dropped when the stage is spent
@@ -35,6 +61,7 @@ export interface Stage {
   isp: number; // s, specific impulse
   thrust: number; // N — rated/max thrust (at full power for an electric stage)
   electric?: ElectricSource;
+  boosters?: Booster[]; // strap-ons igniting with this stage (parallel staging)
 }
 
 /** Effective exhaust velocity vₑ = Isp · g₀ (g₀ defines Isp; it is not gravity). */
