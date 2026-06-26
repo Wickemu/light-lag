@@ -798,6 +798,61 @@ button:disabled {
   flex: 1 1 0;
 }
 
+/* ── Scale bar ─────────────────────────────────────────────────────────────── */
+.scale-bar {
+  position: absolute;
+  bottom: 88px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.scale-track {
+  display: flex;
+  align-items: flex-end;
+}
+
+.scale-rule {
+  height: 7px;
+  min-width: 4px;
+  border: 1.5px solid var(--text-dim);
+  border-top: none;
+  transition: width 0.1s ease;
+}
+
+.scale-label-btn {
+  pointer-events: auto;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 1px 5px;
+  border-radius: 3px;
+  cursor: pointer;
+  text-shadow: var(--label-shadow);
+  font-variant-numeric: tabular-nums;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.scale-label-btn::after {
+  content: " ▾";
+  opacity: 0.45;
+  font-size: 8px;
+}
+.scale-label-btn:hover {
+  color: var(--text);
+  background: var(--btn-bg);
+  border-color: var(--panel-border);
+  text-shadow: none;
+}
+.scale-label-btn:hover::after {
+  opacity: 0.8;
+}
+
 /* ── Responsive: this is a desktop-first sim. These breakpoints keep the
    panels from overlapping or running off-screen on narrow windows/tablets,
    not a full mobile redesign. ─────────────────────────────────────────────── */
