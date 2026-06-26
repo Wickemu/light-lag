@@ -1,12 +1,17 @@
 /**
- * The nearby stars as a backdrop shell.
+ * The nearby stars as a celestial-sphere backdrop (in-system view).
  *
  * Real interstellar distances (4–12 ly ≈ 1e17 m) are ~1e8 render units — far
- * outside the solar-system frustum. So the stars are drawn at a COMPRESSED radius
- * just beyond Neptune, in their TRUE direction from the Sun: a directionally
- * honest sky you can fly toward, not a to-scale void. The compression is a
- * documented rendering choice (the physics/estimates in the engine are exact); a
- * to-scale interstellar camera mode is a future refinement.
+ * outside the solar-system frustum. Rather than compress them onto a finite
+ * shell just past Neptune (which made them look impossibly close and parallax
+ * against the planets), the in-system view paints each star on an UNZOOMABLE
+ * SKY: a fixed huge render distance from the CAMERA in its true Sun→star
+ * direction. Anchoring to the camera (not the Sun) means you can never dolly
+ * closer and the sky never parallaxes against the orrery — it reads as the
+ * background it physically is. Depth-tested but not depth-writing, so the
+ * planets (always nearer) occlude it. To actually travel between stars, switch
+ * to the to-scale interstellar view (`InterstellarView`), where the same
+ * systems sit at real relative distances and ships in transit move along them.
  */
 
 import * as THREE from "three";
@@ -15,8 +20,15 @@ import { length } from "../core/math/vec3.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
 
-/** Render-unit radius of a star's shell position from the Sun. Neptune sits at
- *  ~4488 units; the nearest stars start just beyond and spread by distance. */
+/** Render-unit distance of the sky sprites from the camera. Far enough that the
+ *  whole orrery (Neptune ≈ 4488 units, camera pull-out ≤ 5e6) always sits in
+ *  front and occludes it, yet well inside the camera's far plane (1e9). At this
+ *  distance float32 angular jitter is sub-pixel. */
+const SKY_RADIUS = 2e7;
+
+/** Legacy compressed-shell radius from the Sun, retained for the interstellar
+ *  in-transit streak in `shipViews` until that moves to the interstellar view.
+ *  Neptune sits at ~4488 units; the nearest stars start just beyond. */
 const SHELL_BASE = 5200;
 const SHELL_PER_LY = 320;
 export function starShellRadius(distanceLy: number): number {
@@ -99,31 +111,44 @@ export class StarViews {
     this.visuals.push({ def, marker, label });
   }
 
-  /** Position the shell each frame. Stars are fixed in direction from the Sun, so
-   *  anchor to the Sun's render position and add the compressed offset. */
+  /** Park every sprite + label (called when the sky is hidden or the view mode
+   *  isn't the in-system orrery). */
+  private hideAll(): void {
+    for (const vis of this.visuals) {
+      vis.marker.visible = false;
+      vis.label.style.display = "none";
+    }
+  }
+
+  /** Position the sky each frame. Stars are fixed in direction from the Sun, so
+   *  anchor each sprite to the CAMERA and push it out along that direction by a
+   *  fixed huge radius — an unzoomable celestial sphere that never parallaxes
+   *  against the planets. */
   update(t = 0): void {
+    // The interstellar view owns the stars at that scale; the in-system sky is
+    // only for the orrery mode.
+    if (this.sm.viewMode !== "system" || !this.vis.layer("stars")) {
+      this.hideAll();
+      return;
+    }
+
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const sun = new THREE.Vector3();
-    this.sm.toRender({ x: 0, y: 0, z: 0 }, sun); // Sun is the root origin
-
-    const starsOn = this.vis.layer("stars");
-    const labelsOn = starsOn && this.vis.layer("starLabels");
+    const cam = this.sm.camera.position; // render space, relative to the focus
+    const labelsOn = this.vis.layer("starLabels");
 
     for (const vis of this.visuals) {
-      if (!starsOn) {
-        vis.marker.visible = false;
-        vis.label.style.display = "none";
-        continue;
-      }
       vis.marker.visible = true;
       const dir = starDirection(vis.def, t);
-      const r = starShellRadius(vis.def.distanceLy);
-      vis.marker.position.set(sun.x + dir.x * r, sun.y + dir.y * r, sun.z + dir.z * r);
+      vis.marker.position.set(
+        cam.x + dir.x * SKY_RADIUS,
+        cam.y + dir.y * SKY_RADIUS,
+        cam.z + dir.z * SKY_RADIUS,
+      );
 
       // Components of a multiple system (parentId set) sit on top of their
-      // primary on the compressed shell, so their labels would just pile up —
-      // draw the sprite but suppress the duplicate text.
+      // primary on the sky, so their labels would just pile up — draw the
+      // sprite but suppress the duplicate text.
       const ndc = vis.marker.position.clone().project(this.sm.camera);
       const onScreen = ndc.z < 1 && Math.abs(ndc.x) <= 1 && Math.abs(ndc.y) <= 1;
       if (labelsOn && onScreen && !vis.def.parentId) {

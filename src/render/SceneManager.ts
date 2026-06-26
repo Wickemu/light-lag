@@ -20,6 +20,11 @@ import { metersToUnits, worldToRender } from "./scale.ts";
 
 export type Theme = "dark" | "light";
 
+/** Which map the renderer is showing. `system` is the in-system orrery (planets
+ *  + a sky backdrop of the nearby stars); `interstellar` is the to-scale map of
+ *  the nearby-star neighbourhood (Sol + the ~24 systems + ships in transit). */
+export type ViewMode = "system" | "interstellar";
+
 const BG: Record<Theme, number> = {
   dark: 0x05070d,
   light: 0xdfe6ef,
@@ -30,6 +35,11 @@ export class SceneManager {
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: THREE.WebGLRenderer;
   readonly controls: OrbitControls;
+
+  /** Active map. The in-system views and the interstellar view each draw only in
+   *  their own mode (they self-park in the other), and the frame loop updates the
+   *  matching set. */
+  viewMode: ViewMode = "system";
 
   /** Body the camera is centred on; its world position is the floating origin. */
   focusId = "sun";
