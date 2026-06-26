@@ -4,7 +4,10 @@
 :root {
   --font: "SF Mono", "JetBrains Mono", "Consolas", ui-monospace, monospace;
   --accent: #4fd1e0;
+  /* Status palette — overridden per theme below for contrast. */
+  --ok: #5fd08a;
   --warn: #ffb454;
+  --info: #4fd1e0;
 }
 
 :root[data-theme="dark"] {
@@ -17,6 +20,9 @@
   --btn-bg: rgba(40, 60, 90, 0.5);
   --btn-bg-hover: rgba(70, 100, 150, 0.7);
   --active: #4fd1e0;
+  --ok: #5fd08a;
+  --warn: #ffb454;
+  --info: #4fd1e0;
 }
 
 :root[data-theme="light"] {
@@ -24,15 +30,34 @@
   --panel-border: rgba(40, 80, 130, 0.22);
   --text: #14233a;
   --text-dim: #5a6b85;
-  --label: #1f3350;
-  --label-shadow: 0 0 6px rgba(255, 255, 255, 0.95);
+  --label: #14233a;
+  /* A white text-outline reads over the bright light-theme scene background,
+     where the old white *glow* over dark text just vanished. */
+  --label-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff,
+    1px 1px 0 #fff, 0 0 4px rgba(255, 255, 255, 0.6);
   --btn-bg: rgba(210, 224, 244, 0.85);
   --btn-bg-hover: rgba(180, 205, 240, 0.95);
   --active: #1488a8;
+  --ok: #1f9d57;
+  --warn: #b9701a;
+  --info: #1488a8;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Smooth the palette swap when toggling light/dark (respecting reduced-motion). */
+@media (prefers-reduced-motion: no-preference) {
+  .panel,
+  input,
+  select,
+  .body-label,
+  .ship-label,
+  .star-label {
+    transition: background-color 0.25s ease, border-color 0.25s ease,
+      color 0.25s ease, box-shadow 0.25s ease;
+  }
 }
 
 html,
@@ -150,14 +175,46 @@ body {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.panel-label {
-  font-size: 10px;
+/* Main panel heading (FOCUS, SHIP DESIGNER, TRANSFER PLANNER, …). */
+.panel-title {
+  font-size: 12px;
+  font-weight: 700;
   letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+/* Subordinate header within a panel (SHIPS, SURFACE OPS, MANEUVER, …). */
+.section-label {
+  font-size: 9px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
   color: var(--text-dim);
   margin-bottom: 4px;
 }
-/* Sticky section header so you always know which group you're scrolling. */
-.body-list .panel-label {
+/* Panel title row with a trailing close button. */
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.panel-head .panel-title {
+  margin-bottom: 0;
+}
+.panel-close {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--text-dim);
+}
+.panel-close:hover {
+  color: var(--text);
+}
+
+/* Sticky panel heading so you always know which list you're scrolling. */
+.body-list .panel-title {
   position: sticky;
   top: 0;
   background: var(--panel-bg);
@@ -270,7 +327,7 @@ button {
   border-radius: 6px;
   padding: 5px 9px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, color 0.2s ease, border-color 0.2s ease;
 }
 button:hover {
   background: var(--btn-bg-hover);
@@ -443,6 +500,14 @@ input[type="text"] {
 input:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+/* Keyboard focus rings (mouse clicks don't trigger :focus-visible). */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 /* Drop the spinner arrows — they steal horizontal space and clip 4-digit values
    (e.g. 1200 kN) in the cramped stage fields, and add nothing here. */
@@ -545,7 +610,7 @@ button:disabled {
   gap: 1px;
 }
 .surface-readout .ok {
-  color: #5fd08a;
+  color: var(--ok);
   font-size: 12px;
   margin-top: 3px;
 }
@@ -608,6 +673,8 @@ button:disabled {
   flex-direction: column;
   gap: 8px;
   z-index: 20;
+  /* Heavier shadow than docked panels — these float above the scene as modals. */
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
 }
 .interstellar-panel .note-line {
   font-size: 11px;
@@ -650,7 +717,7 @@ button:disabled {
   gap: 1px;
 }
 .transfer-readout .ok {
-  color: #5fd08a;
+  color: var(--ok);
   font-size: 12px;
   margin-top: 3px;
 }
@@ -665,4 +732,62 @@ button:disabled {
 }
 .transfer-btns button {
   flex: 1 1 0;
+}
+
+/* ── Responsive: this is a desktop-first sim. These breakpoints keep the
+   panels from overlapping or running off-screen on narrow windows/tablets,
+   not a full mobile redesign. ─────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .ship-panel {
+    width: 240px;
+    max-height: calc(100vh - 260px);
+  }
+  .body-list {
+    min-width: 112px;
+    max-height: calc(100vh - 96px);
+  }
+  .focus {
+    min-width: 0;
+    max-width: 46vw;
+  }
+  .foot {
+    max-width: calc(100vw - 24px);
+    font-size: 10px;
+  }
+  .transfer-panel,
+  .interstellar-panel {
+    width: min(340px, 92vw);
+  }
+  .porkchop {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+@media (max-width: 600px) {
+  .title {
+    font-size: 16px;
+    letter-spacing: 2px;
+  }
+  .header .subtitle {
+    display: none;
+  }
+  .date {
+    font-size: 15px;
+  }
+  .clock {
+    min-width: 0;
+  }
+  .focus-title {
+    font-size: 14px;
+  }
+  .ship-panel {
+    width: min(220px, 60vw);
+  }
+  .transfer-panel,
+  .interstellar-panel {
+    width: min(340px, 94vw);
+    max-height: 92vh;
+    overflow-y: auto;
+  }
 }

@@ -42,7 +42,7 @@ export class InterstellarPanel {
     this.panel.style.display = "none";
 
     const head = div("transfer-head");
-    head.appendChild(div("panel-label", "INTERSTELLAR"));
+    head.appendChild(div("panel-title", "INTERSTELLAR"));
     this.panel.appendChild(head);
 
     this.starSel = document.createElement("select");
@@ -106,7 +106,7 @@ export class InterstellarPanel {
     const craft = INTERSTELLAR_CRAFT[this.craftIndex];
     if (!t || !craft) {
       this.readout.textContent = "No solution.";
-      this.dispatchBtn.disabled = true;
+      setDisabled(this.dispatchBtn, true, "No transit solution for this star / craft.");
       return;
     }
     const ratio = isFinite(t.massRatio)
@@ -120,7 +120,7 @@ export class InterstellarPanel {
       kv("Mass ratio m₀/m_f", ratio) +
       kv("One-way light-lag", `${t.oneWayLightLagYr.toFixed(2)} yr`) +
       `<div class="note-line">${craft.note}</div>`;
-    this.dispatchBtn.disabled = !this.shipId;
+    setDisabled(this.dispatchBtn, !this.shipId, "Select a ship first.");
   }
 
   private dispatch(): void {
@@ -151,4 +151,10 @@ function btn(label: string, onClick: () => void): HTMLButtonElement {
 }
 function kv(k: string, v: string): string {
   return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+}
+/** Disable a button and surface the reason as a native hover tooltip. */
+function setDisabled(btn: HTMLButtonElement, disabled: boolean, reason = ""): void {
+  btn.disabled = disabled;
+  if (disabled && reason) btn.title = reason;
+  else btn.removeAttribute("title");
 }

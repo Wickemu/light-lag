@@ -116,7 +116,14 @@ export class ShipPanel {
     const panel = el("div", "panel ship-panel");
     this.panelEl = panel;
 
-    panel.appendChild(el("div", "panel-label", "SHIP DESIGNER"));
+    // Title row with a ✕ close button (mirrors the planners' Close affordance).
+    const head = el("div", "panel-head");
+    head.appendChild(el("div", "panel-title", "SHIP DESIGNER"));
+    const close = button("✕", () => this.toggle());
+    close.className = "panel-close";
+    close.title = "Close (F or Esc)";
+    head.appendChild(close);
+    panel.appendChild(head);
 
     // Preset fleet picker — load a real or inferred design, then tweak freely.
     this.presetSelect = this.buildPresetSelect();
@@ -143,6 +150,7 @@ export class ShipPanel {
       this.refreshBudget();
     });
     addBtn.className = "wide-btn";
+    addBtn.title = "Add another stage to the stack.";
     panel.appendChild(addBtn);
 
     const params = el("div", "design-params");
@@ -162,10 +170,11 @@ export class ShipPanel {
 
     const launch = button("▶ Launch to LEO", () => this.launch());
     launch.className = "wide-btn primary";
+    launch.title = "Place this design in a circular low orbit and start flying it.";
     panel.appendChild(launch);
 
     panel.appendChild(el("hr"));
-    panel.appendChild(el("div", "panel-label", "SHIPS"));
+    panel.appendChild(el("div", "section-label", "SHIPS"));
     this.shipListEl = el("div", "ship-list");
     panel.appendChild(this.shipListEl);
 
@@ -188,7 +197,7 @@ export class ShipPanel {
     // Surface ops — landing & takeoff Δv budgeting (shown only when the ship is
     // coasting in the SOI of a body with a surface, or already landed).
     this.surfaceEl = el("div", "surface-ops");
-    this.surfaceEl.appendChild(el("div", "panel-label", "SURFACE OPS"));
+    this.surfaceEl.appendChild(el("div", "section-label", "SURFACE OPS"));
     this.surfaceReadout = el("div", "surface-readout");
     this.surfaceEl.appendChild(this.surfaceReadout);
     const surfRow = el("div", "dv-row");
@@ -207,7 +216,7 @@ export class ShipPanel {
     // Electric drive — commit a low-thrust spiral to a target orbit (shown only
     // when the active stage is electric and the ship is coasting about a body).
     this.electricEl = el("div", "surface-ops");
-    this.electricEl.appendChild(el("div", "panel-label", "ELECTRIC SPIRAL"));
+    this.electricEl.appendChild(el("div", "section-label", "ELECTRIC SPIRAL"));
     const elRow = el("div", "dv-row");
     this.spiralAltInput = document.createElement("input");
     this.spiralAltInput.type = "number";
@@ -220,7 +229,7 @@ export class ShipPanel {
     this.flightEl.appendChild(this.electricEl);
 
     const burnControls = el("div", "burn-controls");
-    burnControls.appendChild(el("div", "panel-label", "MANEUVER"));
+    burnControls.appendChild(el("div", "section-label", "MANEUVER"));
     this.dirRow = el("div", "dir-row");
     for (const d of DIRS) {
       const b = button(DIR_LABEL[d], () => {
@@ -462,7 +471,8 @@ export class ShipPanel {
     const canSpiral = !!stage?.electric && ship.mode === "coast" && ship.primary !== "sun"
       && !ship.landed && !ship.interstellarLeg && !ship.spiral;
     this.electricEl.style.display = canSpiral ? "block" : "none";
-    this.spiralBtn.disabled = !canSpiral;
+    setDisabled(this.spiralBtn, !canSpiral,
+      "Available only with an electric drive while coasting in orbit around a body.");
 
     // A command you've sent is still crawling out to the ship at c.
     const inbound = this.sim.world.messages.find(
@@ -497,8 +507,9 @@ export class ShipPanel {
     }
 
     // A transfer can only be planned from a planet (not mid-flight or interstellar).
-    this.planBtn.disabled = ship.primary === "sun" || !!leg || (!!tr && tr.departed);
-    this.interstellarBtn.disabled = !!leg;
+    setDisabled(this.planBtn, ship.primary === "sun" || !!leg || (!!tr && tr.departed),
+      "Plan a transfer only from a parking orbit around a body (not mid-transfer or interstellar).");
+    setDisabled(this.interstellarBtn, !!leg, "Already on an interstellar leg.");
 
     // Thermal & detection — there is no stealth in space.
     const th = shipThermalState(ship, t);
@@ -516,10 +527,10 @@ export class ShipPanel {
     if (ship.mode === "thrust" && ship.burn) {
       const pct = (100 * ship.burn.dvDone) / ship.burn.dvTarget;
       lines.push(kv("BURNING", `${ship.burn.dvDone.toFixed(0)} / ${ship.burn.dvTarget.toFixed(0)} m/s (${pct.toFixed(0)}%)`));
-      this.executeBtn.disabled = true;
+      setDisabled(this.executeBtn, true, "Burn in progress.");
       this.executeBtn.textContent = "Burning…";
     } else {
-      this.executeBtn.disabled = false;
+      setDisabled(this.executeBtn, false);
       this.executeBtn.textContent = "Execute burn";
     }
 
@@ -553,8 +564,8 @@ export class ShipPanel {
         kv("  gravity / drag loss", `${(asc.gravityLoss / 1000).toFixed(2)} / ${(asc.dragLoss / 1000).toFixed(2)} km/s`) +
         kv("Propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
         (feasible ? `<div class="ok">✓ can reach ${altKm} km orbit</div>` : `<div class="warn">✗ insufficient Δv</div>`);
-      this.landBtn.disabled = true;
-      this.launchBtn.disabled = !feasible;
+      setDisabled(this.landBtn, true, `Already landed on ${body.name}.`);
+      setDisabled(this.launchBtn, !feasible, "Insufficient Δv to reach the requested orbit.");
     } else {
       const orbEl = shipOsculatingElements(ship, this.sim.world.t);
       const alt = Math.max(0, periapsisRadius(orbEl.a, orbEl.e) - body.radius);
@@ -567,8 +578,8 @@ export class ShipPanel {
         (body.atmosphere ? kv("Aerobraking", `${(desc.aerobrakeFraction * 100).toFixed(0)}% shed for free`) : "") +
         kv("Land propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
         (canLand ? `<div class="ok">✓ can land</div>` : `<div class="warn">✗ insufficient Δv to land</div>`);
-      this.landBtn.disabled = !canLand;
-      this.launchBtn.disabled = true;
+      setDisabled(this.landBtn, !canLand, "Insufficient Δv to land.");
+      setDisabled(this.launchBtn, true, "Land first to enable ascent.");
     }
   }
 
@@ -605,6 +616,14 @@ function button(label: string, onClick: () => void): HTMLButtonElement {
 
 function kv(k: string, v: string): string {
   return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+}
+
+/** Toggle a button's disabled state and surface the reason as a native tooltip,
+ *  so a greyed-out control explains itself on hover instead of failing silently. */
+function setDisabled(btn: HTMLButtonElement, disabled: boolean, reason = ""): void {
+  btn.disabled = disabled;
+  if (disabled && reason) btn.title = reason;
+  else btn.removeAttribute("title");
 }
 
 function numberField(parent: HTMLElement, label: string, value: number, onChange: (v: number) => void): HTMLInputElement {

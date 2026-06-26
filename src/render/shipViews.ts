@@ -111,6 +111,8 @@ export class ShipViews {
       const color = thrusting ? THRUST_COLOR : COAST_COLOR;
       (vis.marker.material as THREE.SpriteMaterial).color.setHex(color);
       (vis.orbit.material as THREE.LineBasicMaterial).color.setHex(color);
+      // Enlarge the focused ship's marker so it stands out among the bodies.
+      vis.marker.scale.setScalar(this.sm.focusId === ship.id ? 0.018 * 1.6 : 0.018);
 
       const leg = ship.interstellarLeg;
       const star = leg ? STAR_BY_ID.get(leg.targetStar) : undefined;

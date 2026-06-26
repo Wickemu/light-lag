@@ -29,6 +29,9 @@ const world = createWorld();
 const sim = new Simulation(world);
 
 const sm = new SceneManager(canvas);
+// Match the renderer to the theme the head script restored from localStorage,
+// so the scene background agrees with the HUD on the very first frame.
+sm.setTheme(document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
 const views = new BodyViews(sm);
 const shipViews = new ShipViews(sm, uiRoot);
 const starViews = new StarViews(sm, uiRoot);
