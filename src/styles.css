@@ -72,6 +72,22 @@ body {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
 }
 
+/* Unobtrusive scrollbars for the overflowing panels (body list, ship panel). */
+.panel {
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-border) transparent;
+}
+.panel::-webkit-scrollbar {
+  width: 7px;
+}
+.panel::-webkit-scrollbar-thumb {
+  background: var(--panel-border);
+  border-radius: 4px;
+}
+.panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .header {
   top: 16px;
   left: 16px;
@@ -129,12 +145,37 @@ body {
   flex-direction: column;
   gap: 4px;
   min-width: 132px;
+  /* 43 bodies overflow the viewport — cap the height and scroll inside. */
+  max-height: calc(100vh - 112px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .panel-label {
   font-size: 10px;
   letter-spacing: 2px;
   color: var(--text-dim);
   margin-bottom: 4px;
+}
+/* Sticky section header so you always know which group you're scrolling. */
+.body-list .panel-label {
+  position: sticky;
+  top: 0;
+  background: var(--panel-bg);
+  padding-bottom: 4px;
+  margin-bottom: 0;
+  z-index: 1;
+}
+.body-group {
+  font-size: 9px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  opacity: 0.75;
+  margin: 6px 0 1px;
+  padding-left: 2px;
+}
+.body-group:first-of-type {
+  margin-top: 2px;
 }
 .body-btn {
   display: flex;
@@ -187,14 +228,37 @@ body {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 16px;
+  gap: 14px;
   align-items: center;
   font-size: 11px;
+  color: var(--text-dim);
+  max-width: min(880px, calc(100vw - 360px));
+}
+.hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  line-height: 1.5;
+}
+.hint .key {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  background: var(--btn-bg);
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.hint .lbl {
   color: var(--text-dim);
 }
 .fps {
   color: var(--accent);
   font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 button {
@@ -245,9 +309,10 @@ button:hover {
 /* ── Ship designer / flight panel (left edge) ───────────────────────────── */
 .ship-panel {
   top: 96px;
-  bottom: 200px;
   left: 16px;
   width: 286px;
+  /* Fit content, but never grow past the focus readout (bottom-left) or off-screen. */
+  max-height: calc(100vh - 300px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -292,8 +357,19 @@ button:hover {
   line-height: 1.35;
   color: var(--text-dim);
 }
+/* The Name field is a full-width row, not a flexible column cell — don't let it
+   stretch to fill the panel (that left a large empty gap above the stages). */
+.name-field {
+  flex: 0 0 auto;
+}
 .name-field input {
   width: 100%;
+}
+.ship-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 2px 2px 4px;
 }
 
 .stages {
@@ -322,8 +398,9 @@ button:hover {
 .cfield input {
   width: 100%;
   min-width: 0;
-  padding: 3px 2px;
+  padding: 3px 1px;
   text-align: center;
+  font-size: 11px;
 }
 .cfield-label {
   font-size: 9px;
@@ -362,6 +439,21 @@ input[type="text"] {
   border: 1px solid var(--panel-border);
   border-radius: 5px;
   padding: 4px 6px;
+}
+input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* Drop the spinner arrows — they steal horizontal space and clip 4-digit values
+   (e.g. 1200 kN) in the cramped stage fields, and add nothing here. */
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .budget {
