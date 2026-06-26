@@ -14,7 +14,10 @@ import { BODY_BY_ID } from "../core/constants.ts";
 import { bodyState } from "../core/ephemeris.ts";
 import { orbitPath } from "../core/math/kepler.ts";
 import { shipWorldState, shipOsculatingElements } from "../core/ships.ts";
+import { STAR_BY_ID } from "../core/stars.ts";
+import { distance } from "../core/math/vec3.ts";
 import { SCENE_SCALE } from "./scale.ts";
+import { starShellRadius, starDirection } from "./starViews.ts";
 import { type SceneManager } from "./SceneManager.ts";
 
 const ORBIT_SEGMENTS = 256;
@@ -109,6 +112,24 @@ export class ShipViews {
       (vis.marker.material as THREE.SpriteMaterial).color.setHex(color);
       (vis.orbit.material as THREE.LineBasicMaterial).color.setHex(color);
 
+      const leg = ship.interstellarLeg;
+      const star = leg ? STAR_BY_ID.get(leg.targetStar) : undefined;
+      if (leg && star) {
+        // Interstellar: the true position is ~1e17 m away — render it on the same
+        // compressed star shell, streaking from the Sun out to the star marker by
+        // the fraction of the crossing covered.
+        const ws = shipWorldState(ship, t);
+        const D = distance(star.pos, leg.startPos);
+        const f = D > 0 ? Math.min(1, distance(ws.r, leg.startPos) / D) : 0;
+        const dir = starDirection(star);
+        const r = f * starShellRadius(star.distanceLy);
+        this.sm.toRender({ x: 0, y: 0, z: 0 }, tmp); // Sun anchor
+        vis.marker.position.set(tmp.x + dir.x * r, tmp.y + dir.y * r, tmp.z + dir.z * r);
+        vis.orbit.visible = false;
+        this.placeLabel(vis, ship.name, thrusting, ship.id, w, h);
+        continue;
+      }
+
       // Marker at the ship's world position through the floating origin.
       const ws = shipWorldState(ship, t);
       this.sm.toRender(ws.r, tmp);
@@ -132,19 +153,23 @@ export class ShipViews {
         vis.orbit.visible = false;
       }
 
-      // Label.
-      const ndc = vis.marker.position.clone().project(this.sm.camera);
-      const visible = ndc.z < 1 && Math.abs(ndc.x) <= 1 && Math.abs(ndc.y) <= 1;
-      if (visible) {
-        vis.label.style.display = "block";
-        vis.label.textContent = ship.name + (thrusting ? " ▲" : "");
-        vis.label.classList.toggle("focused", this.sm.focusId === ship.id);
-        const x = (ndc.x * 0.5 + 0.5) * w;
-        const y = (-ndc.y * 0.5 + 0.5) * h;
-        vis.label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
-      } else {
-        vis.label.style.display = "none";
-      }
+      this.placeLabel(vis, ship.name, thrusting, ship.id, w, h);
+    }
+  }
+
+  /** Project the marker to screen space and position the HTML label. */
+  private placeLabel(vis: ShipVisual, name: string, thrusting: boolean, id: string, w: number, h: number): void {
+    const ndc = vis.marker.position.clone().project(this.sm.camera);
+    const visible = ndc.z < 1 && Math.abs(ndc.x) <= 1 && Math.abs(ndc.y) <= 1;
+    if (visible) {
+      vis.label.style.display = "block";
+      vis.label.textContent = name + (thrusting ? " ▲" : "");
+      vis.label.classList.toggle("focused", this.sm.focusId === id);
+      const x = (ndc.x * 0.5 + 0.5) * w;
+      const y = (-ndc.y * 0.5 + 0.5) * h;
+      vis.label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+    } else {
+      vis.label.style.display = "none";
     }
   }
 }

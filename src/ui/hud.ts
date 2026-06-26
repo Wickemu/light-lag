@@ -14,6 +14,7 @@ import { BodyViews } from "../render/bodyViews.ts";
 import { BODIES, BODY_BY_ID, AU, C, MU_SUN } from "../core/constants.ts";
 import { bodyState, bodyElements } from "../core/ephemeris.ts";
 import { solarFlux } from "../core/thermal.ts";
+import { surfaceGravity, escapeVelocity } from "../core/surface.ts";
 import { period as orbitalPeriod } from "../core/math/kepler.ts";
 import { length, distance } from "../core/math/vec3.ts";
 import { formatDate } from "../core/time.ts";
@@ -158,6 +159,16 @@ export class Hud {
         lines.push(row("Orbital period", formatPeriod(T)));
         lines.push(row("Eccentricity", el.e.toFixed(4)));
         lines.push(row("Inclination", `${((el.i * 180) / Math.PI).toFixed(2)}°`));
+      }
+
+      // Surface physics (drives the landing/takeoff budget in the ship panel).
+      lines.push(row("Surface gravity", `${surfaceGravity(def).toFixed(2)} m/s²`));
+      lines.push(row("Escape velocity", `${(escapeVelocity(def) / 1000).toFixed(2)} km/s`));
+      if (def.atmosphere) {
+        const bar = def.atmosphere.surfacePressure / 101325;
+        lines.push(row("Surface pressure", bar >= 0.01 ? `${bar.toFixed(2)} atm` : `${def.atmosphere.surfacePressure.toFixed(1)} Pa`));
+      } else if (def.hasSurface !== false) {
+        lines.push(row("Atmosphere", "none (airless)"));
       }
     } else {
       lines.push(row("Role", "central star"));

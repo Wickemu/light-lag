@@ -439,6 +439,30 @@ button:disabled {
   width: 70px;
 }
 
+.surface-ops {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border, #2a3344);
+  border-radius: 4px;
+}
+.surface-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.surface-readout .ok {
+  color: #5fd08a;
+  font-size: 12px;
+  margin-top: 3px;
+}
+.surface-readout .warn {
+  color: var(--warn);
+  font-size: 12px;
+  margin-top: 3px;
+}
+
 .ship-label-layer {
   position: absolute;
   inset: 0;
@@ -462,8 +486,29 @@ button:disabled {
   font-weight: 700;
 }
 
+.star-label-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.star-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate(-9999px, -9999px);
+  margin: 6px 0 0 6px;
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  color: #c9d4ff;
+  opacity: 0.7;
+  text-shadow: var(--label-shadow);
+  white-space: nowrap;
+  will-change: transform;
+}
+
 /* ── Transfer planner (centred porkchop) ────────────────────────────────── */
-.transfer-panel {
+.transfer-panel,
+.interstellar-panel {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
@@ -471,6 +516,12 @@ button:disabled {
   flex-direction: column;
   gap: 8px;
   z-index: 20;
+}
+.interstellar-panel .note-line {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  line-height: 1.35;
 }
 .transfer-head {
   display: flex;

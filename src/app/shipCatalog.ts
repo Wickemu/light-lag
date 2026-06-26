@@ -6,11 +6,12 @@
  *  - Every number is a published or carefully-inferred real figure. Stages are
  *    {dryMass, propMass, isp, thrust} in SI; Δv falls straight out of the same
  *    rocket equation the rest of the game runs on. No tuning "for balance".
- *  - The current engine is CLASSICAL (no relativistic Tsiolkovsky, no power
- *    model). So every craft here is sub-relativistic: exhaust velocities stay
- *    far below c and total Δv well below it. True torchships (Epstein, Daedalus
- *    cruise, Orion-to-0.1c) are deliberately omitted until the relativistic
- *    propulsion layer lands — see PENDING_RELATIVISTIC at the bottom.
+ *  - The staged PRESETS here are classical: exhaust velocities far below c and
+ *    total Δv well below it, run through the classical rocket equation. True
+ *    relativistic torchships (Epstein, Daedalus, antimatter/photon) now live in
+ *    INTERSTELLAR_CRAFT at the bottom — flyable on a flip-and-burn to the nearby
+ *    stars via the relativistic-propulsion layer (the old PENDING_RELATIVISTIC
+ *    list is kept as a record of what was waiting).
  *  - The sim places ships directly in LEO and never simulates ascent, so two
  *    kinds of preset coexist: full LAUNCH VEHICLES (rocket-equation showcases —
  *    their lower stages are gameplay-irrelevant once you're in orbit) and
@@ -29,6 +30,7 @@
 
 import { type ShipDesign } from "./commands.ts";
 import { type Stage } from "../core/propulsion.ts";
+import { C } from "../core/constants.ts";
 
 export type PresetCategory = "Historical" | "Current" | "Prototype" | "Sci-Fi";
 
@@ -586,5 +588,48 @@ export const PENDING_RELATIVISTIC: { name: string; note: string }[] = [
   {
     name: "Rocinante (The Expanse)",
     note: "Epstein-drive frigate; same relativistic torch regime as the Epstein entry.",
+  },
+];
+
+/**
+ * Relativistic torchships — now flyable, with the relativistic-propulsion layer
+ * in place (propulsion.ts: rapidity rocket equation + constant-proper-accel
+ * brachistochrone). Each is a constant-PROPER-acceleration craft the interstellar
+ * planner can dispatch on a flip-and-burn to a nearby star. `exhaustVelocity` is
+ * a fraction of c; `properAccel` is the sustained acceleration. The mass ratios
+ * these imply are real and often brutal — that honesty is the point.
+ */
+export interface InterstellarCraft {
+  name: string;
+  exhaustVelocity: number; // m/s (≤ c)
+  properAccel: number; // m/s² (sustained)
+  note: string;
+}
+
+export const INTERSTELLAR_CRAFT: InterstellarCraft[] = [
+  {
+    name: "Photon rocket (1g)",
+    exhaustVelocity: C, properAccel: 9.80665,
+    note: "Exhaust velocity = c by definition — the ideal limit. 1g flip-and-burn reaches the nearest stars in a few years of crew time; the mass ratio is the lowest physics allows for a given Δv.",
+  },
+  {
+    name: "Antimatter rocket (1g)",
+    exhaustVelocity: 0.33 * C, properAccel: 9.80665,
+    note: "Matter–antimatter annihilation, ~⅓ c effective exhaust after losses. Sustains 1g; the defining high-performance interstellar drive short of a photon rocket.",
+  },
+  {
+    name: "Epstein drive (The Expanse)",
+    exhaustVelocity: 0.12 * C, properAccel: 9.80665,
+    note: "Fusion torch sustaining ~1g (and far more in-universe). A high exhaust velocity, but well below c — interstellar trips imply a steep mass ratio.",
+  },
+  {
+    name: "Project Daedalus boost (½g)",
+    exhaustVelocity: 0.036 * C, properAccel: 4.9,
+    note: "Inertial-confinement fusion, ~10,000 km/s exhaust. The real Daedalus was a one-way 0.12c flyby; sustaining even ½g to brake at the target needs a mass ratio it never carried — the planner shows why.",
+  },
+  {
+    name: "Orion (interstellar, 0.03g)",
+    exhaustVelocity: 0.05 * C, properAccel: 0.3,
+    note: "Nuclear-pulse, the high-c battleship variant. Gentle sustained acceleration; the classic 'how much does a real fusion/fission drive actually buy you' reference.",
   },
 ];

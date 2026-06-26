@@ -23,6 +23,7 @@ import type { SceneManager } from "../render/SceneManager.ts";
 import type { Hud } from "./hud.ts";
 import type { ShipPanel } from "./shipPanel.ts";
 import type { TransferPanel } from "./transferPanel.ts";
+import type { InterstellarPanel } from "./interstellarPanel.ts";
 import { BODIES } from "../core/constants.ts";
 
 const ORBIT_SPEED = 1.5; // rad/s while key is held
@@ -56,6 +57,7 @@ export class KeyboardManager {
     private hud: Hud,
     private shipPanel: ShipPanel,
     private transferPanel: TransferPanel,
+    private interstellarPanel: InterstellarPanel,
   ) {
     window.addEventListener("keydown", (e) => {
       if (this.isTyping(e.target)) return;
@@ -111,8 +113,10 @@ export class KeyboardManager {
     if (k === "f" || k === "F") { this.shipPanel.toggle(); return; }
 
     if (k === "Escape") {
-      // Close transfer planner first; if already closed, close ship panel.
-      if (this.transferPanel.isOpen()) {
+      // Close planners first (interstellar, then transfer); then the ship panel.
+      if (this.interstellarPanel.isOpen()) {
+        this.interstellarPanel.close();
+      } else if (this.transferPanel.isOpen()) {
         this.transferPanel.close();
       } else {
         if (this.shipPanel.isOpen()) this.shipPanel.toggle();
