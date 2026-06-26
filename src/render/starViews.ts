@@ -13,6 +13,7 @@ import * as THREE from "three";
 import { STARS, type StarDef } from "../core/stars.ts";
 import { length } from "../core/math/vec3.ts";
 import { type SceneManager } from "./SceneManager.ts";
+import { type Visibility } from "./visibility.ts";
 
 /** Render-unit radius of a star's shell position from the Sun. Neptune sits at
  *  ~4488 units; the nearest stars start just beyond and spread by distance. */
@@ -69,17 +70,12 @@ export class StarViews {
   private tex = makeStarTexture();
   private visuals: StarVisual[] = [];
   private labelLayer: HTMLElement;
-  private enabled = true;
 
-  constructor(private sm: SceneManager, uiRoot: HTMLElement) {
+  constructor(private sm: SceneManager, uiRoot: HTMLElement, private vis: Visibility) {
     this.labelLayer = document.createElement("div");
     this.labelLayer.className = "star-label-layer";
     uiRoot.appendChild(this.labelLayer);
     for (const s of STARS) this.build(s);
-  }
-
-  setEnabled(on: boolean): void {
-    this.enabled = on;
   }
 
   private build(def: StarDef): void {
@@ -109,8 +105,11 @@ export class StarViews {
     const sun = new THREE.Vector3();
     this.sm.toRender({ x: 0, y: 0, z: 0 }, sun); // Sun is the root origin
 
+    const starsOn = this.vis.layer("stars");
+    const labelsOn = starsOn && this.vis.layer("starLabels");
+
     for (const vis of this.visuals) {
-      if (!this.enabled) {
+      if (!starsOn) {
         vis.marker.visible = false;
         vis.label.style.display = "none";
         continue;
@@ -120,9 +119,12 @@ export class StarViews {
       const r = starShellRadius(vis.def.distanceLy);
       vis.marker.position.set(sun.x + dir.x * r, sun.y + dir.y * r, sun.z + dir.z * r);
 
+      // Components of a multiple system (parentId set) sit on top of their
+      // primary on the compressed shell, so their labels would just pile up —
+      // draw the sprite but suppress the duplicate text.
       const ndc = vis.marker.position.clone().project(this.sm.camera);
-      const visible = ndc.z < 1 && Math.abs(ndc.x) <= 1 && Math.abs(ndc.y) <= 1;
-      if (visible) {
+      const onScreen = ndc.z < 1 && Math.abs(ndc.x) <= 1 && Math.abs(ndc.y) <= 1;
+      if (labelsOn && onScreen && !vis.def.parentId) {
         vis.label.style.display = "block";
         const x = (ndc.x * 0.5 + 0.5) * w;
         const y = (-ndc.y * 0.5 + 0.5) * h;

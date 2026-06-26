@@ -8,6 +8,7 @@
 import * as THREE from "three";
 import { type WorldState } from "../core/world.ts";
 import { type SceneManager } from "./SceneManager.ts";
+import { type Visibility } from "./visibility.ts";
 
 const CMD_COLOR = 0x6fe0ff;
 const TLM_COLOR = 0xffb454;
@@ -38,7 +39,7 @@ export class CommsViews {
   private dot = makeDotTexture();
   private visuals = new Map<string, PacketVisual>();
 
-  constructor(private sm: SceneManager) {}
+  constructor(private sm: SceneManager, private vis: Visibility) {}
 
   private build(color: number): PacketVisual {
     const dot = new THREE.Sprite(
@@ -65,6 +66,12 @@ export class CommsViews {
   }
 
   update(world: WorldState, t: number): void {
+    // Comms layer hidden: tear down any in-flight visuals and skip.
+    if (!this.vis.layer("comms")) {
+      for (const [id, vis] of this.visuals) this.dispose(id, vis);
+      return;
+    }
+
     const live = new Set<string>();
     const tmp = new THREE.Vector3();
 

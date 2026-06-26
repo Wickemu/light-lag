@@ -11,6 +11,7 @@ import "../styles.css";
 import { createWorld } from "../core/world.ts";
 import { Simulation } from "../core/sim.ts";
 import { SceneManager } from "../render/SceneManager.ts";
+import { Visibility } from "../render/visibility.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { ShipViews } from "../render/shipViews.ts";
 import { StarViews } from "../render/starViews.ts";
@@ -32,11 +33,13 @@ const sm = new SceneManager(canvas);
 // Match the renderer to the theme the head script restored from localStorage,
 // so the scene background agrees with the HUD on the very first frame.
 sm.setTheme(document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
-const views = new BodyViews(sm);
-const shipViews = new ShipViews(sm, uiRoot);
-const starViews = new StarViews(sm, uiRoot);
-const commsViews = new CommsViews(sm);
-const hud = new Hud(uiRoot, sim, sm);
+// Shared show/hide state, written by the HUD's layer controls and read by every view.
+const visibility = new Visibility();
+const views = new BodyViews(sm, visibility);
+const shipViews = new ShipViews(sm, uiRoot, visibility);
+const starViews = new StarViews(sm, uiRoot, visibility);
+const commsViews = new CommsViews(sm, visibility);
+const hud = new Hud(uiRoot, sim, sm, visibility);
 const transferPanel = new TransferPanel(uiRoot, sim, sm);
 const interstellarPanel = new InterstellarPanel(uiRoot, sim, sm);
 const shipPanel = new ShipPanel(
@@ -86,6 +89,7 @@ if (import.meta.env.DEV) {
     world,
     sim,
     sm,
+    visibility,
     views,
     shipViews,
     starViews,

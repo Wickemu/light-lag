@@ -213,26 +213,68 @@ body {
   color: var(--text);
 }
 
-/* Sticky panel heading so you always know which list you're scrolling. */
-.body-list .panel-title {
+/* Sticky head (title + layer chips) so the controls stay put while you scroll. */
+.body-list .list-head {
   position: sticky;
   top: 0;
   background: var(--panel-bg);
-  padding-bottom: 4px;
-  margin-bottom: 0;
-  z-index: 1;
+  margin-bottom: 4px;
+  padding-bottom: 6px;
+  z-index: 2;
 }
+.body-list .list-head .panel-title {
+  margin-bottom: 6px;
+}
+
+/* Cross-cutting overlay toggles (orbits, labels, stars, ships, comms). */
+.layers-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.layer-chip {
+  padding: 2px 6px;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-radius: 5px;
+}
+.layer-chip.active {
+  color: var(--active);
+  border-color: var(--active);
+}
+
 .body-group {
   font-size: 9px;
   letter-spacing: 2px;
   text-transform: uppercase;
   color: var(--text-dim);
   opacity: 0.75;
-  margin: 6px 0 1px;
   padding-left: 2px;
 }
-.body-group:first-of-type {
+.body-group-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 1px;
+}
+.body-group-row:first-of-type {
   margin-top: 2px;
+}
+
+/* One focusable body: an eye toggle plus the (flexible) focus button. */
+.body-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.body-row .body-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.body-row.hidden-body .body-btn {
+  opacity: 0.4;
 }
 .body-btn {
   display: flex;
@@ -240,6 +282,28 @@ body {
   gap: 8px;
   justify-content: flex-start;
   text-align: left;
+  white-space: nowrap;
+}
+
+/* Compact show/hide control; transparent until hovered so the list stays calm. */
+.eye-btn {
+  flex: 0 0 auto;
+  width: 20px;
+  padding: 2px 0;
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  color: var(--active);
+  background: transparent;
+  border-color: transparent;
+}
+.eye-btn.off {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+.eye-btn:hover {
+  background: var(--btn-bg);
+  color: var(--text);
 }
 .body-btn.active {
   outline: 1px solid var(--active);
