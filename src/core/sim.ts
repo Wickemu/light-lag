@@ -8,14 +8,16 @@
  * Two regimes:
  *  - Nothing thrusting → bodies and ships are analytic functions of t, so the
  *    clock simply jumps to the target (exact at any warp).
- *  - Something thrusting → we sub-step on a FIXED ABSOLUTE-TIME GRID (so the
- *    partition is independent of how the caller chunked dtSim — step(A) then
- *    step(B) gives the same result as step(A+B), which is what determinism and
- *    save/load rely on), and the warp is clamped ("time slows near burns").
- *    Within a sub-step, the discrete burn events — reaching the target Δv and a
- *    tank running dry — are detected analytically and the integration is split
- *    EXACTLY at them, so the engine never overshoots the commanded Δv and a
- *    stage transition never leaves a thrust gap or burns phantom propellant.
+ *  - Something thrusting → we sub-step on a FIXED ABSOLUTE-TIME GRID that CAPS the
+ *    RK4 step (bounding truncation error), and the warp is clamped ("time slows
+ *    near burns"). Within a sub-step, the discrete burn events — reaching the
+ *    target Δv and a tank running dry — are detected analytically and the
+ *    integration is split EXACTLY at them, so the engine never overshoots the
+ *    commanded Δv and a stage transition never leaves a thrust gap or burns
+ *    phantom propellant. The analytic quantities (propellant, delivered Δv, event
+ *    times) are exactly chunk-invariant — step(A) then step(B) == step(A+B), which
+ *    is what save/load determinism relies on; the RK4-integrated r,v differ across
+ *    chunkings only by the per-step truncation (~sub-metre, see serialize.ts).
  */
 
 import { type WorldState, type Ship, type ShipCommand, type BurnDir } from "./world.ts";
@@ -26,7 +28,7 @@ import {
   activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
   interstellarProperTime, spiralElements,
 } from "./ships.ts";
-import { exhaustVelocity } from "./propulsion.ts";
+import { exhaustVelocity, thrustAt } from "./propulsion.ts";
 import { stateToElements, meanMotion } from "./math/kepler.ts";
 import { bodyState, bodyElements } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
@@ -183,7 +185,13 @@ export class Simulation {
 
       const mu = BODY_BY_ID.get(ship.primary)!.mu;
       const ve = exhaustVelocity(stage.isp);
-      const thrust = stage.thrust;
+      // Thrust at the ship's heliocentric distance: a solar-electric stage is
+      // power-limited and derates as 1/r² from the Sun (thrustAt is a no-op for
+      // chemical stages, so chemical burns are unchanged). Evaluated at the segment
+      // start and held constant across the ≤2 s segment, so ṁ stays constant and
+      // the analytic event split below remains exact per segment.
+      const primaryPos = bodyState(BODY_BY_ID.get(ship.primary)!, t0 + elapsed).r;
+      const thrust = thrustAt(stage, length(add(primaryPos, ship.r)));
       const mdot = thrust / ve;
 
       // Mass carried but not part of the active tank: payload + active dry +
@@ -316,6 +324,7 @@ export class Simulation {
     const fromPos = bodyState(control, this.world.t).r;
     const posFn = (t: number): Vec3 => shipWorldState(ship, t).r;
     const tArrive = signalArrival(fromPos, posFn, this.world.t);
+    if (!isFinite(tArrive)) return null; // out of contact: light can't catch the ship
     const id = `msg-${this.msgCounter++}`;
     this.world.messages.push({
       id, kind: "command", fromPos, toPos: posFn(tArrive), targetId,
@@ -371,6 +380,7 @@ export class Simulation {
     const fromPos = shipWorldState(ship, t).r;
     const posFn = (tt: number): Vec3 => bodyState(control, tt).r;
     const tArrive = signalArrival(fromPos, posFn, t);
+    if (!isFinite(tArrive)) return; // control node unreachable from here — drop the telemetry
     const id = `msg-${this.msgCounter++}`;
     this.world.messages.push({
       id, kind: "telemetry", fromPos, toPos: posFn(tArrive), targetId: this.world.controlNode,

@@ -46,3 +46,46 @@ describe("signal propagation at c", () => {
     expect(tArr).toBeGreaterThan(AU / C);
   });
 });
+
+describe("convergence at relativistic speed", () => {
+  // A target receding radially at constant v from x0 (at t=0) has an EXACT
+  // light-cone solution: a signal from the origin reaches it at x0/(c − v), and
+  // its retarded time as seen at the origin at t is (c·t − x0)/(c + v). The old
+  // fixed-point iteration contracted at rate v/c and stalled near c; the bracketed
+  // solver must hit these closed forms even at 0.95c and 0.99c.
+  for (const beta of [0.5, 0.95, 0.99]) {
+    const v = beta * C;
+    const x0 = AU;
+    const posFn = (t: number) => ({ x: x0 + v * t, y: 0, z: 0 });
+
+    it(`signalArrival matches x0/(c−v) at β=${beta}`, () => {
+      const exact = x0 / (C - v);
+      const tArr = signalArrival({ x: 0, y: 0, z: 0 }, posFn, 0);
+      expect(Math.abs(tArr - exact)).toBeLessThan(1e-2);
+      // Sanity: a 0.95c recession stretches the delay ~20× over the static hop.
+      expect(tArr).toBeGreaterThan(AU / C);
+    });
+
+    it(`retardedTime matches (c·t−x0)/(c+v) at β=${beta}`, () => {
+      const t = 1e7;
+      const exact = (C * t - x0) / (C + v);
+      const tRet = retardedTime({ x: 0, y: 0, z: 0 }, posFn, t);
+      expect(Math.abs(tRet - exact)).toBeLessThan(1e-2);
+      expect(tRet).toBeLessThan(t); // genuinely in the past
+    });
+  }
+
+  it("residual is driven to the tolerance, not silently left unconverged", () => {
+    const v = 0.97 * C;
+    const posFn = (t: number) => ({ x: AU + v * t, y: 0, z: 0 });
+    const tArr = signalArrival({ x: 0, y: 0, z: 0 }, posFn, 0);
+    const residual = tArr - (lightTime({ x: 0, y: 0, z: 0 }, posFn(tArr)));
+    expect(Math.abs(residual)).toBeLessThan(1e-2); // t == |pos(t)|/c at the solution
+  });
+
+  it("reports Infinity when light can never catch the target (recession ≥ c)", () => {
+    const posFn = (t: number) => ({ x: AU + C * t, y: 0, z: 0 }); // recedes at exactly c
+    const tArr = signalArrival({ x: 0, y: 0, z: 0 }, posFn, 0);
+    expect(tArr).toBe(Infinity);
+  });
+});
