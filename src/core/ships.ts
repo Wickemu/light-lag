@@ -17,7 +17,7 @@ import {
 } from "./math/kepler.ts";
 import { j2Rates } from "./orbit.ts";
 import { bodyState } from "./ephemeris.ts";
-import { STAR_BY_ID } from "./stars.ts";
+import { STAR_BY_ID, starPosition } from "./stars.ts";
 import { BODY_BY_ID, C } from "./constants.ts";
 import { add, addScaled, sub, scale, normalize, length, distance } from "./math/vec3.ts";
 import { solarFlux, hullArea, equilibriumTemp, detectionRange, radiatorArea } from "./thermal.ts";
@@ -65,8 +65,12 @@ function brachDistance(a: number, D: number, T: number, tc: number): number {
 export function interstellarLegState(leg: InterstellarLeg, t: number): State {
   const target = STAR_BY_ID.get(leg.targetStar);
   if (!target) return { r: leg.startPos, v: { x: 0, y: 0, z: 0 } };
-  const D = distance(target.pos, leg.startPos);
-  const dir = D > 0 ? normalize(sub(target.pos, leg.startPos)) : { x: 1, y: 0, z: 0 };
+  // Aim at where the star WILL BE on arrival (lead the target): a fixed straight
+  // line for the whole leg, recomputed deterministically from (targetStar, tArrive)
+  // so no extra state is stored. A zero-proper-motion star recovers the old aim.
+  const targetPos = starPosition(target, leg.tArrive);
+  const D = distance(targetPos, leg.startPos);
+  const dir = D > 0 ? normalize(sub(targetPos, leg.startPos)) : { x: 1, y: 0, z: 0 };
   const T = leg.tArrive - leg.tDepart;
   const a = leg.properAccel;
   const tc = Math.max(0, Math.min(t, leg.tArrive) - leg.tDepart);

@@ -9,20 +9,20 @@
 
 import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir } from "../core/world.ts";
-import { type Stage, exhaustVelocity, thrustAt } from "../core/propulsion.ts";
+import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
 import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, dvRemaining, applyImpulsiveDv } from "../core/ships.ts";
 import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
 import { wrapPi } from "../core/math/kepler.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
 import { assistTransfer, type AssistResult } from "../core/maneuver/assist.ts";
-import { STAR_BY_ID } from "../core/stars.ts";
+import { STAR_BY_ID, starPosition } from "../core/stars.ts";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
 } from "../core/surface.ts";
 import { bodyState } from "../core/ephemeris.ts";
 import { lambert } from "../core/maneuver/lambert.ts";
-import { length, sub, normalize } from "../core/math/vec3.ts";
+import { length, sub, normalize, distance } from "../core/math/vec3.ts";
 import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 
 export interface ShipDesign {
@@ -206,10 +206,18 @@ export function dispatchInterstellar(
 
   const t = sim.world.t;
   const startPos = shipWorldState(ship, t).r;
+  // Lead the target: aim at the star's position on arrival, then re-solve the
+  // brachistochrone against that actual flight distance so (properAccel, D, T)
+  // stay mutually consistent with the leg's read-time shaping. One refinement
+  // pass; the residual (the star moves between the estimate and the refined
+  // arrival) is second-order over a single voyage.
+  const tArrive0 = t + transit.coordinateTimeYr * JULIAN_YEAR;
+  const dActual = distance(starPosition(star, tArrive0), startPos);
+  const tArrive = t + brachistochrone(properAccel, dActual).coordinateTime;
   ship.interstellarLeg = {
     targetStar: starId,
     tDepart: t,
-    tArrive: t + transit.coordinateTimeYr * JULIAN_YEAR,
+    tArrive,
     properAccel,
     startPos,
   };

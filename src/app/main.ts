@@ -61,7 +61,7 @@ let fps = 60;
 function renderOnce(): void {
   sm.updateOrigin(world.t);
   views.update(world.t);
-  starViews.update();
+  starViews.update(world.t);
   shipViews.update(world, world.t);
   commsViews.update(world, world.t);
   sm.render();

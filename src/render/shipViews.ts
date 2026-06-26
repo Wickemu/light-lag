@@ -14,7 +14,7 @@ import { BODY_BY_ID } from "../core/constants.ts";
 import { bodyState } from "../core/ephemeris.ts";
 import { orbitPath } from "../core/math/kepler.ts";
 import { shipWorldState, shipOsculatingElements } from "../core/ships.ts";
-import { STAR_BY_ID } from "../core/stars.ts";
+import { STAR_BY_ID, starPosition } from "../core/stars.ts";
 import { distance } from "../core/math/vec3.ts";
 import { SCENE_SCALE } from "./scale.ts";
 import { starShellRadius, starDirection } from "./starViews.ts";
@@ -133,9 +133,11 @@ export class ShipViews {
         // compressed star shell, streaking from the Sun out to the star marker by
         // the fraction of the crossing covered.
         const ws = shipWorldState(ship, t);
-        const D = distance(star.pos, leg.startPos);
+        // Streak toward the same aim point the engine flies (the star at arrival).
+        const aim = starPosition(star, leg.tArrive);
+        const D = distance(aim, leg.startPos);
         const f = D > 0 ? Math.min(1, distance(ws.r, leg.startPos) / D) : 0;
-        const dir = starDirection(star);
+        const dir = starDirection(star, leg.tArrive);
         const r = f * starShellRadius(star.distanceLy);
         this.sm.toRender({ x: 0, y: 0, z: 0 }, tmp); // Sun anchor
         vis.marker.position.set(tmp.x + dir.x * r, tmp.y + dir.y * r, tmp.z + dir.z * r);

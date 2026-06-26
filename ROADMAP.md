@@ -25,8 +25,8 @@ ephemeris;
 through real atmospheres, with aerobraking on descent); and the first
 **interstellar** layer — relativistic propulsion (rapidity rocket equation +
 constant-proper-accel brachistochrone), a ~24-system nearby-star catalog
-(~12 ly radius, ecliptic-J2000 frame), a transit estimator, and an in-sim
-flyable flip-and-burn with crew/Earth time dilation.
+(~12 ly radius, ecliptic-J2000 frame, drifting under real proper motion), a transit
+estimator, and an in-sim flyable flip-and-burn with crew/Earth time dilation.
 
 ## Completed — core physics hardening
 
@@ -66,16 +66,19 @@ next, after four expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion). Each round stays additive: pure SI, deterministic, read-time
 analytic, suite green, golden hash documented if it moves.
 
-1. **In-system relativistic / finite-thrust burns** + **stellar proper motion** — the
-   finite-thrust integrator is still classical, and the star catalog is fixed-epoch; both
-   harden the interstellar layer. *(see "Relativistic propulsion" → Still to do.)*
+1. **In-system relativistic / finite-thrust burns** — the finite-thrust integrator is
+   still classical; a rapidity-based integrator would harden the interstellar layer.
+   *(see "Relativistic propulsion" → Still to do.)*
 2. **Parallel staging / strap-on boosters / drop tanks** — serial stages only today; real
    launchers light boosters and core together and stage asymmetrically. *(see "Parallel
    staging".)*
 
-*(Done since last round: powered low-thrust **capture/escape spirals** about a destination
-body and **variable-Isp throttling** (see "Power-limited electric thrust"); **multi-flyby
-assist chains** + analytic **free-bend B-plane targeting** (see "Gravity assists").)*
+*(Done since last round: **stellar proper motion** — the star catalog now carries real
+Gaia/Hipparcos space-velocity vectors and drifts as a function of time, and interstellar
+legs lead the target (see "Stellar proper motion" below). Earlier rounds: low-thrust
+**capture/escape spirals** + **variable-Isp throttling** (see "Power-limited electric
+thrust"); **multi-flyby assist chains** + analytic **free-bend B-plane targeting** (see
+"Gravity assists").)*
 
 These are candidates, not a commitment — pick the highest-leverage one when the next round
 starts. Lower-priority refinements (aerocapture + entry heating, N-body/J3 perturbations, a
@@ -87,8 +90,8 @@ defensible SNR-vs-range detection curve, comet outgassing) live in the backlog e
   constant-proper-accel brachistochrone, time dilation / proper-time divergence,
   and an in-sim flyable interstellar leg; `PENDING_RELATIVISTIC` is now the flyable
   `INTERSTELLAR_CRAFT` roster. Still to do: in-system relativistic burns (the
-  finite-thrust integrator is still classical), multi-leg coast cruises rendered
-  in-sim, and stellar proper motion.
+  finite-thrust integrator is still classical) and multi-leg coast cruises rendered
+  in-sim. (**Stellar proper motion — DONE**; see its own entry below.)
 - **Power-limited electric thrust** — DONE: an `ElectricSource {powerW, eta, solar}`
   on a stage drives the *actual* thrust `F = min(F_rated, 2ηP/vₑ)`, with solar power
   falling as 1/r² toward the Sun (reactor power constant); the ship console reads
@@ -160,6 +163,18 @@ defensible SNR-vs-range detection curve, comet outgassing) live in the backlog e
   frustum/LOD scheme that spans in-system to interstellar without z-fighting), and an
   optional faint deep-sky backdrop sourced from a **real** catalog (e.g. Hipparcos/Gaia
   bright stars) — explicitly *not* a re-introduced procedural/fake starfield.
+- **Stellar proper motion** — DONE: the nearby-star catalog carries real Gaia /
+  Hipparcos proper motion (μα\*, μδ in mas/yr) and radial velocity (km/s); each star
+  derives an ecliptic-J2000 **space-velocity vector** at load and drifts linearly with
+  time (`starState(star, t)` / `starPosition(star, t)` — exact straight-line inertial
+  motion, read-time analytic, golden-hash-neutral since the catalog is static module
+  data). Interstellar legs **lead the target** — they aim at the star's *arrival-time*
+  position (a fixed brachistochrone line, recomputed deterministically from
+  `targetStar` + `tArrive`, so no new serialized state), and `dispatchInterstellar`
+  re-solves the flip-and-burn against that lead-aim distance for a consistent
+  `(a, D, T)`. The star map renders the drift. Still to do: per-component binary
+  *orbital* motion (only the system's bulk space motion is modelled today — a
+  documented approximation, like the Pluto–Charon barycentre).
 - Minor fidelity: EMB-vs-Earth-centre ~4671 km offset; Moon & small-body two-body
   precession drift over years; the Pluto–Charon barycentre approximation.
 
