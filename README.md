@@ -40,6 +40,9 @@ that no amount of engineering can wish away.
 - **Landing & takeoff** Δv/propellant budgeting: a calibrated gravity-turn ascent through real
   exponential atmospheres (Earth→LEO ≈ 9.3 km/s, Moon ≈ 1.9, Mars ≈ 4.0), aerobraking on descent,
   and ships that sit on the surface co-rotating with the body.
+- **Electric (low-thrust) propulsion**: power-limited ion/Hall drives whose real thrust is
+  `min(F_rated, 2ηP/vₑ)` with solar power falling as 1/r² — fly a multi-month Edelbaum spiral
+  from LEO to GEO (or any near-circular orbit), charged up front and exact at any time-warp.
 - **Interstellar** first steps: a relativistic propulsion layer (rapidity rocket equation +
   constant-proper-accel brachistochrone), the ~27 nearest star systems, a transit estimator, and
   an in-sim flyable flip-and-burn where the crew clock and Earth clock visibly diverge.

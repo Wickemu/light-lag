@@ -57,9 +57,16 @@ locked by a permanent integration test suite before more gameplay is layered on.
   `INTERSTELLAR_CRAFT` roster. Still to do: in-system relativistic burns (the
   finite-thrust integrator is still classical), multi-leg coast cruises rendered
   in-sim, and stellar proper motion.
-- **Power-limited electric thrust**: wire specific power (kW/kg) + solar 1/r² /
-  reactor into the *actual* thrust (electric engines are a fixed operating point
-  today; thermal is a readout). `a_max = 2ηP/(vₑ·m)`.
+- **Power-limited electric thrust** — DONE: an `ElectricSource {powerW, eta, solar}`
+  on a stage drives the *actual* thrust `F = min(F_rated, 2ηP/vₑ)`, with solar power
+  falling as 1/r² toward the Sun (reactor power constant); the ship console reads
+  out drive power (kW @ AU) and live thrust/accel. Long electric transfers are flown
+  as an analytic Edelbaum spiral leg (`Δv = √(v0²+v1²−2v0v1·cos(½π·Δi))`, semi-major
+  axis linear, phase in closed form) — committed with Δv/propellant charged up front
+  and exact at any time-warp, rather than an impractical months-long stepped burn.
+  Five solar-electric + one VASIMR craft ship with the catalog. Still to do:
+  variable-Isp throttling and a powered low-thrust capture/escape spiral about a
+  destination body.
 - **Parallel staging** / strap-on boosters / drop tanks (serial stages only now).
 - **Gravity assists** — DONE (first cut): flyby physics (flyby.ts), a two-leg
   patched-conic assist solver (assist.ts), and in-sim execution (a flyby-pass that
