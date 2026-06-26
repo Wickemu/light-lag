@@ -15,6 +15,7 @@ import { Visibility } from "../render/visibility.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { ShipViews } from "../render/shipViews.ts";
 import { TrajectoryViews } from "../render/trajectoryViews.ts";
+import { ForceViews } from "../render/forceViews.ts";
 import { StarViews } from "../render/starViews.ts";
 import { CommsViews } from "../render/commsViews.ts";
 import { Hud } from "../ui/hud.ts";
@@ -39,6 +40,7 @@ const visibility = new Visibility();
 const views = new BodyViews(sm, visibility);
 const shipViews = new ShipViews(sm, uiRoot, visibility);
 const trajectoryViews = new TrajectoryViews(sm, sim, visibility);
+const forceViews = new ForceViews(sm, visibility);
 const starViews = new StarViews(sm, uiRoot, visibility);
 const commsViews = new CommsViews(sm, visibility);
 const hud = new Hud(uiRoot, sim, sm, visibility);
@@ -66,6 +68,7 @@ function renderOnce(): void {
   starViews.update(world.t);
   shipViews.update(world, world.t);
   trajectoryViews.update(world, world.t);
+  forceViews.update(world, world.t);
   commsViews.update(world, world.t);
   sm.render();
   hud.update(fps, views);
@@ -96,6 +99,7 @@ if (import.meta.env.DEV) {
     views,
     shipViews,
     trajectoryViews,
+    forceViews,
     starViews,
     commsViews,
     hud,
