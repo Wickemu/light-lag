@@ -14,6 +14,8 @@ import { SceneManager } from "../render/SceneManager.ts";
 import { Visibility } from "../render/visibility.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { ShipViews } from "../render/shipViews.ts";
+import { TrajectoryViews } from "../render/trajectoryViews.ts";
+import { ForceViews } from "../render/forceViews.ts";
 import { StarViews } from "../render/starViews.ts";
 import { InterstellarView } from "../render/interstellarView.ts";
 import { CommsViews } from "../render/commsViews.ts";
@@ -39,12 +41,14 @@ sm.setTheme(document.documentElement.getAttribute("data-theme") === "light" ? "l
 const visibility = new Visibility();
 const views = new BodyViews(sm, visibility);
 const shipViews = new ShipViews(sm, uiRoot, visibility);
+const trajectoryViews = new TrajectoryViews(sm, sim, visibility);
+const forceViews = new ForceViews(sm, visibility);
 const starViews = new StarViews(sm, uiRoot, visibility);
 const interstellarView = new InterstellarView(sm, uiRoot, visibility);
 const commsViews = new CommsViews(sm, visibility);
 const hud = new Hud(uiRoot, sim, sm, visibility);
 const scaleBar = new ScaleBar(uiRoot, sm);
-const transferPanel = new TransferPanel(uiRoot, sim, sm);
+const transferPanel = new TransferPanel(uiRoot, sim, sm, trajectoryViews);
 const interstellarPanel = new InterstellarPanel(uiRoot, sim, sm);
 const shipPanel = new ShipPanel(
   uiRoot, sim, sm,
@@ -69,6 +73,8 @@ function renderOnce(): void {
   views.update(world.t);
   starViews.update(world.t);
   shipViews.update(world, world.t);
+  trajectoryViews.update(world, world.t);
+  forceViews.update(world, world.t);
   commsViews.update(world, world.t);
   interstellarView.update(world, world.t);
   sm.render();
@@ -100,6 +106,8 @@ if (import.meta.env.DEV) {
     visibility,
     views,
     shipViews,
+    trajectoryViews,
+    forceViews,
     starViews,
     interstellarView,
     commsViews,

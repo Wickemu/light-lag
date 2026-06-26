@@ -11,6 +11,7 @@
 
 import { type Simulation } from "../core/sim.ts";
 import { type SceneManager } from "../render/SceneManager.ts";
+import { type TrajectoryViews } from "../render/trajectoryViews.ts";
 import { computePorkchop, type Porkchop, type PorkCell } from "../core/maneuver/porkchop.ts";
 import { hohmann, synodicPeriod } from "../core/maneuver/hohmann.ts";
 import { searchAssist, type AssistResult } from "../core/maneuver/assist.ts";
@@ -50,6 +51,7 @@ export class TransferPanel {
     private root: HTMLElement,
     private sim: Simulation,
     private sm: SceneManager,
+    private traj: TrajectoryViews,
   ) {
     this.build();
   }
@@ -131,6 +133,38 @@ export class TransferPanel {
 
   close(): void {
     this.panel.style.display = "none";
+    this.traj.setPreviewRoute(null); // tear down the preview ghost route
+  }
+
+  /** Feed the renderer a ghost preview of the currently selected window (the
+   *  whole planned path), or clear it. Recomputed on every selection change. */
+  private updatePreview(): void {
+    const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
+    if (!ship) {
+      this.traj.setPreviewRoute(null);
+      return;
+    }
+    const fromId = ship.primary === "sun" ? "earth" : ship.primary;
+    const target = BODY_BY_ID.get(this.targetId);
+    const rParkTo = target ? target.radius + DEFAULT_CAPTURE_ALT : undefined;
+    const el = shipOsculatingElements(ship, this.sim.world.t);
+    const rParkFrom = periapsisRadius(el.a, el.e);
+    if (this.viaId && this.assist) {
+      const a = this.assist;
+      this.traj.setPreviewRoute({
+        fromId, targetId: this.targetId, tDepart: a.tDepart, tArrive: a.tArrive,
+        flyby: { bodyId: this.viaId, tFlyby: a.tFlyby }, rParkFrom, rParkTo,
+      });
+      return;
+    }
+    const cell = this.selectedCell();
+    if (!cell || !isFinite(cell.total)) {
+      this.traj.setPreviewRoute(null);
+      return;
+    }
+    this.traj.setPreviewRoute({
+      fromId, targetId: this.targetId, tDepart: cell.depT, tArrive: cell.arrT, rParkFrom, rParkTo,
+    });
   }
 
   private recompute(): void {
@@ -198,8 +232,9 @@ export class TransferPanel {
   private selectBest(): void {
     if (!this.pork || !this.pork.best) {
       this.draw();
-      if (this.viaId) { this.updateReadout(); return; } // assist mode draws its own readout
+      if (this.viaId) { this.updateReadout(); this.updatePreview(); return; } // assist mode draws its own readout
       this.readout.textContent = "No transfer solution in range.";
+      this.traj.setPreviewRoute(null);
       return;
     }
     const b = this.pork.best;
@@ -207,6 +242,7 @@ export class TransferPanel {
     this.selJ = Math.round((b.tof - this.pork.tofStart) / this.pork.tofStep);
     this.draw();
     this.updateReadout();
+    this.updatePreview();
   }
 
   private onCanvasClick(e: MouseEvent): void {
@@ -224,6 +260,7 @@ export class TransferPanel {
     this.selJ = j;
     this.draw();
     this.updateReadout();
+    this.updatePreview();
   }
 
   private draw(): void {

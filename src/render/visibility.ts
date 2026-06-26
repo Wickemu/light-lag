@@ -19,14 +19,24 @@
 import { type BodyKind } from "../core/constants.ts";
 
 /** Cross-cutting overlay toggles (not tied to a single body kind). */
-export type LayerKey = "orbits" | "labels" | "ships" | "comms" | "stars" | "starLabels";
+export type LayerKey =
+  | "orbits"
+  | "trajectory"
+  | "route"
+  | "labels"
+  | "ships"
+  | "comms"
+  | "stars"
+  | "starLabels"
+  | "forces";
 
 export class Visibility {
   private kinds: Record<BodyKind, boolean> = {
     star: true, planet: true, dwarf: true, asteroid: true, moon: true, comet: true,
   };
   private layers: Record<LayerKey, boolean> = {
-    orbits: true, labels: true, ships: true, comms: true, stars: true, starLabels: true,
+    orbits: true, trajectory: true, route: false, labels: true, ships: true,
+    comms: true, stars: true, starLabels: true, forces: false,
   };
   private hidden = new Set<string>();
   private listeners = new Set<() => void>();

@@ -48,7 +48,7 @@ export class ScaleBar {
   private readonly labelBtn: HTMLButtonElement;
   private cycleIdx = 0;
 
-  constructor(private root: HTMLElement, private sm: SceneManager) {
+  constructor(root: HTMLElement, private sm: SceneManager) {
     this.el = document.createElement("div");
     this.el.className = "scale-bar";
 

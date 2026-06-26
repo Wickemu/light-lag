@@ -45,8 +45,13 @@ export class SceneManager {
   focusId = "sun";
   private focusPos: Vec3 = vec3(0, 0, 0);
   private focusFn: (t: number) => Vec3 = (t) => bodyPosition("sun", t);
-  private theme: Theme = "dark";
+  private _theme: Theme = "dark";
   private sunLight!: THREE.PointLight;
+
+  /** The active theme — overlay views read this to pick a legible palette. */
+  get theme(): Theme {
+    return this._theme;
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -72,7 +77,7 @@ export class SceneManager {
     this.controls.zoomSpeed = 1.2;
 
     this.addLighting();
-    this.setTheme(this.theme);
+    this.setTheme(this._theme);
     this.resize();
 
     // Size from the canvas's own layout, not just window events: this fixes the
@@ -94,7 +99,7 @@ export class SceneManager {
   }
 
   setTheme(theme: Theme): void {
-    this.theme = theme;
+    this._theme = theme;
     this.scene.background = new THREE.Color(BG[theme]);
   }
 
