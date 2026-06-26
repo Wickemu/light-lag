@@ -11,8 +11,12 @@ import { bodyState, bodyElements } from "../core/ephemeris.ts";
 import { orbitPath } from "../core/math/kepler.ts";
 import { metersToUnits, SCENE_SCALE } from "./scale.ts";
 import { type SceneManager } from "./SceneManager.ts";
+import { type Visibility } from "./visibility.ts";
 
-const ORBIT_SEGMENTS = 256;
+// Sampled in eccentric anomaly and phased to the body (see kepler.orbitPath), so
+// the loop already passes dead through the marker; the segment budget only sets
+// how smooth the arc reads between vertices when zoomed in.
+const ORBIT_SEGMENTS = 384;
 
 /** Constant screen-size for the always-visible body marker, by class. Explicit
  *  per-kind so a newly added BodyKind can't silently inherit a wrong size. */
@@ -60,7 +64,7 @@ export class BodyViews {
   private dot = makeDotTexture();
   readonly visuals: BodyVisual[] = [];
 
-  constructor(private sm: SceneManager) {
+  constructor(private sm: SceneManager, private vis: Visibility) {
     for (const def of BODIES) this.build(def);
   }
 
@@ -116,8 +120,17 @@ export class BodyViews {
   /** Reposition everything for sim time t. Origin must already be updated. */
   update(t: number): void {
     const tmp = new THREE.Vector3();
+    const orbitsOn = this.vis.layer("orbits");
     for (const vis of this.visuals) {
       const { def } = vis;
+
+      // Honour show/hide: a hidden body drops its marker, sphere and orbit.
+      const shown = this.vis.bodyVisible(def.id, def.kind);
+      vis.marker.visible = shown;
+      vis.sphere.visible = shown;
+      if (vis.orbit) vis.orbit.visible = shown && orbitsOn;
+      if (!shown) continue;
+
       const state = bodyState(def, t);
       this.sm.toRender(state.r, tmp);
       vis.marker.position.copy(tmp);
@@ -128,7 +141,7 @@ export class BodyViews {
       vis.marker.scale.setScalar(MARKER_SCALE[def.kind] * (focused ? FOCUS_MARKER_GAIN : 1));
       (vis.marker.material as THREE.SpriteMaterial).color.copy(focused ? vis.focusColor : vis.baseColor);
 
-      if (vis.orbit && vis.orbitArray && def.parent) {
+      if (orbitsOn && vis.orbit && vis.orbitArray && def.parent) {
         // Orbit path lives relative to the parent: position the loop at the
         // parent's render location and fill local vertices with the ellipse.
         const parent = BODY_BY_ID.get(def.parent)!;

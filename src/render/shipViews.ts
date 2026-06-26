@@ -19,8 +19,9 @@ import { distance } from "../core/math/vec3.ts";
 import { SCENE_SCALE } from "./scale.ts";
 import { starShellRadius, starDirection } from "./starViews.ts";
 import { type SceneManager } from "./SceneManager.ts";
+import { type Visibility } from "./visibility.ts";
 
-const ORBIT_SEGMENTS = 256;
+const ORBIT_SEGMENTS = 384;
 const COAST_COLOR = 0x6fe0ff;
 const THRUST_COLOR = 0xff8a30;
 
@@ -52,7 +53,7 @@ export class ShipViews {
   private visuals = new Map<string, ShipVisual>();
   private labelLayer: HTMLElement;
 
-  constructor(private sm: SceneManager, uiRoot: HTMLElement) {
+  constructor(private sm: SceneManager, uiRoot: HTMLElement, private vis: Visibility) {
     this.labelLayer = document.createElement("div");
     this.labelLayer.className = "ship-label-layer";
     uiRoot.appendChild(this.labelLayer);
@@ -101,12 +102,23 @@ export class ShipViews {
       if (!world.ships.has(id)) this.dispose(id, vis);
     }
 
+    // Ships layer hidden: park every visual and skip the work.
+    if (!this.vis.layer("ships")) {
+      for (const vis of this.visuals.values()) {
+        vis.marker.visible = false;
+        vis.orbit.visible = false;
+        vis.label.style.display = "none";
+      }
+      return;
+    }
+
     const tmp = new THREE.Vector3();
     const w = window.innerWidth;
     const h = window.innerHeight;
 
     for (const ship of world.ships.values()) {
       const vis = this.visuals.get(ship.id) ?? this.build(ship.id);
+      vis.marker.visible = true; // may have been parked while the layer was off
       const thrusting = ship.mode === "thrust";
       const color = thrusting ? THRUST_COLOR : COAST_COLOR;
       (vis.marker.material as THREE.SpriteMaterial).color.setHex(color);

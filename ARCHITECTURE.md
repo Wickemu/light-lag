@@ -85,17 +85,18 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 | Module | Provides |
 |---|---|
 | `SceneManager.ts` | Three.js scene, camera, WebGL renderer, OrbitControls, floating origin (re-centred every frame on the focused body), theme (dark/light). |
-| `bodyViews.ts` | Body sphere meshes, ecliptic orbit lines, label anchor NDC coordinates. |
+| `bodyViews.ts` | Body sphere meshes, ecliptic orbit lines (eccentric-anomaly sampled and phased so the loop passes through the marker), label anchor NDC coordinates. |
 | `shipViews.ts` | Ship marker meshes + floating name labels in screen space. |
-| `starViews.ts` | Point markers for interstellar star destinations. |
+| `starViews.ts` | Point markers for the nearby real star systems (the only sky — there is no procedural starfield). |
 | `commsViews.ts` | Light-cone / signal-in-flight visualizations (outbound commands, inbound telemetry). |
+| `visibility.ts` | Shared show/hide state — per-body and per-kind toggles plus cross-cutting layers (orbits, labels, stars, ships, comms). Written by the HUD, read by every view. |
 | `scale.ts` | Metre ↔ render-unit conversion; logarithmic depth for solar-system-scale precision in float32. |
 
 ### `ui/` — DOM panels over the WebGL canvas
 
 | Module | Provides |
 |---|---|
-| `hud.ts` | Clock, time-warp controls, body focus list (grouped by kind, scrollable), per-body physics readouts (distance, speed, period, surface gravity, light-time), floating body labels, theme toggle. |
+| `hud.ts` | Clock, time-warp controls, body focus list (grouped by kind, scrollable) with per-body / per-kind show-hide eyes and a layer-chip row (orbits, labels, stars, ships, comms), per-body physics readouts (distance, speed, period, surface gravity, light-time), floating body labels, theme toggle. |
 | `shipPanel.ts` | Ship designer (staged stack editor, live Δv budget, preset fleet picker) + flight console (osculating orbit, mass, Δv remaining, burn orders, transfer status, J2 precession, surface ops, electric spiral, thermal/detection readouts). |
 | `transferPanel.ts` | Transfer planner: porkchop plot (Lambert grid, blue/red Δv colour scale), optional gravity-assist via-flyby-body mode, cell selection, commit to `planTransfer` / `planAssist`. |
 | `interstellarPanel.ts` | Interstellar planner: star selector (sorted by distance), torchship selector, transit estimator (coordinate/proper time, mass ratio, light-lag), dispatch to `dispatchInterstellar`. |

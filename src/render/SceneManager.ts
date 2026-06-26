@@ -62,7 +62,6 @@ export class SceneManager {
     this.controls.zoomSpeed = 1.2;
 
     this.addLighting();
-    this.addStarfield();
     this.setTheme(this.theme);
     this.resize();
 
@@ -82,36 +81,6 @@ export class SceneManager {
     this.sunLight = new THREE.PointLight(0xfff4e0, 3, 0, 0);
     this.scene.add(this.sunLight);
     this.scene.add(new THREE.AmbientLight(0x223044, 0.6));
-  }
-
-  private addStarfield(): void {
-    // Stars sit at "infinity": parented to the camera so they never parallax.
-    const count = 3000;
-    const positions = new Float32Array(count * 3);
-    const R = 5e5; // far inside the camera far-plane, effectively a backdrop
-    for (let i = 0; i < count; i++) {
-      // Uniform on a sphere.
-      const u = Math.random() * 2 - 1;
-      const theta = Math.random() * Math.PI * 2;
-      const s = Math.sqrt(1 - u * u);
-      positions[i * 3] = R * s * Math.cos(theta);
-      positions[i * 3 + 1] = R * s * Math.sin(theta);
-      positions[i * 3 + 2] = R * u;
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    const mat = new THREE.PointsMaterial({
-      color: 0xffffff,
-      size: 1.4,
-      sizeAttenuation: false,
-      depthWrite: false,
-      transparent: true,
-      opacity: 0.85,
-    });
-    const stars = new THREE.Points(geo, mat);
-    stars.frustumCulled = false;
-    this.camera.add(stars);
-    this.scene.add(this.camera); // camera must be in the graph for its child to render
   }
 
   setTheme(theme: Theme): void {

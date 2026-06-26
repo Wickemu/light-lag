@@ -4,6 +4,7 @@ import {
   solveKeplerHyperbolic,
   elementsToState,
   stateToElements,
+  orbitPath,
   meanMotion,
   period,
   type KeplerElements,
@@ -139,6 +140,41 @@ describe("orbit geometry", () => {
     const max = Math.max(...hs);
     const min = Math.min(...hs);
     expect((max - min) / max).toBeLessThan(1e-9);
+  });
+});
+
+describe("orbitPath (rendered orbit loop)", () => {
+  // A spread of eccentricities/inclinations with the mean anomaly deliberately
+  // OFF periapsis, so the phase-alignment guarantee is actually exercised.
+  const cases: KeplerElements[] = [
+    { a: 1.0 * AU, e: 0.0167, i: 0.0, Omega: 0.0, omega: 1.8, M: 0.7 },
+    { a: 1.2 * AU, e: 0.3, i: 0.4, Omega: 1.0, omega: 2.0, M: 2.1 },
+    { a: 0.39 * AU, e: 0.2056, i: 0.1222, Omega: 0.84, omega: 0.51, M: -1.3 },
+    { a: 5.2 * AU, e: 0.55, i: 0.0228, Omega: 1.75, omega: 0.257, M: 3.0 },
+  ];
+
+  it("places vertex 0 exactly on the body (orbit passes through the marker)", () => {
+    for (const el of cases) {
+      const body = elementsToState(el, MU_SUN).r;
+      // Sparse on purpose: phasing, not segment count, is what guarantees this.
+      for (const segs of [16, 64, 384]) {
+        const pts = orbitPath(el, segs);
+        expect(distance(pts[0]!, body) / length(body)).toBeLessThan(1e-12);
+      }
+    }
+  });
+
+  it("is a closed loop spanning periapsis..apoapsis", () => {
+    for (const el of cases) {
+      const pts = orbitPath(el, 256);
+      const radii = pts.map(length);
+      // LineLoop: last sample (E0+2π) coincides with the first (E0).
+      expect(distance(pts[0]!, pts[pts.length - 1]!) / length(pts[0]!)).toBeLessThan(1e-9);
+      const peri = el.a * (1 - el.e);
+      const apo = el.a * (1 + el.e);
+      expect(Math.abs(Math.max(...radii) - apo) / apo).toBeLessThan(1e-3);
+      expect(Math.abs(Math.min(...radii) - peri) / peri).toBeLessThan(1e-3);
+    }
   });
 });
 

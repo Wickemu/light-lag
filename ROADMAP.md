@@ -137,6 +137,14 @@ defensible SNR-vs-range detection curve, comet outgassing) live in the backlog e
   plus TNOs and comets) on the fixed-J2000-conic (`FixedHelioRow`) + `MoonRow`
   paths, Horizons-checked. Still to do: irregular-moon precession, more small
   bodies, comet outgassing/non-gravitational forces.
+- **Interstellar sky / camera** (presentation) — the procedural backdrop starfield
+  was removed; the nearby **real** star systems are now the only sky, drawn in their
+  true direction from the Sun but on a *compressed* shell just beyond Neptune
+  (documented rendering choice — distances/light-times in the engine stay exact).
+  Still to do: a **to-scale interstellar camera mode** (true ~1e17 m placement with a
+  frustum/LOD scheme that spans in-system to interstellar without z-fighting), and an
+  optional faint deep-sky backdrop sourced from a **real** catalog (e.g. Hipparcos/Gaia
+  bright stars) — explicitly *not* a re-introduced procedural/fake starfield.
 - Minor fidelity: EMB-vs-Earth-centre ~4671 km offset; Moon & small-body two-body
   precession drift over years; the Pluto–Charon barycentre approximation.
 

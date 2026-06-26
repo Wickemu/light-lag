@@ -11,7 +11,8 @@
 import { Simulation } from "../core/sim.ts";
 import { SceneManager } from "../render/SceneManager.ts";
 import { BodyViews } from "../render/bodyViews.ts";
-import { BODIES, BODY_BY_ID, AU, C, MU_SUN } from "../core/constants.ts";
+import { type Visibility, type LayerKey } from "../render/visibility.ts";
+import { BODIES, BODY_BY_ID, AU, C, MU_SUN, type BodyKind } from "../core/constants.ts";
 import { bodyState, bodyElements } from "../core/ephemeris.ts";
 import { solarFlux } from "../core/thermal.ts";
 import { surfaceGravity, escapeVelocity } from "../core/surface.ts";
@@ -23,13 +24,23 @@ import { formatDate } from "../core/time.ts";
  *  alone at the top, directly under FOCUS. BODIES is ordered by heliocentric
  *  distance, which interleaves moons and dwarfs; grouping by kind gives one clean
  *  section per kind (distance order preserved within each). */
-const GROUPS: { kind: string; label: string }[] = [
+const GROUPS: { kind: BodyKind; label: string }[] = [
   { kind: "star", label: "" },
   { kind: "planet", label: "Planets" },
   { kind: "dwarf", label: "Dwarf planets" },
   { kind: "asteroid", label: "Asteroids" },
   { kind: "moon", label: "Moons" },
   { kind: "comet", label: "Comets" },
+];
+
+/** Cross-cutting overlay toggles shown as chips above the body list. */
+const LAYER_CHIPS: { key: LayerKey; label: string }[] = [
+  { key: "orbits", label: "Orbits" },
+  { key: "labels", label: "Labels" },
+  { key: "stars", label: "Stars" },
+  { key: "starLabels", label: "Star names" },
+  { key: "ships", label: "Ships" },
+  { key: "comms", label: "Comms" },
 ];
 
 export class Hud {
@@ -42,6 +53,12 @@ export class Hud {
   private labelLayer!: HTMLElement;
   private labels = new Map<string, HTMLElement>();
   private listButtons = new Map<string, HTMLButtonElement>();
+  // Show/hide controls: eye toggles per body and per kind, layer chips, and the
+  // body rows (so a hidden body can be dimmed). Repainted from Visibility.onChange.
+  private bodyEyes = new Map<string, HTMLButtonElement>();
+  private bodyRows = new Map<string, HTMLElement>();
+  private kindEyes = new Map<BodyKind, HTMLButtonElement>();
+  private layerChips = new Map<LayerKey, HTMLButtonElement>();
   /** Focus-list order as displayed (grouped by kind) — drives Tab cycling so the
    *  keyboard and the visible list agree. */
   private focusOrder: string[] = [];
@@ -50,8 +67,11 @@ export class Hud {
     private root: HTMLElement,
     private sim: Simulation,
     private sm: SceneManager,
+    private vis: Visibility,
   ) {
     this.build();
+    this.vis.onChange(() => this.refreshVisibilityUI());
+    this.refreshVisibilityUI();
   }
 
   private build(): void {
@@ -83,23 +103,43 @@ export class Hud {
     clock.append(this.dateEl, warpRow);
     this.root.appendChild(clock);
 
-    // Body selector (right). With 43 bodies the flat list ran off-screen, so the
-    // panel scrolls (under a sticky FOCUS header) and the bodies are grouped by kind.
+    // Body selector + visibility (right). With 43 bodies the flat list ran
+    // off-screen, so the panel scrolls (under a sticky head) and the bodies are
+    // grouped by kind. Each row carries an eye toggle (show/hide that body), each
+    // group header an eye toggle for the whole kind, and the head a row of chips
+    // for the cross-cutting overlays (orbits, labels, the star sky, ships, comms).
     const list = el("div", "panel body-list");
-    list.appendChild(el("div", "panel-title", "FOCUS"));
+    const head = el("div", "list-head");
+    head.appendChild(el("div", "panel-title", "FOCUS"));
+    head.appendChild(this.buildLayerChips());
+    list.appendChild(head);
+
     for (const g of GROUPS) {
       const inGroup = BODIES.filter((b) => b.kind === g.kind);
       if (inGroup.length === 0) continue;
-      if (g.label) list.appendChild(el("div", "body-group", g.label));
+      if (g.label) {
+        const groupRow = el("div", "body-group-row");
+        const eye = this.eyeButton(`Show / hide all ${g.label.toLowerCase()}`, () =>
+          this.vis.toggleKind(g.kind),
+        );
+        groupRow.append(eye, el("span", "body-group", g.label));
+        this.kindEyes.set(g.kind, eye);
+        list.appendChild(groupRow);
+      }
       for (const b of inGroup) {
         this.focusOrder.push(b.id);
+        const row = el("div", "body-row");
+        const eye = this.eyeButton(`Show / hide ${b.name}`, () => this.vis.toggleBody(b.id));
         const btn = button(b.name, () => this.focus(b.id));
         btn.classList.add("body-btn");
         const swatch = el("span", "swatch");
         swatch.style.background = `#${b.color.toString(16).padStart(6, "0")}`;
         btn.prepend(swatch);
+        row.append(eye, btn);
         this.listButtons.set(b.id, btn);
-        list.appendChild(btn);
+        this.bodyEyes.set(b.id, eye);
+        this.bodyRows.set(b.id, row);
+        list.appendChild(row);
       }
     }
     this.root.appendChild(list);
@@ -123,7 +163,7 @@ export class Hud {
       ["1–8", "focus"],
       ["tab", "cycle"],
       ["F", "ships"],
-      ["V", "views"],
+      ["V", "angle"],
       ["R", "reset"],
     ];
     for (const [keys, label] of shortcuts) {
@@ -145,6 +185,43 @@ export class Hud {
     }
 
     this.focus(this.sm.focusId);
+  }
+
+  /** The chip row of cross-cutting overlay toggles (orbits, labels, stars, …). */
+  private buildLayerChips(): HTMLElement {
+    const row = el("div", "layers-row");
+    for (const { key, label } of LAYER_CHIPS) {
+      const chip = button(label, () => this.vis.toggleLayer(key));
+      chip.classList.add("layer-chip");
+      this.layerChips.set(key, chip);
+      row.appendChild(chip);
+    }
+    return row;
+  }
+
+  /** A small open/closed-eye toggle that does not steal focus selection. */
+  private eyeButton(title: string, onClick: () => void): HTMLButtonElement {
+    const b = button("", onClick);
+    b.classList.add("eye-btn");
+    b.title = title;
+    return b;
+  }
+
+  private setEye(btn: HTMLButtonElement, shown: boolean): void {
+    btn.textContent = shown ? "◉" : "○";
+    btn.classList.toggle("off", !shown);
+  }
+
+  /** Repaint every visibility control from the shared Visibility state. */
+  private refreshVisibilityUI(): void {
+    for (const [key, chip] of this.layerChips) chip.classList.toggle("active", this.vis.layer(key));
+    for (const [kind, eye] of this.kindEyes) this.setEye(eye, this.vis.kindVisible(kind));
+    for (const b of BODIES) {
+      const shown = this.vis.bodyVisible(b.id, b.kind);
+      const eye = this.bodyEyes.get(b.id);
+      if (eye) this.setEye(eye, shown);
+      this.bodyRows.get(b.id)?.classList.toggle("hidden-body", !shown);
+    }
   }
 
   focus(id: string): void {
@@ -247,9 +324,16 @@ export class Hud {
   private updateLabels(views: BodyViews): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    const labelsOn = this.vis.layer("labels");
     for (const anchor of views.labelAnchors()) {
       const lbl = this.labels.get(anchor.id);
       if (!lbl) continue;
+      // A label follows its body's visibility, and the whole layer can be hidden.
+      const def = BODY_BY_ID.get(anchor.id);
+      if (!labelsOn || !def || !this.vis.bodyVisible(anchor.id, def.kind)) {
+        lbl.style.display = "none";
+        continue;
+      }
       const { ndc } = anchor;
       const visible = ndc.z < 1 && ndc.x >= -1 && ndc.x <= 1 && ndc.y >= -1 && ndc.y <= 1;
       if (!visible) {

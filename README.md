@@ -86,10 +86,15 @@ Controls:
 | `1`–`8` | Focus Sun, Mercury, Venus, Earth, Moon, Mars, Jupiter, Saturn |
 | Tab / Shift+Tab | Cycle focus forward / backward through all 43 bodies |
 | `F` | Toggle ship designer & flight console |
-| `V` | Cycle view presets (isometric → top-down → edge-on) |
+| `V` | Cycle camera view angle (isometric → top-down → edge-on) |
 | `R` / Home | Reset camera distance for current focus |
 | Escape | Close transfer or interstellar planner (then ship panel) |
 | `◐` (button) | Toggle light / dark theme |
+
+Show / hide is in the **FOCUS** panel: an eye toggle on each body (and each
+group header) hides that object or the whole kind, and a chip row toggles the
+cross-cutting layers — orbit lines, labels, the nearby-star sky, ships, and
+in-flight comms.
 
 ## Develop
 
@@ -136,13 +141,14 @@ src/
     sim.ts               step kernel: time advance, RK4, event dispatch, light-lag command delivery
   render/                three.js read-only view — never feeds back into core
     SceneManager.ts      scene, camera, renderer, floating origin, OrbitControls
-    bodyViews.ts         body meshes, orbit lines, label anchors
+    bodyViews.ts         body meshes, orbit lines (phased through the marker), label anchors
     shipViews.ts         ship meshes + floating name labels
-    starViews.ts         interstellar star markers
+    starViews.ts         nearby real-star markers (the only sky; no procedural starfield)
     commsViews.ts        light-cone / signal-in-flight visualizations
+    visibility.ts        shared show/hide state (per-body, per-kind, per-layer)
     scale.ts             metre ↔ render-unit conversion, logarithmic depth
   ui/                    DOM panels over the WebGL canvas
-    hud.ts               clock, warp, body list, physics readouts, labels, theme toggle
+    hud.ts               clock, warp, body list + show/hide layers, readouts, labels, theme
     shipPanel.ts         ship designer, flight console, surface ops, electric spiral, thermal
     transferPanel.ts     porkchop plot, gravity-assist via mode, commit
     interstellarPanel.ts star picker, torchship selector, transit estimator, dispatch

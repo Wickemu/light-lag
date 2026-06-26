@@ -179,17 +179,29 @@ export function elementsToState(el: KeplerElements, mu: number): State {
 /**
  * Sample the closed orbit (ellipse) defined by `el` into `segments` points,
  * expressed relative to the focus (the parent body). Used by the renderer to
- * draw orbit paths; sweeps true anomaly directly so no Kepler solve is needed.
- * Only valid for bound (elliptic) orbits.
+ * draw orbit paths. Only valid for bound (elliptic) orbits.
+ *
+ * Two deliberate choices keep the drawn loop faithful up close:
+ *
+ *   1. We sweep the ECCENTRIC anomaly E (x = a(cos E − e), y = b sin E), not the
+ *      true anomaly. Uniform-in-ν crowds points near periapsis and starves the
+ *      broad sweep near apoapsis, so an eccentric orbit reads as a coarse polygon
+ *      there; uniform-in-E distributes vertices far more evenly along the arc, so
+ *      the same segment budget looks smooth.
+ *   2. We PHASE the sweep so vertex 0 sits exactly at the body's current eccentric
+ *      anomaly (E0 from el.M). Because the body itself is placed from the same
+ *      elements, a vertex then coincides with the body to full f64 precision — the
+ *      line passes dead through the marker instead of cutting the corner beside it,
+ *      no matter how few segments or how close the camera.
  */
 export function orbitPath(el: KeplerElements, segments = 256): Vec3[] {
-  const { a, e, i, Omega, omega } = el;
-  const p = a * (1 - e * e);
+  const { a, e, i, Omega, omega, M } = el;
+  const b = a * Math.sqrt(1 - e * e);
+  const E0 = solveKeplerElliptic(M, e); // phase so a vertex lands on the body
   const pts: Vec3[] = [];
   for (let k = 0; k <= segments; k++) {
-    const nu = (TWO_PI * k) / segments;
-    const r = p / (1 + e * Math.cos(nu));
-    const local = vec3(r * Math.cos(nu), r * Math.sin(nu), 0);
+    const E = E0 + (TWO_PI * k) / segments;
+    const local = vec3(a * (Math.cos(E) - e), b * Math.sin(E), 0);
     pts.push(perifocalToInertial(local, i, Omega, omega));
   }
   return pts;
