@@ -16,7 +16,7 @@
 
 import * as THREE from "three";
 import { type Vec3 } from "../core/math/vec3.ts";
-import { metersToUnits } from "./scale.ts";
+import { metersToUnits, SCENE_SCALE } from "./scale.ts";
 import { type SceneManager, type Theme } from "./SceneManager.ts";
 
 /** A growable-capacity line whose drawn vertex count varies per frame. */
@@ -113,6 +113,34 @@ export function fillPolylineWorld(
   return n;
 }
 const _fillTmp = new THREE.Vector3();
+
+/**
+ * Fill from points LOCAL to a single parent body: the parent's current world
+ * position becomes the line's `.position` (via the floating origin) and the
+ * vertices are the parent-relative offsets / SCENE_SCALE. This is the existing
+ * orbit-loop idiom — use it for a path about one primary (a parking ellipse, a
+ * heliocentric/approach arc) so the curve stays anchored at "now" and does not
+ * smear as the primary drifts. Returns the vertex count.
+ */
+export function fillPolylineLocal(
+  pl: RenderPolyline,
+  pts: readonly Vec3[],
+  parentWorld: Vec3,
+  sm: SceneManager,
+): number {
+  sm.toRender(parentWorld, pl.object.position);
+  const cap = pl.positions.length / 3;
+  const n = Math.min(pts.length, cap);
+  const arr = pl.positions;
+  for (let k = 0; k < n; k++) {
+    arr[k * 3] = pts[k]!.x / SCENE_SCALE;
+    arr[k * 3 + 1] = pts[k]!.y / SCENE_SCALE;
+    arr[k * 3 + 2] = pts[k]!.z / SCENE_SCALE;
+  }
+  pl.setCount(n);
+  pl.markPositionsDirty();
+  return n;
+}
 
 /** A reusable arrow (shaft + head) in render space, wrapping THREE.ArrowHelper. */
 export class RenderArrow {
