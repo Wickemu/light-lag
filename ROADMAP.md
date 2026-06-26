@@ -49,6 +49,33 @@ locked by a permanent integration test suite before more gameplay is layered on.
 - **Golden-state determinism** test in CI (headless harness hashes final state).
 - HUD/legibility pass; onboarding / tutorialized vertical slice; light + dark verified.
 
+## Next core-mechanics round — candidate priorities (highest-leverage first)
+
+A curated, ranked view *into* the backlog below — the threads most worth picking up
+next, after four expansion rounds (Solar System + landing → assists + toolkit → J2 →
+electric propulsion). Each round stays additive: pure SI, deterministic, read-time
+analytic, suite green, golden hash documented if it moves.
+
+1. **Powered low-thrust capture/escape spirals about a destination body** + **variable-Isp
+   throttling** — the natural next step now that *heliocentric* electric transfers fly.
+   Extends the analytic `SpiralLeg` to spiral down into / out of a target body's well, and
+   lets a drive trade thrust for Isp at fixed power (`F·vₑ = 2ηP`). *(see "Power-limited
+   electric thrust" → Still to do.)*
+2. **Multi-flyby assist chains** + **full free-bend B-plane targeting** — the R2 executor
+   bends a single flyby for free but charges the residual at a patched-conic point; a true
+   B-plane aimer and chained legs (e.g. V-E-E-G-A) are the big remaining gravity-assist
+   capability. *(see "Gravity assists" and "Full B-plane targeting in the planner UI".)*
+3. **In-system relativistic / finite-thrust burns** + **stellar proper motion** — the
+   finite-thrust integrator is still classical, and the star catalog is fixed-epoch; both
+   harden the interstellar layer. *(see "Relativistic propulsion" → Still to do.)*
+4. **Parallel staging / strap-on boosters / drop tanks** — serial stages only today; real
+   launchers light boosters and core together and stage asymmetrically. *(see "Parallel
+   staging".)*
+
+These are candidates, not a commitment — pick the highest-leverage one when the next round
+starts. Lower-priority refinements (aerocapture + entry heating, N-body/J3 perturbations, a
+defensible SNR-vs-range detection curve, comet outgassing) live in the backlog entries below.
+
 ## Backlog — known engine gaps (future layers)
 
 - **Relativistic propulsion** — DONE (first cut): rapidity rocket equation,
