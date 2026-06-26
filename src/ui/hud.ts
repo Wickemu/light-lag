@@ -36,11 +36,14 @@ const GROUPS: { kind: BodyKind; label: string }[] = [
 /** Cross-cutting overlay toggles shown as chips above the body list. */
 const LAYER_CHIPS: { key: LayerKey; label: string }[] = [
   { key: "orbits", label: "Orbits" },
+  { key: "trajectory", label: "Path" },
+  { key: "route", label: "Route" },
   { key: "labels", label: "Labels" },
   { key: "stars", label: "Stars" },
   { key: "starLabels", label: "Star names" },
   { key: "ships", label: "Ships" },
   { key: "comms", label: "Comms" },
+  { key: "forces", label: "Forces" },
 ];
 
 export class Hud {
