@@ -1,9 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { edelbaumDv, edelbaumTransfer } from "./lowThrust.ts";
+import {
+  edelbaumDv, edelbaumTransfer,
+  spiralEscapeDv, spiralCaptureDv, spiralEscapeTransfer, spiralCaptureTransfer,
+} from "./lowThrust.ts";
 import {
   availablePowerW, thrustAt, electricThrust, exhaustVelocity,
   type Stage, type ElectricSource,
 } from "../propulsion.ts";
+import { circularSpeed } from "../orbit.ts";
 import { BODY_BY_ID, AU, DAY } from "../constants.ts";
 
 const EARTH = BODY_BY_ID.get("earth")!;
@@ -56,5 +60,49 @@ describe("Edelbaum low-thrust transfer", () => {
     expect(t.time / DAY).toBeLessThan(800);
     expect(t.propellant).toBeLessThan(120); // tens of kg of xenon, not tonnes
     expect(t.dv).toBeCloseTo(edelbaumDv(EARTH.mu, LEO, GEO, 0), 6);
+  });
+});
+
+describe("capture / escape spirals about a body", () => {
+  it("a low-thrust escape costs the FULL local circular speed (more than impulsive)", () => {
+    const vCirc = circularSpeed(EARTH.mu, LEO);
+    expect(spiralEscapeDv(EARTH.mu, LEO)).toBeCloseTo(vCirc, 6);
+    // Impulsive escape from a circular orbit is only (√2 − 1)·v_circ.
+    const impulsive = (Math.SQRT2 - 1) * vCirc;
+    expect(spiralEscapeDv(EARTH.mu, LEO)).toBeGreaterThan(impulsive);
+    expect(spiralEscapeDv(EARTH.mu, LEO) / 1000).toBeGreaterThan(7.5); // ~7.7 km/s off LEO
+  });
+
+  it("capture and escape are the Edelbaum r→∞ limit and mirror each other", () => {
+    // Escape from r0 = the spiral r0→∞ Δv; capture to r1 = the ∞→r1 Δv; both v_circ.
+    expect(spiralEscapeDv(EARTH.mu, GEO)).toBeCloseTo(edelbaumDv(EARTH.mu, GEO, Infinity, 0), 6);
+    expect(spiralCaptureDv(EARTH.mu, LEO)).toBeCloseTo(edelbaumDv(EARTH.mu, Infinity, LEO, 0), 6);
+    expect(spiralCaptureDv(EARTH.mu, LEO)).toBeCloseTo(spiralEscapeDv(EARTH.mu, LEO), 6);
+  });
+
+  it("an escape spiral leg charges v_circ of Δv and burns propellant over a finite time", () => {
+    const ve = exhaustVelocity(3100); // NSTAR-class
+    const leg = spiralEscapeTransfer(EARTH.mu, LEO, 0.09, ve, 1200);
+    expect(leg.dv).toBeCloseTo(circularSpeed(EARTH.mu, LEO), 6);
+    expect(leg.v0).toBeCloseTo(circularSpeed(EARTH.mu, LEO), 6);
+    expect(leg.v1).toBe(0); // escaped: zero circular speed at infinity
+    expect(leg.propellant).toBeGreaterThan(0);
+    expect(isFinite(leg.time)).toBe(true);
+    expect(leg.feasible).toBe(true);
+  });
+
+  it("a capture spiral mirrors it: zero start speed, settles on the parking orbit", () => {
+    const ve = exhaustVelocity(3100);
+    const leg = spiralCaptureTransfer(EARTH.mu, GEO, 0.09, ve, 1200);
+    expect(leg.dv).toBeCloseTo(circularSpeed(EARTH.mu, GEO), 6);
+    expect(leg.v0).toBe(0);
+    expect(leg.v1).toBeCloseTo(circularSpeed(EARTH.mu, GEO), 6);
+    expect(leg.propellant).toBeGreaterThan(0);
+  });
+
+  it("an escape spiral is infeasible when the stack lacks the Δv", () => {
+    const ve = exhaustVelocity(3100);
+    const leg = spiralEscapeTransfer(EARTH.mu, LEO, 0.09, ve, 1200, 1000); // only 1 km/s available
+    expect(leg.feasible).toBe(false);
   });
 });
