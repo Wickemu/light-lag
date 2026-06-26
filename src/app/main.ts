@@ -19,6 +19,7 @@ import { ForceViews } from "../render/forceViews.ts";
 import { StarViews } from "../render/starViews.ts";
 import { CommsViews } from "../render/commsViews.ts";
 import { Hud } from "../ui/hud.ts";
+import { ScaleBar } from "../ui/scaleBar.ts";
 import { ShipPanel } from "../ui/shipPanel.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
 import { InterstellarPanel } from "../ui/interstellarPanel.ts";
@@ -44,6 +45,7 @@ const forceViews = new ForceViews(sm, visibility);
 const starViews = new StarViews(sm, uiRoot, visibility);
 const commsViews = new CommsViews(sm, visibility);
 const hud = new Hud(uiRoot, sim, sm, visibility);
+const scaleBar = new ScaleBar(uiRoot, sm);
 const transferPanel = new TransferPanel(uiRoot, sim, sm, trajectoryViews);
 const interstellarPanel = new InterstellarPanel(uiRoot, sim, sm);
 const shipPanel = new ShipPanel(
@@ -72,6 +74,7 @@ function renderOnce(): void {
   commsViews.update(world, world.t);
   sm.render();
   hud.update(fps, views);
+  scaleBar.update();
   shipPanel.update(world.t);
 }
 
