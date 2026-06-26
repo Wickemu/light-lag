@@ -33,10 +33,11 @@ import {
   presetsByCategory,
   presetToDesign,
 } from "../app/shipCatalog.ts";
-import { deltaVBudget, initialTWR } from "../core/propulsion.ts";
+import { deltaVBudget, initialTWR, exhaustVelocity, availablePowerW, thrustAt } from "../core/propulsion.ts";
 import {
   totalMass,
   dvRemaining,
+  activeStage,
   shipOsculatingElements,
   shipRelativeState,
   shipWorldState,
@@ -44,6 +45,7 @@ import {
   primaryMu,
 } from "../core/ships.ts";
 import { summarizeOrbit, periapsisRadius, j2Rates } from "../core/orbit.ts";
+import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
 import { bodyPosition } from "../core/ephemeris.ts";
 import { retardedTime } from "../core/comms.ts";
 import { STAR_BY_ID } from "../core/stars.ts";
@@ -419,6 +421,24 @@ export class ShipPanel {
     lines.push(kv("Speed", `${(speed / 1000).toFixed(3)} km/s`));
     lines.push(kv("Mass", `${(totalMass(ship) / 1000).toFixed(2)} t`));
     lines.push(kv("Δv remaining", `${(dvRemaining(ship) / 1000).toFixed(2)} km/s`));
+
+    // Electric drive: power-limited thrust falls with solar distance; a transfer
+    // is a long Edelbaum spiral, not an impulsive burn.
+    const stage = activeStage(ship);
+    if (stage?.electric) {
+      const rHelio = length(shipWorldState(ship, tKnown).r);
+      const power = availablePowerW(stage.electric, rHelio);
+      const thr = thrustAt(stage, rHelio);
+      const accel = thr / totalMass(ship);
+      lines.push(kv("Drive power", `${(power / 1000).toFixed(2)} kW${stage.electric.solar ? ` @ ${(rHelio / AU).toFixed(2)} AU` : " (reactor)"}`));
+      lines.push(kv("Drive thrust", `${(thr * 1000).toFixed(1)} mN · a = ${(accel * 1e6).toFixed(2)} mm/s²`));
+      if (ship.primary !== "sun") {
+        // A representative spiral: raise the (near-circular) orbit to escape.
+        const r0 = el.a;
+        const t = edelbaumTransfer(mu, r0, 1e3 * r0, 0, thr, exhaustVelocity(stage.isp), totalMass(ship), dvRemaining(ship));
+        lines.push(kv("Spiral to escape", `${(t.dv / 1000).toFixed(2)} km/s · ${(t.time / DAY).toFixed(0)} d · ${(t.propellant).toFixed(0)} kg`));
+      }
+    }
 
     // A command you've sent is still crawling out to the ship at c.
     const inbound = this.sim.world.messages.find(

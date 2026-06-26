@@ -20,16 +20,14 @@
  *
  * Atmospheric first stages are listed at a representative sea-level-ish Isp and
  * upper/vacuum stages at vacuum Isp, so a launcher's total Δv reflects its real
- * total impulse rather than an all-vacuum overstatement. Electric craft are
- * modeled at a single representative operating point (fixed Isp + thrust); their
- * thrust is genuinely milli-newton class, which is faithful but means a manual
- * in-orbit burn would run for weeks of sim-time (planned transfers, which the
- * engine treats impulsively, are unaffected). That limitation is the engine's,
- * not the data's.
+ * total impulse rather than an all-vacuum overstatement. Electric craft now carry
+ * a real power model (E() derives rated power from thrust): their thrust derates
+ * as 1/r² for solar arrays, and a low-thrust transfer is planned via the Edelbaum
+ * spiral (maneuver/lowThrust.ts) rather than flown as a weeks-long stepped burn.
  */
 
 import { type ShipDesign } from "./commands.ts";
-import { type Stage } from "../core/propulsion.ts";
+import { type Stage, exhaustVelocity } from "../core/propulsion.ts";
 import { C } from "../core/constants.ts";
 
 export type PresetCategory = "Historical" | "Current" | "Prototype" | "Sci-Fi";
@@ -59,6 +57,20 @@ const S = (name: string, dryMass: number, propMass: number, isp: number, thrust:
   isp,
   thrust,
 });
+
+/** An ELECTRIC (power-limited) stage. The rated electrical power is DERIVED from
+ *  the rated thrust so the two stay consistent (P = F·vₑ/2η); `solar` (default
+ *  true) makes the thrust derate as 1/r² with heliocentric distance. */
+const E = (
+  name: string, dryMass: number, propMass: number, isp: number, thrust: number,
+  opts: { solar?: boolean; eta?: number } = {},
+): Stage => {
+  const eta = opts.eta ?? 0.6;
+  return {
+    name, dryMass, propMass, isp, thrust,
+    electric: { powerW: (thrust * exhaustVelocity(isp)) / (2 * eta), eta, solar: opts.solar ?? true },
+  };
+};
 
 interface DesignSpec {
   payloadMass: number; // kg
@@ -366,7 +378,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
       "The ion-drive record holder: an NSTAR gridded thruster (Isp 3100 s) that gave a 1.2 t probe more Δv than any spacecraft before it — Vesta AND Ceres on one tank. Thrust is 92 mN, so a manual burn here would take months; plan transfers instead.",
     design: design("Dawn (ion)", {
       payloadMass: 702,
-      stages: [S("NSTAR ion", 45, 425, 3_100, 0.092)], // 425 kg xenon
+      stages: [E("NSTAR ion", 45, 425, 3_100, 0.092)], // 425 kg xenon
     }),
   },
   {
@@ -379,7 +391,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
       "The asteroid-deflection demonstrator, flying NASA's next-gen NEXT-C gridded ion engine (Isp 4190 s, 236 mN). Low thrust, high efficiency — same plan-don't-burn caveat as all electric craft.",
     design: design("DART (NEXT-C ion)", {
       payloadMass: 460,
-      stages: [S("NEXT-C ion", 30, 60, 4_190, 0.236)], // ~60 kg xenon
+      stages: [E("NEXT-C ion", 30, 60, 4_190, 0.236)], // ~60 kg xenon
     }),
   },
   {
@@ -393,7 +405,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
     design: design("SMART-1 (Hall)", {
       payloadMass: 250,
       altitudeKm: 700,
-      stages: [S("PPS-1350 Hall", 35, 82, 1_640, 0.068)],
+      stages: [E("PPS-1350 Hall", 35, 82, 1_640, 0.068)],
     }),
   },
   {
@@ -406,7 +418,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
       "The lunar Gateway's Power and Propulsion Element: 50 kW-class AEPS Hall thrusters (Isp 2600 s). A solar-electric tug — high Δv, gentle thrust — meant to haul modules between Earth and lunar orbits.",
     design: design("Gateway PPE (AEPS)", {
       payloadMass: 5_000,
-      stages: [S("AEPS Hall ×3", 4_000, 2_500, 2_600, 0.6)],
+      stages: [E("AEPS Hall ×3", 4_000, 2_500, 2_600, 0.6)],
     }),
   },
   {
@@ -460,7 +472,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
       "An RF plasma rocket (Ad Astra's VX-200) tested at 200 kW: Isp ~5000 s at 5.7 N. Variable-specific-impulse in principle; modeled here at a fixed high-Isp point. Milli-g thrust — superb for planned transfers, impractical for a manual burn.",
     design: design("VASIMR (VX-200)", {
       payloadMass: 2_000,
-      stages: [S("VX-200 plasma", 1_000, 1_000, 5_000, 5.7)],
+      stages: [E("VX-200 plasma", 1_000, 1_000, 5_000, 5.7, { solar: false })],
     }),
   },
   {
