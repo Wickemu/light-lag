@@ -10,15 +10,31 @@
  * SI throughout: mass kg, velocity m/s, thrust N, Isp s, power W.
  */
 
-import { C, G0 } from "./constants.ts";
+import { AU, C, G0 } from "./constants.ts";
 
-/** A propulsion stage: its own structure (dry) and propellant, plus its engine. */
+/**
+ * Power source for an electric (ion/Hall/MPD) stage. Electric thrusters are
+ * POWER-limited, not propellant-limited: F = 2·η·P/vₑ. A solar array's power
+ * falls as 1/r², so a solar-electric craft loses thrust as it moves away from the
+ * Sun; a reactor's power is constant. `powerW` is the rated electrical power at
+ * 1 AU (solar) or always (nuclear).
+ */
+export interface ElectricSource {
+  powerW: number; // rated electrical power at 1 AU (W)
+  eta: number; // electrical → jet efficiency
+  solar: boolean; // true: P ∝ (AU/r)²; false: nuclear (constant)
+}
+
+/** A propulsion stage: its own structure (dry) and propellant, plus its engine.
+ *  An `electric` stage is power-limited: its `thrust` is the rated value at full
+ *  power (1 AU for solar), and the real thrust derates with distance. */
 export interface Stage {
   name: string;
   dryMass: number; // kg, structure that is dropped when the stage is spent
   propMass: number; // kg, propellant remaining
   isp: number; // s, specific impulse
-  thrust: number; // N
+  thrust: number; // N — rated/max thrust (at full power for an electric stage)
+  electric?: ElectricSource;
 }
 
 /** Effective exhaust velocity vₑ = Isp · g₀ (g₀ defines Isp; it is not gravity). */
@@ -49,6 +65,22 @@ export function dvForPropellant(ve: number, m0: number, mProp: number): number {
 /** Electric-propulsion thrust from input power: F = 2·η·P / vₑ (jet power = ½F·vₑ). */
 export function electricThrust(power: number, ve: number, eta: number): number {
   return (2 * eta * power) / ve;
+}
+
+/** Available electrical power (W) of an electric source at heliocentric distance
+ *  r (m): a solar array falls as (AU/r)² (capped at its rated value closer in,
+ *  where the array/PPU regulate); a reactor is constant. */
+export function availablePowerW(src: ElectricSource, r: number): number {
+  return src.solar ? src.powerW * Math.min(1, (AU / r) ** 2) : src.powerW;
+}
+
+/** The ACTUAL thrust (N) of a stage at heliocentric distance r (m). For an
+ *  electric stage this is the power-limited F = 2ηP(r)/vₑ, capped at the rated
+ *  thrust; for a chemical stage it is simply the rated thrust (distance-independent). */
+export function thrustAt(stage: Stage, r: number): number {
+  if (!stage.electric) return stage.thrust;
+  const ve = exhaustVelocity(stage.isp);
+  return Math.min(stage.thrust, electricThrust(availablePowerW(stage.electric, r), ve, stage.electric.eta));
 }
 
 export interface DvBudget {

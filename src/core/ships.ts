@@ -131,10 +131,31 @@ export function coastElements(ship: Ship, t: number): KeplerElements {
   return el;
 }
 
+/** Osculating (near-circular) elements of a ship mid low-thrust spiral: the
+ *  semi-major axis grows linearly with time and the phase follows in closed form
+ *  (θ = θ0 + ∫√(μ/a³) dt, integrated exactly for linear a). Exact at any time-warp. */
+export function spiralElements(ship: Ship, t: number): KeplerElements {
+  const leg = ship.spiral!;
+  const mu = primaryMu(ship);
+  const tc = Math.max(leg.tStart, Math.min(t, leg.tEnd));
+  const span = leg.tEnd - leg.tStart;
+  const frac = span > 0 ? (tc - leg.tStart) / span : 1;
+  const a = leg.startRadius + (leg.endRadius - leg.startRadius) * frac;
+  const k = span > 0 ? (leg.endRadius - leg.startRadius) / span : 0;
+  let theta: number;
+  if (Math.abs(k) < 1e-9) {
+    theta = leg.phase0 + Math.sqrt(mu / (leg.startRadius ** 3)) * (tc - leg.tStart);
+  } else {
+    theta = leg.phase0 + ((2 * Math.sqrt(mu)) / k) * (1 / Math.sqrt(leg.startRadius) - 1 / Math.sqrt(a));
+  }
+  return { a, e: 0, i: leg.i, Omega: leg.Omega, omega: 0, M: wrapPi(theta) };
+}
+
 /** State of the ship relative to its primary (the Earth-centred frame, etc.). */
 export function shipRelativeState(ship: Ship, t: number): State {
   if (ship.landed) return landedRelativeState(ship, t);
   if (ship.interstellarLeg) return interstellarLegState(ship.interstellarLeg, t);
+  if (ship.spiral) return elementsToState(spiralElements(ship, t), primaryMu(ship));
   if (ship.mode === "thrust" && ship.r && ship.v) {
     // Linear extrapolation from the integrated state's valid time, so callers
     // that query a different time (the light-lag chase, retarded telemetry) get
@@ -203,6 +224,7 @@ export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
   if (ship.interstellarLeg) {
     return { a: length(interstellarLegState(ship.interstellarLeg, t).r), e: 0, i: 0, Omega: 0, omega: 0, M: 0 };
   }
+  if (ship.spiral) return spiralElements(ship, t);
   const mu = primaryMu(ship);
   if (ship.mode === "thrust" && ship.r && ship.v) {
     // Honour the requested time: linearly extrapolate the integrated state from

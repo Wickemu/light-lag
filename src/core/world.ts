@@ -57,6 +57,20 @@ export interface FlybyLeg {
   done: boolean; // the flyby has been executed
 }
 
+/** An in-progress low-thrust (electric) spiral between near-circular orbits about
+ *  the primary. Flown ANALYTICALLY — the semi-major axis grows linearly and the
+ *  orbital phase follows in closed form (∫n dt integrates exactly) — so it is
+ *  exact at any time-warp. The Edelbaum Δv/propellant were charged at commit. */
+export interface SpiralLeg {
+  startRadius: number; // m
+  endRadius: number; // m
+  i: number; // inclination (rad)
+  Omega: number; // longitude of ascending node (rad)
+  phase0: number; // argument of latitude at tStart (rad)
+  tStart: number; // s since J2000
+  tEnd: number;
+}
+
 /** A planned/active interplanetary transfer (Lambert leg to another body). */
 export interface ShipTransfer {
   targetId: string;
@@ -99,6 +113,8 @@ export interface Ship {
   /** An in-progress interstellar crossing. While set, the ship's position is the
    *  analytic brachistochrone trajectory in the root frame (primary is "sun"). */
   interstellarLeg?: InterstellarLeg;
+  /** An in-progress low-thrust (electric) spiral about the primary. */
+  spiral?: SpiralLeg;
   /** Set when the ship has touched down on a body's surface (after paying the
    *  descent Δv). `surfaceDir` is the landing site as a BODY-FIXED unit vector, so
    *  the ship co-rotates with the surface (moving at surface speed, not orbital

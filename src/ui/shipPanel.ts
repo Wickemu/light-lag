@@ -20,6 +20,7 @@ import {
   sendBurn,
   landShip,
   launchShip,
+  planSpiral,
   shipSurfaceParams,
 } from "../app/commands.ts";
 import {
@@ -33,10 +34,11 @@ import {
   presetsByCategory,
   presetToDesign,
 } from "../app/shipCatalog.ts";
-import { deltaVBudget, initialTWR } from "../core/propulsion.ts";
+import { deltaVBudget, initialTWR, availablePowerW, thrustAt } from "../core/propulsion.ts";
 import {
   totalMass,
   dvRemaining,
+  activeStage,
   shipOsculatingElements,
   shipRelativeState,
   shipWorldState,
@@ -88,6 +90,9 @@ export class ShipPanel {
   private surfaceAltInput!: HTMLInputElement;
   private landBtn!: HTMLButtonElement;
   private launchBtn!: HTMLButtonElement;
+  private electricEl!: HTMLElement;
+  private spiralAltInput!: HTMLInputElement;
+  private spiralBtn!: HTMLButtonElement;
 
   constructor(
     private root: HTMLElement,
@@ -198,6 +203,21 @@ export class ShipPanel {
     surfRow.append(this.landBtn, this.launchBtn);
     this.surfaceEl.appendChild(surfRow);
     this.flightEl.appendChild(this.surfaceEl);
+
+    // Electric drive — commit a low-thrust spiral to a target orbit (shown only
+    // when the active stage is electric and the ship is coasting about a body).
+    this.electricEl = el("div", "surface-ops");
+    this.electricEl.appendChild(el("div", "panel-label", "ELECTRIC SPIRAL"));
+    const elRow = el("div", "dv-row");
+    this.spiralAltInput = document.createElement("input");
+    this.spiralAltInput.type = "number";
+    this.spiralAltInput.value = "35786"; // GEO
+    this.spiralAltInput.min = "0";
+    this.spiralAltInput.className = "dv-input";
+    this.spiralBtn = button("⟳ Spiral", () => this.doSpiral());
+    elRow.append(el("span", "dv-label", "to (km)"), this.spiralAltInput, this.spiralBtn);
+    this.electricEl.appendChild(elRow);
+    this.flightEl.appendChild(this.electricEl);
 
     const burnControls = el("div", "burn-controls");
     burnControls.appendChild(el("div", "panel-label", "MANEUVER"));
@@ -420,6 +440,27 @@ export class ShipPanel {
     lines.push(kv("Mass", `${(totalMass(ship) / 1000).toFixed(2)} t`));
     lines.push(kv("Δv remaining", `${(dvRemaining(ship) / 1000).toFixed(2)} km/s`));
 
+    // Electric drive: power-limited thrust falls with solar distance; a transfer
+    // is a long Edelbaum spiral, not an impulsive burn.
+    const stage = activeStage(ship);
+    if (stage?.electric) {
+      const rHelio = length(shipWorldState(ship, tKnown).r);
+      const power = availablePowerW(stage.electric, rHelio);
+      const thr = thrustAt(stage, rHelio);
+      const accel = thr / totalMass(ship);
+      lines.push(kv("Drive power", `${(power / 1000).toFixed(2)} kW${stage.electric.solar ? ` @ ${(rHelio / AU).toFixed(2)} AU` : " (reactor)"}`));
+      lines.push(kv("Drive thrust", `${(thr * 1000).toFixed(1)} mN · a = ${(accel * 1e6).toFixed(2)} mm/s²`));
+    }
+    if (ship.spiral) {
+      const left = (ship.spiral.tEnd - t) / DAY;
+      lines.push(kv("Spiraling", `to ${((ship.spiral.endRadius - BODY_BY_ID.get(ship.primary)!.radius) / 1000).toFixed(0)} km · ${left.toFixed(0)} d left`));
+    }
+    // Show/enable the spiral control only when a spiral can be started here.
+    const canSpiral = !!stage?.electric && ship.mode === "coast" && ship.primary !== "sun"
+      && !ship.landed && !ship.interstellarLeg && !ship.spiral;
+    this.electricEl.style.display = canSpiral ? "block" : "none";
+    this.spiralBtn.disabled = !canSpiral;
+
     // A command you've sent is still crawling out to the ship at c.
     const inbound = this.sim.world.messages.find(
       (m) => m.kind === "command" && m.targetId === ship.id && m.tArrive > t,
@@ -535,6 +576,12 @@ export class ShipPanel {
   private doLaunch(): void {
     if (!this.selectedId) return;
     launchShip(this.sim, this.selectedId, Math.max(0, Number(this.surfaceAltInput.value) || 0));
+  }
+
+  /** Commit a low-thrust Edelbaum spiral from the current circular orbit to the
+   *  requested altitude — charged up front, then flown as an analytic leg. */
+  private doSpiral(): void {
+    if (this.selectedId) planSpiral(this.sim, this.selectedId, Math.max(0, Number(this.spiralAltInput.value) || 0));
   }
 }
 
