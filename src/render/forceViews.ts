@@ -55,7 +55,8 @@ export class ForceViews {
   }
 
   update(world: WorldState, t: number): void {
-    if (!this.vis.layer("forces")) {
+    // In-system overlay; park it in the interstellar view (and when toggled off).
+    if (this.sm.viewMode !== "system" || !this.vis.layer("forces")) {
       this.hideAll();
       return;
     }

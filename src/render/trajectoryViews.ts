@@ -132,6 +132,14 @@ export class TrajectoryViews {
       if (!world.ships.has(id)) this.dispose(id, v);
     }
 
+    // These are in-system overlays; park them in the interstellar view.
+    if (this.sm.viewMode !== "system") {
+      for (const v of this.visuals.values()) v.forecast.setVisible(false);
+      for (const pool of this.routes.values()) for (const pl of pool) pl.setVisible(false);
+      for (const pl of this.preview) pl.setVisible(false);
+      return;
+    }
+
     const pal = overlayPalette(this.sm.theme);
 
     // ── Live forecast arc (rides with the marker: needs Path AND Ships on) ──────
