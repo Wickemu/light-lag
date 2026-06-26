@@ -324,6 +324,7 @@ export class Simulation {
     const fromPos = bodyState(control, this.world.t).r;
     const posFn = (t: number): Vec3 => shipWorldState(ship, t).r;
     const tArrive = signalArrival(fromPos, posFn, this.world.t);
+    if (!isFinite(tArrive)) return null; // out of contact: light can't catch the ship
     const id = `msg-${this.msgCounter++}`;
     this.world.messages.push({
       id, kind: "command", fromPos, toPos: posFn(tArrive), targetId,
@@ -379,6 +380,7 @@ export class Simulation {
     const fromPos = shipWorldState(ship, t).r;
     const posFn = (tt: number): Vec3 => bodyState(control, tt).r;
     const tArrive = signalArrival(fromPos, posFn, t);
+    if (!isFinite(tArrive)) return; // control node unreachable from here — drop the telemetry
     const id = `msg-${this.msgCounter++}`;
     this.world.messages.push({
       id, kind: "telemetry", fromPos, toPos: posFn(tArrive), targetId: this.world.controlNode,
