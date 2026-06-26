@@ -24,7 +24,7 @@ import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius } from "./orbit.ts";
 import {
   activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
-  interstellarProperTime,
+  interstellarProperTime, spiralElements,
 } from "./ships.ts";
 import { exhaustVelocity } from "./propulsion.ts";
 import { stateToElements, meanMotion } from "./math/kepler.ts";
@@ -292,6 +292,7 @@ export class Simulation {
     switch (ev.kind) {
       case "transfer-depart": this.executeDeparture(ship, ev.t); break;
       case "flyby-pass": this.executeFlyby(ship, ev.t); break;
+      case "spiral-arrive": this.arriveSpiral(ship); break;
       case "soi-crossing": this.enterSoi(ship); break;
       case "soi-exit": this.exitSoi(ship); break;
       case "capture": this.captureAtPeriapsis(ship); break;
@@ -505,6 +506,19 @@ export class Simulation {
     ship.elements = stateToElements(shipHelio.r, aim.v1, MU_SUN);
     ship.epoch = t;
     this.events.push({ t: aim.tSoi, kind: "soi-crossing", entityId: ship.id });
+  }
+
+  /** End of a low-thrust spiral: settle the ship onto the final circular orbit
+   *  (the Δv/propellant were charged at commit) and clear the leg. */
+  private arriveSpiral(ship: Ship): void {
+    if (!ship.spiral) return;
+    const final = spiralElements(ship, ship.spiral.tEnd);
+    ship.spiral = undefined;
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = final;
+    ship.epoch = this.world.t;
   }
 
   /**

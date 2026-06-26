@@ -28,7 +28,7 @@
 import {
   type WorldState, type Ship, type Station, type Maneuver,
   type MessageInFlight, type ShipBurn, type ShipTransfer, type ShipCommand,
-  type InterstellarLeg,
+  type InterstellarLeg, type SpiralLeg,
 } from "./world.ts";
 import { type Stage } from "./propulsion.ts";
 import { type Vec3 } from "./math/vec3.ts";
@@ -80,6 +80,13 @@ function qLeg(l: InterstellarLeg) {
   };
 }
 
+function qSpiral(s: SpiralLeg) {
+  return {
+    startRadius: q(s.startRadius), endRadius: q(s.endRadius), i: q(s.i),
+    Omega: q(s.Omega), phase0: q(s.phase0), tStart: q(s.tStart), tEnd: q(s.tEnd),
+  };
+}
+
 function qShip(s: Ship): Record<string, unknown> {
   // Build in a FIXED field order; omit absent optionals entirely so two ships in
   // the same logical state serialize identically.
@@ -94,6 +101,7 @@ function qShip(s: Ship): Record<string, unknown> {
   if (s.burn) o.burn = qBurn(s.burn);
   if (s.transfer) o.transfer = qTransfer(s.transfer);
   if (s.interstellarLeg) o.interstellarLeg = qLeg(s.interstellarLeg);
+  if (s.spiral) o.spiral = qSpiral(s.spiral);
   if (s.landed) o.landed = { bodyId: s.landed.bodyId, surfaceDir: qv(s.landed.surfaceDir) };
   o.stages = s.stages.map(qStage);
   return o;

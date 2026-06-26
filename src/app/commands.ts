@@ -9,9 +9,11 @@
 
 import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir } from "../core/world.ts";
-import { type Stage, exhaustVelocity } from "../core/propulsion.ts";
+import { type Stage, exhaustVelocity, thrustAt } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
-import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, applyImpulsiveDv } from "../core/ships.ts";
+import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, dvRemaining, applyImpulsiveDv } from "../core/ships.ts";
+import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
+import { wrapPi } from "../core/math/kepler.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
 import { assistTransfer, type AssistResult } from "../core/maneuver/assist.ts";
 import { STAR_BY_ID } from "../core/stars.ts";
@@ -219,6 +221,51 @@ export function dispatchInterstellar(
   ship.elements = undefined;
   ship.epoch = t;
   return transit;
+}
+
+export interface SpiralPlan {
+  dv: number; // Edelbaum Δv (m/s)
+  time: number; // transfer time (s)
+  propellant: number; // kg
+}
+
+/**
+ * Commit an electric craft to a low-thrust spiral from its current near-circular
+ * orbit to one at `targetAltKm`. The Edelbaum Δv/propellant are charged now; the
+ * ship flies the analytic spiral (exact at any time-warp) and settles onto the
+ * target orbit after the (long) transfer time. Returns the plan, or null if the
+ * ship has no electric stage, isn't coasting about a body, or can't afford it.
+ */
+export function planSpiral(sim: Simulation, shipId: string, targetAltKm: number): SpiralPlan | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || ship.mode !== "coast" || ship.primary === "sun" || ship.landed || ship.interstellarLeg || ship.spiral) return null;
+  const body = BODY_BY_ID.get(ship.primary);
+  const stage = activeStage(ship);
+  if (!body || !stage?.electric) return null;
+
+  const t = sim.world.t;
+  const el = shipOsculatingElements(ship, t);
+  const r0 = el.a;
+  const r1 = body.radius + targetAltKm * 1000;
+  if (r1 <= 0 || Math.abs(r1 - r0) < 1) return null;
+
+  const rHelio = length(shipWorldState(ship, t).r);
+  const thrust = thrustAt(stage, rHelio);
+  const ve = exhaustVelocity(stage.isp);
+  const trans = edelbaumTransfer(body.mu, r0, r1, 0, thrust, ve, totalMass(ship), dvRemaining(ship));
+  if (!trans.feasible || !isFinite(trans.time) || !applyImpulsiveDv(ship, trans.dv)) return null;
+
+  ship.spiral = {
+    startRadius: r0, endRadius: r1, i: el.i, Omega: el.Omega,
+    phase0: wrapPi(el.omega + el.M), tStart: t, tEnd: t + trans.time,
+  };
+  ship.mode = "coast";
+  ship.r = undefined;
+  ship.v = undefined;
+  ship.elements = undefined;
+  ship.epoch = t;
+  sim.events.push({ t: t + trans.time, kind: "spiral-arrive", entityId: shipId });
+  return { dv: trans.dv, time: trans.time, propellant: trans.propellant };
 }
 
 export interface SurfaceOp {
