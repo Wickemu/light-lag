@@ -13,6 +13,7 @@ import { type Stage, exhaustVelocity } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
 import { shipOsculatingElements, shipWorldState, activeStage, totalMass, applyImpulsiveDv } from "../core/ships.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
+import { assistTransfer, type AssistResult } from "../core/maneuver/assist.ts";
 import { STAR_BY_ID } from "../core/stars.ts";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
@@ -129,6 +130,39 @@ export function planTransfer(
 export function cancelTransfer(sim: Simulation, shipId: string): void {
   const ship = sim.world.ships.get(shipId);
   if (ship) ship.transfer = undefined;
+}
+
+/**
+ * Plan and schedule a single-flyby gravity-assist mission: leg 1 to `flybyId`,
+ * a slingshot past it, then leg 2 to `targetId`. Records the transfer (with its
+ * flyby leg) and queues the departure; the sim flies depart → flyby-pass → capture
+ * using the existing patched-conic machinery. Returns the assist estimate or null.
+ */
+export function planAssist(
+  sim: Simulation,
+  shipId: string,
+  flybyId: string,
+  targetId: string,
+  tDepart: number,
+  tFlyby: number,
+  tArrive: number,
+): AssistResult | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || tFlyby <= tDepart || tArrive <= tFlyby) return null;
+  const depBody = BODY_BY_ID.get(ship.primary);
+  if (!depBody) return null;
+  const el = shipOsculatingElements(ship, sim.world.t);
+  const rParkFrom = periapsisRadius(el.a, el.e);
+  const res = assistTransfer(ship.primary, flybyId, targetId, tDepart, tFlyby, tArrive, { rParkFrom });
+  if (!res) return null;
+  ship.transfer = {
+    targetId, tDepart, tArrive,
+    dvDepart: res.dvDepart, dvArrive: res.dvArrive,
+    departed: false, inSoi: false, arrived: false,
+    flyby: { bodyId: flybyId, tFlyby, dvBurn: res.dvFlyby, done: false },
+  };
+  sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
+  return res;
 }
 
 // ── Surface operations: landing & takeoff ────────────────────────────────────

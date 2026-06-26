@@ -47,6 +47,16 @@ export interface InterstellarLeg {
   startPos: Vec3; // departure position in the root (ecliptic-J2000) frame (m)
 }
 
+/** An optional gravity-assist flyby leg before the final target. The ship is
+ *  seeded toward `bodyId`, swings past it (the heliocentric bend is free), pays
+ *  any powered residual, then continues to the target. */
+export interface FlybyLeg {
+  bodyId: string;
+  tFlyby: number; // s since J2000 — the patched-conic flyby instant
+  dvBurn: number; // estimated powered-flyby Δv (m/s)
+  done: boolean; // the flyby has been executed
+}
+
 /** A planned/active interplanetary transfer (Lambert leg to another body). */
 export interface ShipTransfer {
   targetId: string;
@@ -57,6 +67,7 @@ export interface ShipTransfer {
   departed: boolean;
   inSoi: boolean; // entered the target's sphere of influence
   arrived: boolean; // captured into orbit at the target
+  flyby?: FlybyLeg; // a gravity-assist leg between departure and the target
 }
 
 /**

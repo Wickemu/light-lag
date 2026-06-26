@@ -46,6 +46,7 @@ export type SimEventKind =
   | "window-open"
   | "transfer-depart"
   | "transfer-arrive"
+  | "flyby-pass"
   | "capture";
 
 export interface SimEvent {
