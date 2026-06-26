@@ -43,11 +43,11 @@ import {
   shipThermalState,
   primaryMu,
 } from "../core/ships.ts";
-import { summarizeOrbit, periapsisRadius } from "../core/orbit.ts";
+import { summarizeOrbit, periapsisRadius, j2Rates } from "../core/orbit.ts";
 import { bodyPosition } from "../core/ephemeris.ts";
 import { retardedTime } from "../core/comms.ts";
 import { STAR_BY_ID } from "../core/stars.ts";
-import { BODY_BY_ID, AU, DAY, JULIAN_YEAR } from "../core/constants.ts";
+import { BODY_BY_ID, AU, DAY, RAD, JULIAN_YEAR } from "../core/constants.ts";
 import { formatDate } from "../core/time.ts";
 import { length } from "../core/math/vec3.ts";
 
@@ -409,6 +409,12 @@ export class ShipPanel {
       lines.push(kv("Periapsis alt", `${(sum.periapsisAlt / 1000).toFixed(0)} km`));
       lines.push(kv("Apoapsis alt", sum.bound ? `${(sum.apoapsisAlt / 1000).toFixed(0)} km` : "escape"));
       lines.push(kv("Period", sum.bound ? formatDur(sum.period) : "—"));
+      // J2 oblateness precession (the plane and apsides slowly rotate).
+      if (sum.bound && primary.J2) {
+        const r = j2Rates(mu, primary.radius, primary.J2, el.a, el.e, el.i);
+        lines.push(kv("Node precession", `${(r.nodeDot * RAD * DAY).toFixed(3)}°/day`));
+        lines.push(kv("Apsidal precession", `${(r.periDot * RAD * DAY).toFixed(3)}°/day`));
+      }
     }
     lines.push(kv("Speed", `${(speed / 1000).toFixed(3)} km/s`));
     lines.push(kv("Mass", `${(totalMass(ship) / 1000).toFixed(2)} t`));

@@ -13,7 +13,9 @@ import {
   elementsToState,
   stateToElements,
   propagate,
+  wrapPi,
 } from "./math/kepler.ts";
+import { j2Rates } from "./orbit.ts";
 import { bodyState } from "./ephemeris.ts";
 import { STAR_BY_ID } from "./stars.ts";
 import { BODY_BY_ID, C } from "./constants.ts";
@@ -106,6 +108,29 @@ export function landedRelativeState(ship: Ship, t: number): State {
   return { r, v: { x: -om * r.y, y: om * r.x, z: 0 } }; // ω × r
 }
 
+/**
+ * A coasting ship's osculating elements at time t, advanced by Kepler AND by the
+ * primary's J2 secular precession (node, apsides, mean anomaly). The J2 rates are
+ * constant, so this stays exact at any time-warp — a LEO orbit's node regresses
+ * ~5°/day, its plane visibly rotating, with no integration. Spherical primaries
+ * (no J2) reduce to plain Kepler.
+ */
+export function coastElements(ship: Ship, t: number): KeplerElements {
+  const mu = primaryMu(ship);
+  const dt = t - (ship.epoch ?? 0);
+  const el = propagate(ship.elements!, mu, dt);
+  const body = BODY_BY_ID.get(ship.primary);
+  // Secular precession applies to BOUND orbits only — a hyperbolic mean anomaly is
+  // not mod-2π, so it must never be wrapped (and a brief flyby barely precesses).
+  if (body?.J2 && el.e < 1) {
+    const r = j2Rates(mu, body.radius, body.J2, el.a, el.e, el.i);
+    el.Omega = wrapPi(el.Omega + r.nodeDot * dt);
+    el.omega = wrapPi(el.omega + r.periDot * dt);
+    el.M = wrapPi(el.M + r.anomalyDot * dt);
+  }
+  return el;
+}
+
 /** State of the ship relative to its primary (the Earth-centred frame, etc.). */
 export function shipRelativeState(ship: Ship, t: number): State {
   if (ship.landed) return landedRelativeState(ship, t);
@@ -118,10 +143,7 @@ export function shipRelativeState(ship: Ship, t: number): State {
     const dt = t - (ship.epoch ?? t);
     return { r: addScaled(ship.r, ship.v, dt), v: ship.v };
   }
-  const mu = primaryMu(ship);
-  const epoch = ship.epoch ?? 0;
-  const el = propagate(ship.elements!, mu, t - epoch);
-  return elementsToState(el, mu);
+  return elementsToState(coastElements(ship, t), primaryMu(ship));
 }
 
 /** Absolute state of the ship in the root (heliocentric) frame. */
@@ -189,8 +211,7 @@ export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
     const dt = t - (ship.epoch ?? t);
     return stateToElements(addScaled(ship.r, ship.v, dt), ship.v, mu);
   }
-  const epoch = ship.epoch ?? 0;
-  return propagate(ship.elements!, mu, t - epoch);
+  return coastElements(ship, t);
 }
 
 // ── Thermal / power / detection ──────────────────────────────────────────────
