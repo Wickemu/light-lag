@@ -15,23 +15,30 @@ windows), patched-conic SOI capture, light-lag command (the thesis), and
 thermal / power / detection ("no stealth in space"). Plus parallel-session
 add-ons: a 30-craft preset catalog and keyboard controls.
 
-**Core-mechanics expansion (latest):** the full Solar System — 37 bodies, adding
-the dwarf planets (Ceres, Pluto, Eris, Haumea, Makemake), major asteroids (Vesta,
-Pallas), and the gas-giant & other moons (Galileans, Titan + six Saturnians, five
-Uranians, Triton, Phobos/Deimos, Charon), each on a JPL-validated ephemeris;
+**Core-mechanics expansion (latest):** the full Solar System — 43 bodies total:
+the 8 planets, the dwarf planets (Ceres, Pluto, Eris, Haumea, Makemake), major
+asteroids (Vesta, Pallas), gas-giant & other moons (Galileans, Titan + six
+Saturnians, five Uranians, Triton, Phobos/Deimos, Charon), and TNOs + comets
+(Sedna, Quaoar, Gonggong, Orcus, 1P/Halley, 2P/Encke), each on a JPL-validated
+ephemeris;
 **landing & takeoff** Δv/propellant budgeting (a calibrated gravity-turn ascent
 through real atmospheres, with aerobraking on descent); and the first
 **interstellar** layer — relativistic propulsion (rapidity rocket equation +
-constant-proper-accel brachistochrone), a ~27-system nearby-star catalog, a
-transit estimator, and an in-sim flyable flip-and-burn with crew/Earth time
-dilation.
+constant-proper-accel brachistochrone), a ~24-system nearby-star catalog
+(~12 ly radius, ecliptic-J2000 frame), a transit estimator, and an in-sim
+flyable flip-and-burn with crew/Earth time dilation.
 
-## Now — core physics hardening (current focus)
+## Completed — core physics hardening
 
 Not a feature phase. With every physics layer in place, verify them *together*:
 cross-subsystem conservation/continuity invariants, end-to-end mission accounting,
-and golden-state determinism. Goal: the physics core is provably correct and
-locked by a permanent integration test suite before more gameplay is layered on.
+and golden-state determinism. Goal (achieved): the physics core is provably correct
+and locked by a permanent integration test suite before more gameplay is layered on.
+
+Delivered: JPL Horizons ephemeris cross-check, conservation/SOI-continuity invariants
+(entry **and** egress), off-nominal flyby + abort handling, golden-state determinism
+hash (`hashWorld`), and an adversarial cross-subsystem audit with all confirmed
+findings fixed. **The physics core is locked.**
 
 ## Coming phases (address soon)
 
@@ -45,8 +52,11 @@ locked by a permanent integration test suite before more gameplay is layered on.
 - v1 resource cap: propellant, structure, life-support mass (~3 resources).
 
 ### Phase 8 — Polish · persistence · determinism-in-CI
-- Versioned **save/load** (`JSON.stringify(WorldState)` + command log + schema version).
-- **Golden-state determinism** test in CI (headless harness hashes final state).
+- Versioned **save/load**: `serializeWorld` / `deserializeWorld` are done
+  (`WorldState` round-trips cleanly); the remaining gap is re-scheduling the
+  `EventQueue` (capture / SOI / message-arrival events) after a restore.
+- **Golden-state determinism** test in CI (`hashWorld` is implemented; wire into a
+  headless CI harness).
 - HUD/legibility pass; onboarding / tutorialized vertical slice; light + dark verified.
 
 ## Next core-mechanics round — candidate priorities (highest-leverage first)
