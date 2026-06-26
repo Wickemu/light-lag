@@ -10,7 +10,7 @@
  */
 
 import * as THREE from "three";
-import { STARS, type StarDef } from "../core/stars.ts";
+import { STARS, type StarDef, starPosition } from "../core/stars.ts";
 import { length } from "../core/math/vec3.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
@@ -23,10 +23,12 @@ export function starShellRadius(distanceLy: number): number {
   return SHELL_BASE + distanceLy * SHELL_PER_LY;
 }
 
-/** Unit direction (Sun→star) in the shared ecliptic-J2000 frame. */
-export function starDirection(star: StarDef): { x: number; y: number; z: number } {
-  const r = length(star.pos);
-  return { x: star.pos.x / r, y: star.pos.y / r, z: star.pos.z / r };
+/** Unit direction (Sun→star) in the shared ecliptic-J2000 frame at time t (s since
+ *  J2000); default J2000. Tracks the star's proper-motion drift. */
+export function starDirection(star: StarDef, t = 0): { x: number; y: number; z: number } {
+  const p = starPosition(star, t);
+  const r = length(p);
+  return { x: p.x / r, y: p.y / r, z: p.z / r };
 }
 
 function makeStarTexture(): THREE.Texture {
@@ -99,7 +101,7 @@ export class StarViews {
 
   /** Position the shell each frame. Stars are fixed in direction from the Sun, so
    *  anchor to the Sun's render position and add the compressed offset. */
-  update(): void {
+  update(t = 0): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const sun = new THREE.Vector3();
@@ -115,7 +117,7 @@ export class StarViews {
         continue;
       }
       vis.marker.visible = true;
-      const dir = starDirection(vis.def);
+      const dir = starDirection(vis.def, t);
       const r = starShellRadius(vis.def.distanceLy);
       vis.marker.position.set(sun.x + dir.x * r, sun.y + dir.y * r, sun.z + dir.z * r);
 

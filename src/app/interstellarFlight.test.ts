@@ -4,7 +4,7 @@ import { Simulation } from "../core/sim.ts";
 import { spawnShip, defaultDesign, dispatchInterstellar } from "./commands.ts";
 import { shipWorldState } from "../core/ships.ts";
 import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { STAR_BY_ID } from "../core/stars.ts";
+import { STAR_BY_ID, starPosition } from "../core/stars.ts";
 import { C, G0, JULIAN_YEAR } from "../core/constants.ts";
 import { distance, length } from "../core/math/vec3.ts";
 
@@ -26,11 +26,30 @@ describe("in-sim interstellar flight", () => {
     const midPos = shipWorldState(ship, sim.world.t).r;
     expect(length(midPos)).toBeGreaterThan(startDist + 0.4 * length(proxima.pos)); // well on its way
 
-    // Arrival: parked exactly at the star, at rest.
+    // Arrival: parked exactly where the star IS at arrival (lead the target), at rest.
     sim.step(tArrive / 2 + 10);
     const arr = shipWorldState(ship, sim.world.t);
-    expect(distance(arr.r, proxima.pos) / length(proxima.pos)).toBeLessThan(1e-6);
+    const aim = starPosition(proxima, tArrive);
+    expect(distance(arr.r, aim) / length(aim)).toBeLessThan(1e-6);
     expect(length(arr.v)).toBeLessThan(1); // decelerated to rest
+  });
+
+  it("leads the target: parks at the star's arrival-time position, not its J2000 spot", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    // Barnard's Star has the sky's largest proper motion (~10.4″/yr) — a clear lead.
+    dispatchInterstellar(sim, id, "barnard", G0);
+    const ship = sim.world.ships.get(id)!;
+    const tArrive = ship.interstellarLeg!.tArrive;
+    const barnard = STAR_BY_ID.get("barnard")!;
+
+    sim.step(tArrive + 10);
+    const arr = shipWorldState(ship, sim.world.t).r;
+    const aim = starPosition(barnard, tArrive);
+    // Parks at the lead-aim point...
+    expect(distance(arr, aim) / length(aim)).toBeLessThan(1e-6);
+    // ...which is a real distance away from the J2000 catalog position.
+    expect(distance(aim, barnard.pos)).toBeGreaterThan(1e12); // star moved »1e12 m
   });
 
   it("ages the crew by the dilated proper time, not the coordinate time", () => {
