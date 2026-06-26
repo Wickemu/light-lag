@@ -18,16 +18,18 @@ import * as THREE from "three";
 import { type WorldState } from "../core/world.ts";
 import { type Simulation } from "../core/sim.ts";
 import { shipForecastPath, type SampledPath } from "../core/trajectory.ts";
+import { planRoute, type PlannedRoute, type RouteArgs } from "../core/route.ts";
 import { bodyState } from "../core/ephemeris.ts";
-import { BODY_BY_ID } from "../core/constants.ts";
+import { BODY_BY_ID, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
-import { RenderPolyline, fillPolylineLocal, overlayPalette } from "./overlayUtil.ts";
+import { RenderPolyline, fillPolylineLocal, fillPolylineWorld, overlayPalette } from "./overlayUtil.ts";
 
 const SEGMENTS = 256;
 const COAST_COLOR = 0x6fe0ff;
 const THRUST_COLOR = 0xff8a30;
 const FORWARD_FLOOR = 0.5; // brightness at the forward horizon (the nucleus is 1)
+const MAX_ROUTE_LEGS = 4; // park-from, two helio legs (assist), park-to
 
 // Linear-space base colours (Color() applies the sRGB→working conversion once),
 // so the per-vertex ramp matches what material.color would render.
@@ -41,6 +43,11 @@ interface ShipTraj {
 export class TrajectoryViews {
   private visuals = new Map<string, ShipTraj>();
   private nextEvent = new Map<string, number>();
+  /** Committed-transfer route lines, one polyline pool per ship. */
+  private routes = new Map<string, RenderPolyline[]>();
+  /** The transfer planner's live preview route (independent of the Route layer). */
+  private preview: RenderPolyline[] = [];
+  private previewRoute: PlannedRoute | null = null;
 
   constructor(
     private sm: SceneManager,
@@ -65,6 +72,46 @@ export class TrajectoryViews {
     this.sm.scene.remove(v.forecast.object);
     v.forecast.dispose();
     this.visuals.delete(id);
+    const pool = this.routes.get(id);
+    if (pool) {
+      for (const pl of pool) {
+        this.sm.scene.remove(pl.object);
+        pl.dispose();
+      }
+      this.routes.delete(id);
+    }
+  }
+
+  /** Grow a polyline pool to at least `n` lines (lazily, reusing the rest). */
+  private ensurePool(pool: RenderPolyline[], n: number): void {
+    while (pool.length < n) {
+      const pl = new RenderPolyline({ capacity: SEGMENTS + 1, color: 0xffffff, opacity: 0.8 });
+      this.sm.scene.add(pl.object);
+      pool.push(pl);
+    }
+  }
+
+  /** Draw a route's legs into a pool; hide any leftover lines. */
+  private drawRoute(pool: RenderPolyline[], route: PlannedRoute, color: number): void {
+    for (let i = 0; i < pool.length; i++) {
+      const leg = route.legs[i];
+      if (leg) {
+        fillPolylineWorld(pool[i]!, leg.points, this.sm);
+        pool[i]!.setColor(color);
+        pool[i]!.setVisible(true);
+      } else {
+        pool[i]!.setVisible(false);
+      }
+    }
+  }
+
+  /**
+   * Set (or clear) the transfer planner's preview route. Solved once here; the
+   * frame loop re-projects it through the floating origin each frame. Shown
+   * whenever set, independent of the Route layer toggle (a transient edit aid).
+   */
+  setPreviewRoute(args: RouteArgs | null): void {
+    this.previewRoute = args ? planRoute({ ...args, segments: SEGMENTS }) : null;
   }
 
   /** Earliest scheduled event per ship — caps each forecast at the moment its
@@ -85,35 +132,73 @@ export class TrajectoryViews {
       if (!world.ships.has(id)) this.dispose(id, v);
     }
 
-    // The forecast rides with the ship marker: hide it when either the dedicated
-    // Path layer or the Ships layer is off.
-    const show = this.vis.layer("trajectory") && this.vis.layer("ships");
-    if (!show) {
-      for (const v of this.visuals.values()) v.forecast.setVisible(false);
-      return;
-    }
+    const pal = overlayPalette(this.sm.theme);
 
-    this.refreshNextEvents();
-    const tailFloor = overlayPalette(this.sm.theme).tailFloor;
-
+    // ── Live forecast arc (rides with the marker: needs Path AND Ships on) ──────
+    const showForecast = this.vis.layer("trajectory") && this.vis.layer("ships");
+    if (showForecast) this.refreshNextEvents();
     for (const ship of world.ships.values()) {
       const v = this.visuals.get(ship.id) ?? this.build(ship.id);
+      if (!showForecast) {
+        v.forecast.setVisible(false);
+        continue;
+      }
       const path = shipForecastPath(ship, t, {
         nextEventT: this.nextEvent.get(ship.id) ?? Infinity,
         segments: SEGMENTS,
       });
-      if (!path) {
-        v.forecast.setVisible(false);
-        continue;
-      }
-      const primary = BODY_BY_ID.get(path.primary);
-      if (!primary) {
+      const primary = path ? BODY_BY_ID.get(path.primary) : undefined;
+      if (!path || !primary) {
         v.forecast.setVisible(false);
         continue;
       }
       fillPolylineLocal(v.forecast, path.points, bodyState(primary, t).r, this.sm);
-      this.writeCometColors(v.forecast, path, ship.mode === "thrust", tailFloor);
+      this.writeCometColors(v.forecast, path, ship.mode === "thrust", pal.tailFloor);
       v.forecast.setVisible(true);
+    }
+
+    // ── Committed planned routes (Route layer): the whole path of a transfer that
+    //    has been committed but not yet departed (during transit the forecast arc
+    //    already shows the swept path). ───────────────────────────────────────────
+    const showRoute = this.vis.layer("route");
+    for (const ship of world.ships.values()) {
+      const tr = ship.transfer;
+      const wants = showRoute && !!tr && !tr.departed && !tr.arrived;
+      let pool = this.routes.get(ship.id);
+      if (!wants) {
+        if (pool) for (const pl of pool) pl.setVisible(false);
+        continue;
+      }
+      const from = BODY_BY_ID.get(ship.primary === "sun" ? "earth" : ship.primary);
+      const target = BODY_BY_ID.get(tr!.targetId);
+      const route = planRoute({
+        fromId: from?.id ?? "earth",
+        targetId: tr!.targetId,
+        tDepart: tr!.tDepart,
+        tArrive: tr!.tArrive,
+        rParkFrom: from ? from.radius + DEFAULT_CAPTURE_ALT : undefined,
+        rParkTo: target ? target.radius + DEFAULT_CAPTURE_ALT : undefined,
+        flyby: tr!.flyby ? { bodyId: tr!.flyby.bodyId, tFlyby: tr!.flyby.tFlyby } : undefined,
+        segments: SEGMENTS,
+      });
+      if (!route.ok) {
+        if (pool) for (const pl of pool) pl.setVisible(false);
+        continue;
+      }
+      if (!pool) {
+        pool = [];
+        this.routes.set(ship.id, pool);
+      }
+      this.ensurePool(pool, Math.min(MAX_ROUTE_LEGS, route.legs.length));
+      this.drawRoute(pool, route, pal.route);
+    }
+
+    // ── Transfer-planner preview (independent of the Route toggle) ──────────────
+    if (this.previewRoute && this.previewRoute.ok) {
+      this.ensurePool(this.preview, Math.min(MAX_ROUTE_LEGS, this.previewRoute.legs.length));
+      this.drawRoute(this.preview, this.previewRoute, pal.preview);
+    } else {
+      for (const pl of this.preview) pl.setVisible(false);
     }
   }
 

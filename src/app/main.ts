@@ -42,7 +42,7 @@ const trajectoryViews = new TrajectoryViews(sm, sim, visibility);
 const starViews = new StarViews(sm, uiRoot, visibility);
 const commsViews = new CommsViews(sm, visibility);
 const hud = new Hud(uiRoot, sim, sm, visibility);
-const transferPanel = new TransferPanel(uiRoot, sim, sm);
+const transferPanel = new TransferPanel(uiRoot, sim, sm, trajectoryViews);
 const interstellarPanel = new InterstellarPanel(uiRoot, sim, sm);
 const shipPanel = new ShipPanel(
   uiRoot, sim, sm,
