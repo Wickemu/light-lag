@@ -160,6 +160,122 @@ export function variableIspBurn(
   return { ve, isp: ve / G0, thrust, propellant, mdot, time };
 }
 
+/** Wet mass of one stage, including any strap-on boosters (count-aggregated). */
+export function stageWetMass(stage: Stage): number {
+  let m = stage.dryMass + stage.propMass;
+  if (stage.boosters) {
+    for (const b of stage.boosters) {
+      const n = b.count ?? 1;
+      m += (b.dryMass + b.propMass) * n;
+    }
+  }
+  return m;
+}
+
+/** Liftoff thrust of one stage: its engine plus every booster igniting with it. */
+export function stageLiftoffThrust(stage: Stage): number {
+  let f = stage.thrust;
+  if (stage.boosters) {
+    for (const b of stage.boosters) f += b.thrust * (b.count ?? 1);
+  }
+  return f;
+}
+
+/**
+ * One parallel sub-phase of a (possibly boostered) stage's burn: a fixed set of
+ * reservoirs burning together at a constant effective exhaust velocity, ending
+ * when the soonest reservoir empties and its dry mass is jettisoned.
+ */
+interface StagePhase {
+  veEff: number; // effective exhaust velocity F_total/ṁ_total while this set burns
+  propBurned: number; // total propellant consumed in this phase (kg)
+  dryDropped: number; // dry mass jettisoned at the end of this phase (kg)
+}
+
+/**
+ * Decompose a stage into its parallel burn phases. A serial stage (no boosters)
+ * is a single phase — burn all propellant at vₑ, drop the dry mass — identical to
+ * the old per-stage step. A boostered stage burns core + boosters concurrently:
+ * each phase uses the thrust-weighted vₑ_eff = F/ṁ (NOT an Isp average) of the
+ * live reservoirs, and ends when the shortest-burning one empties and drops. The
+ * core's dry mass is held until the stage fully ends (the core structure carries
+ * the boosters); a booster that outlasts the core keeps pushing the dead core
+ * until it too empties.
+ */
+function stagePhases(stage: Stage): StagePhase[] {
+  const veCore = exhaustVelocity(stage.isp);
+  if (!stage.boosters || stage.boosters.length === 0) {
+    // Serial stage: one phase. Arithmetic matches the legacy per-stage step
+    // exactly, so existing stacks (and the golden scenario) are unchanged.
+    return [{ veEff: veCore, propBurned: stage.propMass, dryDropped: stage.dryMass }];
+  }
+  interface Res {
+    prop: number;
+    mdot: number;
+    thrust: number;
+    dry: number;
+    isCore: boolean;
+  }
+  const live: Res[] = [
+    { prop: stage.propMass, mdot: massFlow(stage.thrust, veCore), thrust: stage.thrust, dry: stage.dryMass, isCore: true },
+  ];
+  for (const b of stage.boosters) {
+    const n = b.count ?? 1;
+    const veB = exhaustVelocity(b.isp);
+    live.push({ prop: b.propMass * n, mdot: massFlow(b.thrust * n, veB), thrust: b.thrust * n, dry: b.dryMass * n, isCore: false });
+  }
+  const phases: StagePhase[] = [];
+  let heldCoreDry = 0; // core dry deferred while boosters still burn
+  for (;;) {
+    const burning = live.filter((r) => r.prop > 1e-9 && r.mdot > 0);
+    if (burning.length === 0) break;
+    const F = burning.reduce((s, r) => s + r.thrust, 0);
+    const mdot = burning.reduce((s, r) => s + r.mdot, 0);
+    const veEff = mdot > 0 ? F / mdot : veCore;
+    const tMin = Math.min(...burning.map((r) => r.prop / r.mdot));
+    const propBurned = mdot * tMin;
+    const emptied: Res[] = [];
+    for (const r of burning) {
+      r.prop = Math.max(r.prop - r.mdot * tMin, 0);
+      if (r.prop <= 1e-9) emptied.push(r);
+    }
+    let dryDropped = 0;
+    for (const r of emptied) {
+      r.prop = 0;
+      if (r.isCore && live.some((x) => !x.isCore && x.prop > 1e-9)) {
+        heldCoreDry = r.dry; // core spent but boosters live: carry the structure
+        r.mdot = 0;
+      } else {
+        dryDropped += r.dry;
+      }
+    }
+    if (!live.some((r) => r.prop > 1e-9) && heldCoreDry > 0) {
+      dryDropped += heldCoreDry; // stage fully done: release the held core
+      heldCoreDry = 0;
+    }
+    phases.push({ veEff, propBurned, dryDropped });
+  }
+  return phases;
+}
+
+/**
+ * Δv a single stage delivers starting from total mass `m0` (payload + this stage
+ * + everything above), and the mass remaining after the stage and all its
+ * boosters are spent and dropped. The one source of truth for a stage's Δv,
+ * shared by `deltaVBudget` and the impulsive consumption walk so the affordability
+ * check and the actual burn can never disagree.
+ */
+export function stageDeltaV(stage: Stage, m0: number): { dv: number; finalMass: number } {
+  let m = m0;
+  let dv = 0;
+  for (const ph of stagePhases(stage)) {
+    const mBurnEnd = m - ph.propBurned;
+    dv += mBurnEnd > 0 ? ph.veEff * Math.log(m / mBurnEnd) : 0;
+    m = mBurnEnd - ph.dryDropped;
+  }
+  return { dv, finalMass: m };
+}
+
 export interface DvBudget {
   total: number; // m/s, sum over all stages
   perStage: number[]; // m/s per stage, in firing order
@@ -170,30 +286,28 @@ export interface DvBudget {
 /**
  * Total Δv of a staged stack with `payload` (non-propulsive mass) on top and
  * stages firing in array order (index 0 first). Each stage lifts everything
- * above it; spent stages are dropped.
+ * above it; spent stages (and their boosters) are dropped.
  */
 export function deltaVBudget(stages: Stage[], payload: number): DvBudget {
-  let current = payload + stages.reduce((s, st) => s + st.dryMass + st.propMass, 0);
+  let current = payload + stages.reduce((s, st) => s + stageWetMass(st), 0);
   const wetMass = current;
   const perStage: number[] = [];
   let total = 0;
   for (const st of stages) {
-    const ve = exhaustVelocity(st.isp);
-    const m0 = current;
-    const mf = current - st.propMass;
-    const dv = mf > 0 ? ve * Math.log(m0 / mf) : 0;
+    const { dv, finalMass } = stageDeltaV(st, current);
     perStage.push(dv);
     total += dv;
-    current = mf - st.dryMass; // drop the spent stage
+    current = finalMass; // drop the spent stage (and its boosters)
   }
   return { total, perStage, wetMass, finalMass: current };
 }
 
-/** Initial thrust-to-weight (against g₀) of the first stage of a fuelled stack. */
+/** Initial thrust-to-weight (against g₀) of the first stage of a fuelled stack,
+ *  counting every booster that ignites with it. */
 export function initialTWR(stages: Stage[], payload: number): number {
   if (stages.length === 0) return 0;
-  const wet = payload + stages.reduce((s, st) => s + st.dryMass + st.propMass, 0);
-  return stages[0]!.thrust / (wet * G0);
+  const wet = payload + stages.reduce((s, st) => s + stageWetMass(st), 0);
+  return stageLiftoffThrust(stages[0]!) / (wet * G0);
 }
 
 // ── Relativistic propulsion ──────────────────────────────────────────────────
