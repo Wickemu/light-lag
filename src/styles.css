@@ -727,6 +727,58 @@ button:disabled {
   will-change: transform;
 }
 
+/* Interstellar map: brighter than the in-system sky labels, since the stars are
+   the subject of this view rather than a backdrop. */
+.interstellar-label-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.interstellar-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate(-9999px, -9999px);
+  margin: 7px 0 0 7px;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  color: #d4ddff;
+  opacity: 0.9;
+  text-shadow: var(--label-shadow);
+  white-space: nowrap;
+  will-change: transform;
+}
+.interstellar-label.sol {
+  color: #ffe9a8;
+  font-weight: 700;
+  opacity: 1;
+}
+.interstellar-label.ship {
+  color: #8fe6ff;
+}
+
+/* Two-state map switch (in-system orrery ⇄ interstellar neighbourhood). */
+.view-switch {
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+}
+.view-switch button {
+  pointer-events: auto;
+  font-size: 11px;
+  letter-spacing: 1px;
+  padding: 3px 10px;
+  text-transform: uppercase;
+}
+.view-switch button.active {
+  color: var(--active);
+  border-color: var(--active);
+}
+
 /* ── Transfer planner (centred porkchop) ────────────────────────────────── */
 .transfer-panel,
 .interstellar-panel {

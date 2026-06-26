@@ -162,14 +162,21 @@ defensible SNR-vs-range detection curve, comet outgassing) live in the backlog e
   plus TNOs and comets) on the fixed-J2000-conic (`FixedHelioRow`) + `MoonRow`
   paths, Horizons-checked. Still to do: irregular-moon precession, more small
   bodies, comet outgassing/non-gravitational forces.
-- **Interstellar sky / camera** (presentation) — the procedural backdrop starfield
-  was removed; the nearby **real** star systems are now the only sky, drawn in their
-  true direction from the Sun but on a *compressed* shell just beyond Neptune
-  (documented rendering choice — distances/light-times in the engine stay exact).
-  Still to do: a **to-scale interstellar camera mode** (true ~1e17 m placement with a
-  frustum/LOD scheme that spans in-system to interstellar without z-fighting), and an
-  optional faint deep-sky backdrop sourced from a **real** catalog (e.g. Hipparcos/Gaia
-  bright stars) — explicitly *not* a re-introduced procedural/fake starfield.
+- **Interstellar sky / camera** (presentation) — DONE: two views split the
+  unbridgeable scale gap (a 1-AU planet and a 4-ly star differ ~1e6× in distance,
+  so no single frame frames both). The **in-system** view paints the real nearby
+  stars on an *unzoomable camera-locked sky* in their true Sun→star direction —
+  a directionally-honest backdrop that can't crowd the planets or parallax against
+  the orrery (replaces the old compressed shell just past Neptune). The **interstellar**
+  view (`render/interstellarView.ts`, toggled with the HUD switch / `M`) drops the
+  orrery and places the ~24 systems at their *real relative distances* — to-scale is
+  easy here because the range is only 4–12 ly (~3×), nothing like the in-system gap —
+  with Sol at the origin, proper-motion drift, and any ship (or object) on an
+  interstellar leg drawn at its true position along the way. Still to do: click-to-focus
+  a star in the interstellar view; reconcile the in-system ship in-transit streak (still
+  on the legacy compressed shell) into the interstellar view; an optional faint deep-sky
+  backdrop sourced from a **real** catalog (e.g. Hipparcos/Gaia bright stars) — explicitly
+  *not* a re-introduced procedural/fake starfield.
 - **Stellar proper motion** — DONE: the nearby-star catalog carries real Gaia /
   Hipparcos proper motion (μα\*, μδ in mas/yr) and radial velocity (km/s); each star
   derives an ecliptic-J2000 **space-velocity vector** at load and drifts linearly with

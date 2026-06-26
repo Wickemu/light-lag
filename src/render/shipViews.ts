@@ -102,8 +102,9 @@ export class ShipViews {
       if (!world.ships.has(id)) this.dispose(id, vis);
     }
 
-    // Ships layer hidden: park every visual and skip the work.
-    if (!this.vis.layer("ships")) {
+    // Ships layer hidden, or the interstellar view is active (it tracks ships in
+    // transit at its own scale): park every visual and skip the work.
+    if (this.sm.viewMode !== "system" || !this.vis.layer("ships")) {
       for (const vis of this.visuals.values()) {
         vis.marker.visible = false;
         vis.orbit.visible = false;
