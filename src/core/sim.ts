@@ -28,7 +28,7 @@ import {
   activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
   interstellarProperTime, spiralElements,
 } from "./ships.ts";
-import { exhaustVelocity, thrustAt, lorentzFactor, type Stage, type Booster } from "./propulsion.ts";
+import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
 import { stateToElements, meanMotion } from "./math/kepler.ts";
 import { bodyState, bodyElements } from "./ephemeris.ts";
@@ -373,40 +373,45 @@ export class Simulation {
     interface Burner { idx: number; thrust: number; ve: number; mdot: number; prop: number; tEmpty: number; }
     const primaryPos = bodyState(primaryBody, t0 + elapsed).r;
     const dist = length(add(primaryPos, r0));
+    // `carried` = everything NOT a burning reservoir's propellant: payload + core
+    // dry (held while the stage is active) + every booster group's dry + all upper
+    // stages (their own dry + propellant + any of their boosters). A reservoir with
+    // vₑ ≤ 0 (Isp ≤ 0) or thrust ≤ 0 is INERT — its propellant is carried as ballast
+    // rather than producing Infinity/NaN mass flow (defends degenerate designs).
     const burners: Burner[] = [];
-    if (stage.propMass > 1e-9) {
-      const veC = exhaustVelocity(stage.isp);
-      const fC = thrustAt(stage, dist); // chemical core: no-op; electric core: derated
+    let carried = ship.payloadMass + stage.dryMass;
+    const veC = exhaustVelocity(stage.isp);
+    const fC = thrustAt(stage, dist); // chemical core: no-op; electric core: derated
+    if (stage.propMass > 1e-9 && veC > 0 && fC > 0) {
       const mdotC = fC / veC;
       burners.push({ idx: -1, thrust: fC, ve: veC, mdot: mdotC, prop: stage.propMass, tEmpty: stage.propMass / mdotC });
+    } else {
+      carried += stage.propMass; // spent/inert core propellant rides as ballast
     }
     boosters.forEach((b, i) => {
-      const n = b.count ?? 1;
+      const n = boosterCount(b);
+      carried += b.dryMass * n; // booster structure always carried
       const prop = b.propMass * n;
-      if (prop > 1e-9) {
-        const veB = exhaustVelocity(b.isp);
-        const fB = b.thrust * n;
+      const veB = exhaustVelocity(b.isp);
+      const fB = b.thrust * n;
+      if (prop > 1e-9 && veB > 0 && fB > 0) {
         const mdotB = fB / veB;
         burners.push({ idx: i, thrust: fB, ve: veB, mdot: mdotB, prop, tEmpty: prop / mdotB });
+      } else {
+        carried += prop; // inert booster propellant
       }
     });
+    for (let i = ship.activeStage + 1; i < ship.stages.length; i++) {
+      const up = ship.stages[i]!;
+      carried += up.dryMass + up.propMass;
+      if (up.boosters) for (const ub of up.boosters) carried += (ub.dryMass + ub.propMass) * boosterCount(ub);
+    }
     if (burners.length === 0) {
       // Stage carries no live propellant: advance (mirrors the serial out-of-fuel path).
       stage.propMass = 0;
       ship.activeStage += 1;
       if (!activeStage(ship)) { this.endBurn(ship, t0 + elapsed); return { elapsed, ended: true }; }
       return { elapsed, ended: false };
-    }
-
-    // `carried` = everything NOT a burning reservoir's propellant: payload + core
-    // dry (held while the stage is active) + every live booster group's dry + all
-    // upper stages (their own dry + propellant + any of their boosters).
-    let carried = ship.payloadMass + stage.dryMass;
-    for (const b of boosters) carried += b.dryMass * (b.count ?? 1);
-    for (let i = ship.activeStage + 1; i < ship.stages.length; i++) {
-      const up = ship.stages[i]!;
-      carried += up.dryMass + up.propMass;
-      if (up.boosters) for (const ub of up.boosters) carried += (ub.dryMass + ub.propMass) * (ub.count ?? 1);
     }
 
     const fTotal = burners.reduce((s, br) => s + br.thrust, 0);
@@ -480,7 +485,7 @@ export class Simulation {
     // Persist integrated propellant back to the reservoirs.
     for (const br of burners) {
       if (br.idx === -1) stage.propMass = br.prop;
-      else { const bb = boosters[br.idx]!; bb.propMass = br.prop / (bb.count ?? 1); }
+      else { const bb = boosters[br.idx]!; bb.propMass = br.prop / boosterCount(bb); }
     }
 
     if (event === "cut") {
@@ -499,7 +504,7 @@ export class Simulation {
       }
       // Drop spent booster groups (splice high→low so indices stay valid).
       for (let i = boosters.length - 1; i >= 0; i--) {
-        if (boosters[i]!.propMass * (boosters[i]!.count ?? 1) <= 1e-9) boosters.splice(i, 1);
+        if (boosters[i]!.propMass * boosterCount(boosters[i]!) <= 1e-9) boosters.splice(i, 1);
       }
       // Whole stage spent (core dry AND no boosters left) → advance to the next.
       if (stage.propMass <= 1e-9 && boosters.length === 0) {

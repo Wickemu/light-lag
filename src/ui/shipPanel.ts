@@ -273,8 +273,9 @@ export class ShipPanel {
       row.appendChild(el("span", "stage-name", `${i + 1}`));
       compactField(row, "dry t", s.dryMass / 1000, (v) => { s.dryMass = v * 1000; this.markCustom(); this.refreshBudget(); });
       compactField(row, "prop t", s.propMass / 1000, (v) => { s.propMass = v * 1000; this.markCustom(); this.refreshBudget(); });
-      compactField(row, "Isp s", s.isp, (v) => { s.isp = v; this.markCustom(); this.refreshBudget(); });
-      compactField(row, "kN", s.thrust / 1000, (v) => { s.thrust = v * 1000; this.markCustom(); this.refreshBudget(); });
+      // Isp and thrust must stay positive — vₑ = 0 / thrust = 0 would divide by zero.
+      compactField(row, "Isp s", s.isp, (v) => { s.isp = Math.max(v, 1); this.markCustom(); this.refreshBudget(); });
+      compactField(row, "kN", s.thrust / 1000, (v) => { s.thrust = Math.max(v * 1000, 1); this.markCustom(); this.refreshBudget(); });
       if (this.design.stages.length > 1) {
         const rm = button("✕", () => {
           this.design.stages.splice(i, 1);
@@ -295,8 +296,8 @@ export class ShipPanel {
         compactField(brow, "×N", bst.count ?? 1, (v) => { bst.count = Math.max(1, Math.round(v)); this.markCustom(); this.refreshBudget(); });
         compactField(brow, "dry t", bst.dryMass / 1000, (v) => { bst.dryMass = v * 1000; this.markCustom(); this.refreshBudget(); });
         compactField(brow, "prop t", bst.propMass / 1000, (v) => { bst.propMass = v * 1000; this.markCustom(); this.refreshBudget(); });
-        compactField(brow, "Isp s", bst.isp, (v) => { bst.isp = v; this.markCustom(); this.refreshBudget(); });
-        compactField(brow, "kN", bst.thrust / 1000, (v) => { bst.thrust = v * 1000; this.markCustom(); this.refreshBudget(); });
+        compactField(brow, "Isp s", bst.isp, (v) => { bst.isp = Math.max(v, 1); this.markCustom(); this.refreshBudget(); });
+        compactField(brow, "kN", bst.thrust / 1000, (v) => { bst.thrust = Math.max(v * 1000, 1); this.markCustom(); this.refreshBudget(); });
         const rm = button("✕", () => {
           s.boosters!.splice(j, 1);
           if (s.boosters!.length === 0) delete s.boosters;
@@ -316,7 +317,13 @@ export class ShipPanel {
         this.refreshBudget();
       });
       addB.className = "add-booster";
-      addB.title = "Add strap-on boosters that ignite with this stage and burn in parallel.";
+      // Electric (power-limited) stages can't carry chemical strap-ons honestly:
+      // the budget would use rated thrust while the sim derates it, so disallow it.
+      if (s.electric) {
+        setDisabled(addB, true, "Electric stages can't carry strap-on boosters.");
+      } else {
+        addB.title = "Add strap-on boosters that ignite with this stage and burn in parallel.";
+      }
       block.appendChild(addB);
 
       this.stagesEl.appendChild(block);

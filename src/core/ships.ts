@@ -6,7 +6,7 @@
  */
 
 import { type Ship, type InterstellarLeg } from "./world.ts";
-import { type Stage, deltaVBudget, exhaustVelocity, stageWetMass, consumeStageDv } from "./propulsion.ts";
+import { type Stage, deltaVBudget, exhaustVelocity, stageWetMass, consumeStageDv, boosterCount } from "./propulsion.ts";
 import {
   type State,
   type KeplerElements,
@@ -194,12 +194,15 @@ export function applyImpulsiveDv(ship: Ship, dv: number): boolean {
   let remaining = dv;
   while (remaining > 1e-9) {
     const stage = activeStage(ship);
-    if (!stage) return false;
+    // The affordability gate above already passed (within +1e-6), so running out of
+    // stages here means a sub-tolerance rounding remainder, not an unaffordable
+    // burn — stop cleanly (return true) rather than NACK after draining the tanks.
+    if (!stage) break;
     // Consume from this stage (core + any live boosters) through the same
     // parallel-phase model the affordability check used, so they cannot disagree.
     remaining -= consumeStageDv(stage, totalMass(ship), remaining).dvDelivered;
     // Drop any booster group emptied by this burn.
-    if (stage.boosters) stage.boosters = stage.boosters.filter((b) => b.propMass * (b.count ?? 1) > 1e-9);
+    if (stage.boosters) stage.boosters = stage.boosters.filter((b) => b.propMass * boosterCount(b) > 1e-9);
     // Advance only when the whole stage (core AND all boosters) is spent; a
     // partial burn leaves it active with `remaining` already ~0.
     if (stage.propMass <= 1e-9 && (stage.boosters?.length ?? 0) === 0) ship.activeStage += 1;

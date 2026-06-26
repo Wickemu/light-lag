@@ -625,4 +625,37 @@ describe("parallel staging (in-sim)", () => {
     };
     expect(run(10)).toBeCloseTo(run(1), 3);
   });
+
+  it("an isp=0 booster does not hang the in-sim burn; the ship coasts with finite state", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, {
+      name: "Degenerate", payloadMass: 3000, altitudeKm: 400, inclinationDeg: 28.5,
+      stages: [{
+        name: "Core", dryMass: 5000, propMass: 50000, isp: 300, thrust: 1.2e6,
+        boosters: [{ name: "bad", dryMass: 2000, propMass: 20000, isp: 0, thrust: 5e5 }],
+      }],
+    });
+    const ship = sim.world.ships.get(id)!;
+    sendBurn(sim, id, 1000, "prograde");
+    flyUntilCoast(sim, id); // throws if the burn never completes (the hang we fixed)
+    expect(ship.mode).toBe("coast");
+    expect(Number.isFinite(ship.elements!.a)).toBe(true);
+  });
+
+  it("applyImpulsiveDv delivers a just-affordable boostered burn instead of draining then NACKing", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, {
+      name: "Edge", payloadMass: 5000, altitudeKm: 400, inclinationDeg: 28.5,
+      stages: [{
+        name: "Core", dryMass: 10000, propMass: 100000, isp: 400, thrust: 1e6,
+        boosters: [{ name: "B", dryMass: 3000, propMass: 30000, isp: 250, thrust: 1e6 }],
+      }],
+    });
+    const ship = sim.world.ships.get(id)!;
+    const full = dvRemaining(ship);
+    // dv = the whole budget plus a sub-tolerance sliver: must succeed (within the
+    // +1e-6 affordability gate), not return false after emptying the tanks.
+    expect(applyImpulsiveDv(ship, full + 5e-7)).toBe(true);
+    expect(dvRemaining(ship)).toBeLessThan(1);
+  });
 });

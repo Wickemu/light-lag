@@ -8,6 +8,7 @@ import {
   initialTWR,
   stageDeltaV,
   stageLiftoffThrust,
+  stageWetMass,
   consumeStageDv,
   electricThrust,
   jetPower,
@@ -194,6 +195,78 @@ describe("impulsive stage consumption (consumeStageDv)", () => {
     const r = consumeStageDv(s, 80000, want);
     expect(r.dvDelivered).toBeCloseTo(want, 9);
     expect(40000 - s.propMass).toBeCloseTo(80000 * (1 - Math.exp(-want / ve)), 6);
+  });
+});
+
+// Regression guards for the confirmed adversarial-review findings.
+describe("parallel staging — review regressions", () => {
+  const clone = (s: Stage): Stage => ({ ...s, boosters: s.boosters?.map((b) => ({ ...b })) });
+
+  it("a pre-emptied core with a live booster still drops its dry mass (held-core-dry re-entry)", () => {
+    // Enter the decomposition directly in the booster-outlasts-core state (core
+    // prop 0, booster live) — as dvRemaining/a restored save would. The core dry
+    // must drop, not linger in finalMass. (Findings #1/#2.)
+    const held: Stage = {
+      name: "core", dryMass: 8000, propMass: 0, isp: 320, thrust: 1e6,
+      boosters: [{ name: "long", dryMass: 4000, propMass: 80000, isp: 290, thrust: 7e5 }],
+    };
+    const payload = 3000;
+    const m0 = payload + stageWetMass(held);
+    expect(stageDeltaV(held, m0).finalMass).toBeCloseTo(payload, 6);
+  });
+
+  it("the Δv budget telescopes across a partial booster-outlasts-core burn", () => {
+    // delivered + remaining == full, even when the burn stops in the held state.
+    const fresh = (): Stage => ({
+      name: "core", dryMass: 8000, propMass: 20000, isp: 300, thrust: 1e6,
+      boosters: [{ name: "long", dryMass: 4000, propMass: 120000, isp: 300, thrust: 8e5 }],
+    });
+    const payload = 3000;
+    const m0 = payload + stageWetMass(fresh());
+    const full = stageDeltaV(fresh(), m0).dv;
+    const want = full * 0.85; // past the core-empty point (into the held state)
+    const s = clone(fresh());
+    const cost = consumeStageDv(s, m0, want);
+    expect(cost.dvDelivered).toBeCloseTo(want, 6);
+    expect(s.propMass).toBeLessThan(1); // core drained
+    expect(s.boosters![0]!.propMass).toBeGreaterThan(0); // booster still live
+    expect(stageDeltaV(s, cost.finalMass).dv).toBeCloseTo(full - want, 3); // no Δv lost
+  });
+
+  it("an isp=0 booster does not poison the budget with NaN/Infinity", () => {
+    const s: Stage = {
+      name: "c", dryMass: 5000, propMass: 50000, isp: 300, thrust: 1e6,
+      boosters: [{ name: "bad", dryMass: 2000, propMass: 20000, isp: 0, thrust: 5e5 }],
+    };
+    const b = deltaVBudget([s], 3000);
+    expect(Number.isFinite(b.total)).toBe(true);
+    expect(Number.isFinite(b.finalMass)).toBe(true);
+    expect(b.total).toBeGreaterThan(0);
+  });
+
+  it("non-positive / fractional booster count clamps to a positive integer", () => {
+    const mk = (count: number): Stage => ({
+      name: "c", dryMass: 5000, propMass: 50000, isp: 300, thrust: 1e6,
+      boosters: [{ name: "b", dryMass: 2000, propMass: 20000, isp: 280, thrust: 5e5, count }],
+    });
+    for (const c of [-1, 0, 0.5]) {
+      const b = deltaVBudget([mk(c)], 3000);
+      expect(b.finalMass).toBeGreaterThan(0); // never negative mass
+      expect(Number.isFinite(b.total)).toBe(true);
+    }
+    expect(deltaVBudget([mk(0)], 3000).total).toBeCloseTo(deltaVBudget([mk(1)], 3000).total, 9);
+  });
+
+  it("a thrust=0 booster is finite dead weight (carried, never drained, core dry not stranded)", () => {
+    const s: Stage = {
+      name: "c", dryMass: 5000, propMass: 50000, isp: 300, thrust: 1e6,
+      boosters: [{ name: "dead", dryMass: 2000, propMass: 20000, isp: 280, thrust: 0 }],
+    };
+    const b = deltaVBudget([s], 3000);
+    expect(Number.isFinite(b.total)).toBe(true);
+    expect(b.total).toBeGreaterThan(0);
+    // Core dry drops; only the inert 22 t booster remains as ballast on the payload.
+    expect(b.finalMass).toBeCloseTo(3000 + 22000, 6);
   });
 });
 
