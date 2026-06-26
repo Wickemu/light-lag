@@ -28,7 +28,8 @@ import {
   activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
   interstellarProperTime, spiralElements,
 } from "./ships.ts";
-import { exhaustVelocity, thrustAt } from "./propulsion.ts";
+import { exhaustVelocity, thrustAt, lorentzFactor } from "./propulsion.ts";
+import { properToCoordinateAccel } from "./math/relativity.ts";
 import { stateToElements, meanMotion } from "./math/kepler.ts";
 import { bodyState, bodyElements } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
@@ -172,6 +173,16 @@ export class Simulation {
    * Dynamics are integrated in the primary-centred frame, which is treated as
    * inertial (a patched-conic approximation: the omitted solar tidal term across
    * LEO is ~1e-7 of Earth's central gravity, far below relevance for a burn).
+   *
+   * The integration is special-relativistic: thrust and gravity are flat-space
+   * proper-frame forces, and `properToCoordinateAccel` converts the specific force
+   * to the coordinate 3-acceleration so velocity composes as a rapidity (capped
+   * below c) rather than linearly. Propellant burns at a constant PROPER-time rate
+   * (the engine operates in its own frame), and `burn.dvDone`/`dvTarget` are an
+   * accumulated/target RAPIDITY (`ve·ln(m₀/m_f)` = what the rocket equation
+   * delivers). All of this reduces to the Newtonian integrator to machine
+   * precision at the sub-relativistic speeds every preset ship flies; the
+   * relativistic regime is a torchship doing a powered in-system burn.
    */
   private advanceThrustShip(ship: Ship, t0: number, dt: number): void {
     let elapsed = 0;
@@ -203,19 +214,26 @@ export class Simulation {
       }
       const m0 = carried + stage.propMass;
 
-      const dvRem = burn.dvTarget - burn.dvDone;
+      const dvRem = burn.dvTarget - burn.dvDone; // rapidity remaining
       if (dvRem <= 1e-9) {
         this.endBurn(ship, t0 + elapsed);
         return;
       }
 
-      // Analytic event times within the remaining interval (ṁ is constant).
-      const tauCut = (m0 / mdot) * (1 - Math.exp(-dvRem / ve)); // reach target Δv
-      const tauEmpty = stage.propMass / mdot; // tank runs dry
-      let seg = dt - elapsed;
+      // The engine burns propellant and gains rapidity at a constant PROPER-time
+      // rate, so the analytic event times below are solved in proper time τ (the
+      // exact classical formulas, now in τ) and converted to coordinate time by the
+      // segment-start Lorentz factor. γ_seg is held constant across the ≤2 s segment
+      // — β changes negligibly over 2 s even at extreme proper acceleration. At
+      // v ≪ c, γ_seg = 1 and τ = coordinate time, recovering the classical split.
+      const gammaSeg = lorentzFactor(length(ship.v));
+      const tauCut = (m0 / mdot) * (1 - Math.exp(-dvRem / ve)); // proper time to target rapidity
+      const tauEmpty = stage.propMass / mdot; // proper time to empty tank
+      let segTau = (dt - elapsed) / gammaSeg; // available proper time this interval
       let event: "none" | "cut" | "empty" = "none";
-      if (tauCut < seg) { seg = tauCut; event = "cut"; }
-      if (tauEmpty < seg) { seg = tauEmpty; event = "empty"; }
+      if (tauCut < segTau) { segTau = tauCut; event = "cut"; }
+      if (tauEmpty < segTau) { segTau = tauEmpty; event = "empty"; }
+      const seg = segTau * gammaSeg; // coordinate-time length of the segment
 
       // Integrate r,v over the smooth segment (thrust always on — no toggling).
       const dirFor = (r: Vec3, v: Vec3): Vec3 => {
@@ -238,12 +256,23 @@ export class Simulation {
         const gfac = -mu / (rmag * rmag * rmag);
         const dir = dirFor(r, v);
         const at = thrust / m;
+        // Proper-frame specific force = thrust + gravity, both as flat-space forces
+        // in the inertial primary frame; convert to the coordinate 3-acceleration
+        // with SR (reduces to gravity + thrust/m at v ≪ c, caps |v| below c).
+        const aProper: Vec3 = {
+          x: dir.x * at + r.x * gfac,
+          y: dir.y * at + r.y * gfac,
+          z: dir.z * at + r.z * gfac,
+        };
+        const a = properToCoordinateAccel(v, aProper);
+        // Propellant burns at a constant proper-time rate ṁ; in coordinate time that
+        // is ṁ/γ. This rate IS the propellant ledger — the integrated y[6] below is
+        // read back as the consumed mass — and is exactly −ṁ at v ≪ c.
+        const gv = lorentzFactor(Math.hypot(v.x, v.y, v.z));
         return [
           v.x, v.y, v.z,
-          r.x * gfac + dir.x * at,
-          r.y * gfac + dir.y * at,
-          r.z * gfac + dir.z * at,
-          -mdot,
+          a.x, a.y, a.z,
+          -mdot / gv,
         ];
       };
 
@@ -252,9 +281,17 @@ export class Simulation {
       ship.r = { x: y1[0]!, y: y1[1]!, z: y1[2]! };
       ship.v = { x: y1[3]!, y: y1[4]!, z: y1[5]! };
 
-      // Rocket-equation quantities advanced analytically so events land exactly.
-      stage.propMass = Math.max(stage.propMass - mdot * seg, 0);
-      burn.dvDone += ve * Math.log(m0 / (m0 - mdot * seg));
+      // Propellant comes from the RK4 itself (rate −ṁ/γ): the consumed mass is the
+      // integral ∫ṁ/γ dt = ṁ·Δτ_true, exact to truncation and — crucially —
+      // split-invariant (an integral does not care how the interval is chunked), so
+      // the rapidity ledger telescopes and the burn stays chunk-invariant. Delivered
+      // rapidity over the segment is ve·ln(m_before/m_after) (dφ = −ve·dm/m), which
+      // is the engine's frame-invariant Δv currency. At v ≪ c (γ = 1) the rate is
+      // −ṁ, the integral is exact and linear, and both lines reduce to the classical
+      // Tsiolkovsky bookkeeping to machine precision.
+      const mAfter = carried + Math.max(y1[6]!, 0);
+      stage.propMass = Math.max(y1[6]!, 0);
+      burn.dvDone += ve * Math.log(m0 / mAfter);
       elapsed += seg;
 
       if (event === "cut") {
