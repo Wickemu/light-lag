@@ -8,6 +8,7 @@ import {
   initialTWR,
   stageDeltaV,
   stageLiftoffThrust,
+  consumeStageDv,
   electricThrust,
   jetPower,
   exhaustForThrust,
@@ -155,6 +156,44 @@ describe("parallel staging (strap-on boosters)", () => {
     expect(b.total).toBeGreaterThan(coreOnly.total);
     expect(b.finalMass).toBeCloseTo(payload, 6);
     expect(Number.isFinite(b.total)).toBe(true);
+  });
+});
+
+describe("impulsive stage consumption (consumeStageDv)", () => {
+  const clone = (s: Stage): Stage => ({ ...s, boosters: s.boosters?.map((b) => ({ ...b })) });
+  const boostered = (): Stage => ({
+    name: "core", dryMass: 10000, propMass: 100000, isp: 400, thrust: 1e6,
+    boosters: [{ name: "solid", dryMass: 3000, propMass: 30000, isp: 250, thrust: 1e6 }],
+  });
+  const m0 = 5000 + 143000; // payload + core(110t) + booster(33t)
+
+  it("spending a big target empties the whole boostered stage and matches stageDeltaV", () => {
+    const s = boostered();
+    const full = stageDeltaV(boostered(), m0).dv;
+    const r = consumeStageDv(s, m0, 1e9);
+    expect(r.dvDelivered).toBeCloseTo(full, 6);
+    expect(s.propMass).toBeLessThan(1);
+    for (const b of s.boosters!) expect(b.propMass * (b.count ?? 1)).toBeLessThan(1);
+  });
+
+  it("Δv is the conserved currency: deliver part, remaining capacity is full − part", () => {
+    const full = stageDeltaV(boostered(), m0).dv;
+    const s = clone(boostered());
+    const want = full * 0.4;
+    const r = consumeStageDv(s, m0, want);
+    expect(r.dvDelivered).toBeCloseTo(want, 6);
+    // Re-budget the drained stage from its reduced mass: it must still be able to
+    // deliver exactly the rest, with no Δv lost or fabricated.
+    expect(stageDeltaV(s, r.finalMass).dv).toBeCloseTo(full - want, 3);
+  });
+
+  it("a serial stage matches the closed-form rocket equation (legacy behaviour)", () => {
+    const s: Stage = { name: "S", dryMass: 4000, propMass: 40000, isp: 320, thrust: 9e5 };
+    const ve = exhaustVelocity(320);
+    const want = 1500;
+    const r = consumeStageDv(s, 80000, want);
+    expect(r.dvDelivered).toBeCloseTo(want, 9);
+    expect(40000 - s.propMass).toBeCloseTo(80000 * (1 - Math.exp(-want / ve)), 6);
   });
 });
 

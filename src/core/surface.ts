@@ -247,8 +247,11 @@ export interface SurfaceManeuverCost {
 /**
  * Propellant and burn time to deliver `dv` on a staged stack with `payload` on
  * top, walking stages exactly as the rocket equation requires (a spent stage is
- * dropped before the next ignites). Read-only — it mutates nothing. Reuses
- * deltaVBudget for the affordability headroom.
+ * dropped before the next ignites). Read-only — it mutates nothing. The
+ * affordability headroom (`available`/`feasible`) comes from `deltaVBudget`, so it
+ * is booster-correct; the per-stage propellant/burn-time breakdown assumes serial
+ * stages, which is exact for any stack doing a surface op — strap-on boosters are
+ * launch-only and always spent before a vehicle reaches orbit, let alone lands.
  */
 export function surfaceManeuverCost(stages: Stage[], payload: number, dv: number): SurfaceManeuverCost {
   const available = deltaVBudget(stages, payload).total;

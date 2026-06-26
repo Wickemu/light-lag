@@ -6,7 +6,7 @@
  */
 
 import { type Ship, type InterstellarLeg } from "./world.ts";
-import { type Stage, deltaVBudget, exhaustVelocity } from "./propulsion.ts";
+import { type Stage, deltaVBudget, exhaustVelocity, stageWetMass, consumeStageDv } from "./propulsion.ts";
 import {
   type State,
   type KeplerElements,
@@ -34,12 +34,12 @@ export function activeStage(ship: Ship): Stage | undefined {
   return ship.stages[ship.activeStage];
 }
 
-/** Total current mass: payload + every stage from the active one upward. */
+/** Total current mass: payload + every stage from the active one upward,
+ *  including each stage's live (un-spent, un-dropped) strap-on boosters. */
 export function totalMass(ship: Ship): number {
   let m = ship.payloadMass;
   for (let i = ship.activeStage; i < ship.stages.length; i++) {
-    const st = ship.stages[i]!;
-    m += st.dryMass + st.propMass;
+    m += stageWetMass(ship.stages[i]!);
   }
   return m;
 }
@@ -194,25 +194,16 @@ export function applyImpulsiveDv(ship: Ship, dv: number): boolean {
   let remaining = dv;
   while (remaining > 1e-9) {
     const stage = activeStage(ship);
-    if (!stage || stage.propMass <= 0) {
-      if (stage) ship.activeStage += 1;
-      if (!activeStage(ship)) return false;
-      continue;
-    }
-    const ve = exhaustVelocity(stage.isp);
-    const m0 = totalMass(ship);
-    const stageCapacity = ve * Math.log(m0 / (m0 - stage.propMass));
-    if (stageCapacity >= remaining) {
-      // Clamp at zero: at the affordability boundary the closed-form propellant can
-      // round microscopically past propMass, which must never leave a negative tank
-      // (mirrors the finite-thrust path's Math.max in sim.advanceThrustShip).
-      stage.propMass = Math.max(stage.propMass - m0 * (1 - Math.exp(-remaining / ve)), 0);
-      remaining = 0;
-    } else {
-      remaining -= stageCapacity;
-      stage.propMass = 0;
-      ship.activeStage += 1;
-    }
+    if (!stage) return false;
+    // Consume from this stage (core + any live boosters) through the same
+    // parallel-phase model the affordability check used, so they cannot disagree.
+    remaining -= consumeStageDv(stage, totalMass(ship), remaining).dvDelivered;
+    // Drop any booster group emptied by this burn.
+    if (stage.boosters) stage.boosters = stage.boosters.filter((b) => b.propMass * (b.count ?? 1) > 1e-9);
+    // Advance only when the whole stage (core AND all boosters) is spent; a
+    // partial burn leaves it active with `remaining` already ~0.
+    if (stage.propMass <= 1e-9 && (stage.boosters?.length ?? 0) === 0) ship.activeStage += 1;
+    else break;
   }
   return true;
 }

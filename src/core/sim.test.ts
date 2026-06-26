@@ -559,6 +559,14 @@ describe("parallel staging (in-sim)", () => {
   const veEff = F / mdot;
   const m0 = 3000 + (55000 + 2 * 42000) + 17000; // payload + core wet + boosters wet + upper wet
 
+  it("totalMass counts payload + core + live boosters + upper stage", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, heavyDesign());
+    const ship = sim.world.ships.get(id)!;
+    // 3000 payload + 55t core + 2×42t boosters + 17t upper
+    expect(totalMass(ship)).toBeCloseTo(m0, 6);
+  });
+
   it("spends propellant at the thrust-weighted vₑ_eff = F/ṁ (single parallel phase)", () => {
     const sim = new Simulation(createWorld(1, 0));
     const id = spawnShip(sim, heavyDesign());
