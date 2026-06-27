@@ -67,11 +67,15 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-1. **Defensible SNR-vs-range detection curve** — the IR detection model is single-band
-   with a zodiacal+CMB background floor but no explicit integration time or SNR>1
-   threshold. *(see "Detection model".)*
+1. **In-sim flyable entry / aerocapture pass** — the entry-heating + aerocapture budget
+   lands first today; flying the pass in-sim (with the live heat/decel readout) is the
+   next step. *(see "Landing / takeoff".)*
 
-*(Done since last round: **aerocapture + atmospheric-entry heating** — a full ballistic
+*(Done since last round: **defensible SNR-vs-range detection curve** — the IR detection
+model is now the radiometer equation: a real detector NEP (W/√Hz), an explicit
+integration time τ, an explicit SNR threshold (5σ), and background photon shot noise,
+giving an honest SNR(d) curve that falls as 1/d² (see "Detection model"). Earlier:
+**aerocapture + atmospheric-entry heating** — a full ballistic
 entry trajectory RK4-integrated through the exponential atmosphere, reporting peak
 deceleration, the Sutton-Graves convective stagnation heat flux, the radiative-equilibrium
 wall temperature, and the integrated heat load that sizes a TPS; plus single-pass
@@ -175,10 +179,22 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   3000 BC–3000 AD table trades in-window precision for range, and the engine's
   era is the 21st century, where the 1800–2050 model is more accurate (confirmed
   vs Horizons). Worth revisiting only if far-future/ancient play is prioritized.
-- **Detection model**: single-band IR + reflected, now with a zodiacal+CMB
-  background floor (range goes sky-limited once the signal noise is
-  background-dominated). Still single-band with no explicit integration time or
-  SNR>1 threshold — refine for a fully defensible SNR-vs-range curve.
+- **Detection model** — DONE: single-band IR + reflected, now a defensible
+  **SNR-vs-range curve** via the radiometer equation (`thermal.ts SensorSpec`).
+  A detector noise-equivalent power `NEP` (W/√Hz) folded over the post-detection
+  bandwidth Δf = 1/(2τ) gives a noise power `NEP/√(2τ)`, in quadrature with the
+  background photon shot noise `√(P_bg·hν/τ)`; a detection needs the collected
+  power to clear `SNR_threshold × noise`, so `d_max = √(P·A_tel/(4π·P_min))` and
+  `snrAtRange` is the 1/d² curve (equal to the threshold exactly at d_max).
+  Defaults: 1 m² aperture, NEP 1e-16, τ = 1 h, 5σ, a 10 µm band. The in-beam
+  zodiacal+CMB background is kept aperture-independent by the diffraction-limited
+  étendue A·Ω = λ². Range improves only as **τ^(1/4)** and √(aperture), shortens as
+  √(SNR), and still falls only as √(signature) — no stealth in space; the burn/coast
+  ratio is unchanged, but absolute ranges grew (the integrated NEP is far below the
+  old fixed 1e-14 W floor: a cold hull ~0.13 AU, a thrusting drive ~24 AU). Pure
+  read-time readout — golden hash unmoved. Still to do: a second optical band split
+  (reflected-sunlight vs thermal-IR with separate apertures/backgrounds) and a
+  diffraction-limited angular-resolution / astrometric model.
 - **Landing / takeoff** — DONE: a calibrated gravity-turn ascent Δv budget through
   real exponential atmospheres + an aerobraking descent model, with in-sim
   land/launch and co-rotating landed ships (sit on the surface at surface speed).
