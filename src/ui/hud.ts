@@ -37,6 +37,20 @@ const GROUPS: { kind: BodyKind; label: string }[] = [
   { kind: "comet", label: "Comets" },
 ];
 
+/** Label de-collision order: when several bodies project to the same pixel
+ *  (a planet with its moons and satellites, common when zoomed out), the
+ *  higher-priority label wins the spot and the rest are suppressed. Lower
+ *  number = placed first. The focused body is promoted above everything. */
+const LABEL_PRIORITY: Record<BodyKind, number> = {
+  star: 0,
+  planet: 1,
+  dwarf: 2,
+  moon: 3,
+  comet: 4,
+  asteroid: 5,
+  satellite: 6,
+};
+
 /** Cross-cutting overlay toggles shown as chips above the body list. */
 const LAYER_CHIPS: { key: LayerKey; label: string }[] = [
   { key: "orbits", label: "Orbits" },
@@ -65,6 +79,9 @@ export class Hud {
   private showFps = getFlag("showFps", false);
   private bloomOn = getFlag("bloom", true);
   private labels = new Map<string, HTMLElement>();
+  // Cached rendered width per label (text is static), so de-collision can do a
+  // bounding-box test without forcing a layout read every frame.
+  private labelWidths = new Map<string, number>();
   private listButtons = new Map<string, HTMLButtonElement>();
   // Show/hide controls: eye toggles per body and per kind, layer chips, and the
   // body rows (so a hidden body can be dimmed). Repainted from Visibility.onChange.
@@ -469,10 +486,13 @@ export class Hud {
     const h = window.innerHeight;
     // Body labels belong to the in-system view; the interstellar map draws its own.
     const labelsOn = this.vis.layer("labels") && this.sm.viewMode === "system";
+
+    // First pass: hide anything that can't be drawn (layer off, body hidden, or
+    // off-screen) and collect the on-screen candidates with their screen anchor.
+    const candidates: { id: string; lbl: HTMLElement; kind: BodyKind; x: number; y: number }[] = [];
     for (const anchor of views.labelAnchors()) {
       const lbl = this.labels.get(anchor.id);
       if (!lbl) continue;
-      // A label follows its body's visibility, and the whole layer can be hidden.
       const def = BODY_BY_ID.get(anchor.id);
       if (!labelsOn || !def || !this.vis.bodyVisible(anchor.id, def.kind)) {
         lbl.style.display = "none";
@@ -484,11 +504,49 @@ export class Hud {
         lbl.style.display = "none";
         continue;
       }
-      lbl.style.display = "block";
       const x = (ndc.x * 0.5 + 0.5) * w;
       const y = (-ndc.y * 0.5 + 0.5) * h;
-      lbl.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
-      lbl.classList.toggle("focused", anchor.id === this.sm.focusId);
+      candidates.push({ id: anchor.id, lbl, kind: def.kind, x, y });
+    }
+
+    // Greedy de-collision: place labels in priority order (focused body first,
+    // then by kind), and suppress any whose text box would overlap one already
+    // placed. This stops a planet and its moons/satellites — which project to the
+    // same pixel when zoomed out — from stacking their names on one spot.
+    const focusId = this.sm.focusId;
+    candidates.sort((a, b) => {
+      const pa = a.id === focusId ? -1 : LABEL_PRIORITY[a.kind];
+      const pb = b.id === focusId ? -1 : LABEL_PRIORITY[b.kind];
+      return pa - pb;
+    });
+
+    // Text box geometry: .body-label sits at (x,y) offset by its 10px CSS margin,
+    // is ~14px tall, and as wide as its (cached) rendered text. A little padding
+    // keeps near-touching labels from reading as one.
+    const MARGIN_X = 10;
+    const MARGIN_Y = 10;
+    const LABEL_H = 14;
+    const PAD = 3;
+    const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    for (const c of candidates) {
+      c.lbl.style.display = "block";
+      let width = this.labelWidths.get(c.id);
+      if (width === undefined || width === 0) {
+        width = c.lbl.offsetWidth;
+        if (width > 0) this.labelWidths.set(c.id, width);
+      }
+      const x0 = c.x + MARGIN_X - PAD;
+      const y0 = c.y + MARGIN_Y - PAD;
+      const x1 = c.x + MARGIN_X + width + PAD;
+      const y1 = c.y + MARGIN_Y + LABEL_H + PAD;
+      const collides = placed.some((r) => x0 < r.x1 && x1 > r.x0 && y0 < r.y1 && y1 > r.y0);
+      if (collides) {
+        c.lbl.style.display = "none";
+        continue;
+      }
+      placed.push({ x0, y0, x1, y1 });
+      c.lbl.style.transform = `translate(${c.x.toFixed(1)}px, ${c.y.toFixed(1)}px)`;
+      c.lbl.classList.toggle("focused", c.id === focusId);
     }
   }
 }
