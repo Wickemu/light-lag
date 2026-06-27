@@ -20,6 +20,8 @@ import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
 import { wrapPi } from "../core/math/kepler.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
 import { assistTransfer, chainAssist, type AssistResult, type ChainAssistResult } from "../core/maneuver/assist.ts";
+import { moonTour, type MoonTourResult } from "../core/maneuver/moonTour.ts";
+export { searchMoonTour, type MoonTourResult, type MoonTourFlyby } from "../core/maneuver/moonTour.ts";
 import { STAR_BY_ID, starPosition } from "../core/stars.ts";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
@@ -280,6 +282,51 @@ export function planMoonTransfer(
   };
   sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
   return { dvDepart, dvArrive, tof: tArrive - tDepart };
+}
+
+/**
+ * Plan and schedule an intra-system gravity-assist TOUR: the ship is in orbit about a planet and
+ * reaches one of its moons by flying past sibling moons (the Galileo / JUICE / Europa Clipper
+ * pump-down). Records the transfer with `central = parent` + one `FlybyLeg` per flyby moon (and the
+ * target moon as `targetId`), and queues the departure; the sim flies depart → moon flyby-pass×N →
+ * capture, all INSIDE the planet's SOI. `flybyMoonIds` lists the flyby moons in order; `times` is
+ * `[tDepart, …flybyTimes, tArrive]` (strictly increasing, length = flybyMoonIds.length + 2). The
+ * arrival captures circular (default) or into a loose ellipse (`captureApoAlt`). Returns the tour
+ * estimate, or null if the schedule/bodies are invalid.
+ */
+export function planMoonTour(
+  sim: Simulation, shipId: string,
+  flybyMoonIds: string[], targetMoonId: string, times: number[],
+  captureApoAlt?: number,
+): MoonTourResult | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || ship.mode !== "coast" || ship.landed) return null;
+  if (ship.transfer || ship.interstellarLeg || ship.spiral || ship.entryLeg) return null;
+  const parent = BODY_BY_ID.get(ship.primary);
+  const target = BODY_BY_ID.get(targetMoonId);
+  if (!parent || !target || target.parent !== ship.primary) return null;
+  if (flybyMoonIds.length < 1 || times.length !== flybyMoonIds.length + 2) return null;
+  // Every flyby moon must orbit the SAME parent the ship is at; the immediately-final flyby can't
+  // be the capture encounter itself (resonant reuse of the target at an EARLIER flyby is fine).
+  if (flybyMoonIds.some((id) => BODY_BY_ID.get(id)?.parent !== ship.primary)) return null;
+  if (flybyMoonIds[flybyMoonIds.length - 1] === targetMoonId) return null;
+  for (let i = 1; i < times.length; i++) if (times[i]! <= times[i - 1]!) return null;
+
+  // Seed the solver with the ship's parent-relative state at departure (the sim re-derives the same
+  // state deterministically at execution time, so the planned and flown trajectories agree).
+  const dep = shipRelativeState(ship, times[0]!);
+  const res = moonTour(ship.primary, dep, flybyMoonIds, targetMoonId, times, captureApoAlt);
+  if (!res) return null;
+
+  ship.transfer = {
+    targetId: targetMoonId, tDepart: res.tDepart, tArrive: res.tArrive,
+    dvDepart: res.dvDepart, dvArrive: res.dvArrive,
+    departed: false, inSoi: false, arrived: false, central: ship.primary,
+    flybys: res.flybys.map((f) => ({ bodyId: f.moonId, tFlyby: f.t, dvBurn: f.dvFlyby, done: false })),
+    ...(captureApoAlt !== undefined ? { captureApoAlt } : {}),
+  };
+  sim.events.push({ t: res.tDepart, kind: "transfer-depart", entityId: shipId });
+  return res;
 }
 
 /** A two-stage cross-system mission: the heliocentric Stage-1 cost plus an estimate of the
