@@ -71,6 +71,34 @@ export interface SpiralLeg {
   tEnd: number;
 }
 
+/**
+ * An in-progress atmospheric-entry / aerocapture pass about `bodyId`. Unlike the
+ * other legs the drag trajectory has no closed form, so it is INTEGRATED on demand
+ * from a fixed start (the interface-crossing state `r0,v0`) at a fixed step — still
+ * a pure deterministic function of time, exact at any time-warp. `exitR,exitV` are
+ * the body-relative state at `tEnd` that the finalize uses (so the outcome is set by
+ * the commit-time fine pass, independent of how the leg is re-sampled while flying).
+ * First cut: planar, ballistic (lift = 0), atmospheric co-rotation ignored. The
+ * peak* / heatLoad fields are the precomputed budget shown live in the HUD.
+ */
+export interface EntryLeg {
+  bodyId: string;
+  tStart: number; // s since J2000 — the atmospheric-interface crossing
+  tEnd: number; // s — landing / skip-out / capture
+  r0: Vec3; // body-relative state at the interface (m)
+  v0: Vec3; // body-relative velocity at the interface (m/s)
+  ballisticCoef: number; // β = m/(Cd·A) (kg/m²)
+  noseRadius: number; // R_n (m)
+  emissivity: number; // TPS ε
+  outcome: "landed" | "captured" | "skip-out";
+  exitR: Vec3; // body-relative position at tEnd (m)
+  exitV: Vec3; // body-relative velocity at tEnd (m/s)
+  peakDecelG: number; // budget summary for the HUD
+  peakHeatFlux: number; // W/m²
+  peakWallTemp: number; // K
+  heatLoad: number; // J/m²
+}
+
 /** A planned/active interplanetary transfer (Lambert leg to another body). */
 export interface ShipTransfer {
   targetId: string;
@@ -115,6 +143,8 @@ export interface Ship {
   interstellarLeg?: InterstellarLeg;
   /** An in-progress low-thrust (electric) spiral about the primary. */
   spiral?: SpiralLeg;
+  /** An in-progress in-sim atmospheric-entry / aerocapture pass about its body. */
+  entryLeg?: EntryLeg;
   /** Set when the ship has touched down on a body's surface (after paying the
    *  descent Δv). `surfaceDir` is the landing site as a BODY-FIXED unit vector, so
    *  the ship co-rotates with the surface (moving at surface speed, not orbital

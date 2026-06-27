@@ -20,6 +20,7 @@ import {
   sendBurn,
   landShip,
   launchShip,
+  flyEntry,
   planSpiral,
   shipSurfaceParams,
 } from "../app/commands.ts";
@@ -29,7 +30,7 @@ import {
   surfaceManeuverCost,
   DEFAULT_ENTRY_BETA,
 } from "../core/surface.ts";
-import { entryTrajectory, type EntryVehicle } from "../core/maneuver/entry.ts";
+import { entryTrajectory, entryInterfaceAlt, type EntryVehicle } from "../core/maneuver/entry.ts";
 import {
   type ShipPreset,
   PRESETS_BY_ID,
@@ -45,6 +46,7 @@ import {
   shipRelativeState,
   shipWorldState,
   shipThermalState,
+  shipEntryReadout,
   primaryMu,
 } from "../core/ships.ts";
 import { summarizeOrbit, periapsisRadius, j2Rates } from "../core/orbit.ts";
@@ -94,6 +96,7 @@ export class ShipPanel {
   private surfaceAltInput!: HTMLInputElement;
   private landBtn!: HTMLButtonElement;
   private launchBtn!: HTMLButtonElement;
+  private flyEntryBtn!: HTMLButtonElement;
   private electricEl!: HTMLElement;
   private spiralAltInput!: HTMLInputElement;
   private spiralBtn!: HTMLButtonElement;
@@ -230,6 +233,10 @@ export class ShipPanel {
     this.launchBtn = button("⬆ Launch", () => this.doLaunch());
     surfRow.append(this.landBtn, this.launchBtn);
     this.surfaceEl.appendChild(surfRow);
+    const entryRow = el("div", "dv-row");
+    this.flyEntryBtn = button("🜂 Fly entry", () => this.doFlyEntry());
+    entryRow.append(this.flyEntryBtn);
+    this.surfaceEl.appendChild(entryRow);
     flt.appendChild(this.surfaceEl);
 
     // Electric drive — commit a low-thrust spiral to a target orbit (shown only
@@ -629,6 +636,24 @@ export class ShipPanel {
     this.surfaceEl.style.display = "block";
     const remaining = ship.stages.slice(ship.activeStage);
 
+    // Flying an in-sim entry pass: show the live heat/decel readout, hide actions.
+    const entry = shipEntryReadout(ship, this.sim.world.t);
+    if (entry) {
+      this.surfaceReadout.innerHTML =
+        kv("Status", `entering ${entry.bodyName} → ${entry.outcome}`) +
+        kv("Altitude", `${(entry.altitudeM / 1000).toFixed(1)} km`) +
+        kv("Speed", `${(entry.speedMS / 1000).toFixed(2)} km/s`) +
+        kv("Decel", `${entry.currentG.toFixed(1)} g (peak ${entry.peakDecelG.toFixed(1)})`) +
+        kv("Heat flux", `${(entry.currentHeatFluxW / 1e6).toFixed(2)} MW/m² (peak ${(entry.peakHeatFlux / 1e6).toFixed(1)})`) +
+        kv("Wall temp", `${entry.wallTempK.toFixed(0)} K`) +
+        kv("Heat load", `${(entry.heatLoad / 1e6).toFixed(0)} MJ/m²`) +
+        `<div class="ok">${(entry.progress * 100).toFixed(0)}% through the pass</div>`;
+      setDisabled(this.landBtn, true, "Flying an entry pass.");
+      setDisabled(this.launchBtn, true, "Flying an entry pass.");
+      setDisabled(this.flyEntryBtn, true, "Already flying an entry pass.");
+      return;
+    }
+
     if (landed) {
       const altKm = Math.max(0, Number(this.surfaceAltInput.value) || 0);
       const asc = ascentBudget(body, shipSurfaceParams(ship, body, altKm * 1000))!;
@@ -642,26 +667,43 @@ export class ShipPanel {
         (feasible ? `<div class="ok">✓ can reach ${altKm} km orbit</div>` : `<div class="warn">✗ insufficient Δv</div>`);
       setDisabled(this.landBtn, true, `Already landed on ${body.name}.`);
       setDisabled(this.launchBtn, !feasible, "Insufficient Δv to reach the requested orbit.");
+      setDisabled(this.flyEntryBtn, true, `Landed on ${body.name}.`);
     } else {
       const orbEl = shipOsculatingElements(ship, this.sim.world.t);
       const alt = Math.max(0, periapsisRadius(orbEl.a, orbEl.e) - body.radius);
       const desc = descentBudget(body, shipSurfaceParams(ship, body, alt))!;
       const cost = surfaceManeuverCost(remaining, ship.payloadMass, desc.dvTotal);
       const canLand = cost.feasible >= 0;
+      // The orbit can be flown into the atmosphere when its periapsis dips below the
+      // entry interface (and the body has one).
+      const canFlyEntry =
+        !!body.atmosphere && periapsisRadius(orbEl.a, orbEl.e) < body.radius + entryInterfaceAlt(body);
       this.surfaceReadout.innerHTML =
         kv("Body", `${body.name} (${body.atmosphere ? "atmosphere" : "airless"})`) +
         kv("Descent Δv", `${(desc.dvTotal / 1000).toFixed(2)} km/s`) +
         (body.atmosphere ? kv("Aerobraking", `${(desc.aerobrakeFraction * 100).toFixed(0)}% shed for free`) : "") +
         (body.atmosphere ? entryHeatRows(body, desc.vOrbit) : "") +
         kv("Land propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
+        (canFlyEntry ? `<div class="ok">orbit dips into the atmosphere — Fly entry to ride it down</div>` : "") +
         (canLand ? `<div class="ok">✓ can land</div>` : `<div class="warn">✗ insufficient Δv to land</div>`);
       setDisabled(this.landBtn, !canLand, "Insufficient Δv to land.");
       setDisabled(this.launchBtn, true, "Land first to enable ascent.");
+      setDisabled(
+        this.flyEntryBtn,
+        !canFlyEntry,
+        body.atmosphere ? "Lower periapsis into the atmosphere first." : `${body.name} has no atmosphere.`,
+      );
     }
   }
 
   private doLand(): void {
     if (this.selectedId) landShip(this.sim, this.selectedId);
+  }
+
+  /** Fly the current orbit into the atmosphere in-sim (ballistic drag pass) instead
+   *  of teleporting down with the budgeted descent. */
+  private doFlyEntry(): void {
+    if (this.selectedId) flyEntry(this.sim, this.selectedId);
   }
 
   private doLaunch(): void {

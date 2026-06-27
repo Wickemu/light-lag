@@ -48,7 +48,9 @@ export type SimEventKind =
   | "transfer-arrive"
   | "flyby-pass"
   | "spiral-arrive"
-  | "capture";
+  | "capture"
+  | "entry-start"
+  | "entry-end";
 
 export interface SimEvent {
   t: number; // absolute sim time the event fires (s since J2000)

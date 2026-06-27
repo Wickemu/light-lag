@@ -11,7 +11,8 @@ import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir } from "../core/world.ts";
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
-import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, dvRemaining, applyImpulsiveDv } from "../core/ships.ts";
+import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
+import { entryInterfaceCrossing, entryTrajectory } from "../core/maneuver/entry.ts";
 import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
 import { wrapPi } from "../core/math/kepler.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
@@ -322,6 +323,45 @@ export function landShip(sim: Simulation, shipId: string): SurfaceOp | null {
   ship.epoch = t;
   ship.landed = { bodyId: body.id, surfaceDir };
   return { dv: desc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: true };
+}
+
+/** The predicted budget of an entry pass committed by flyEntry, for the UI. */
+export interface EntryPlan {
+  tStart: number; // s since J2000 — when the pass begins (the interface crossing)
+  outcome: "landed" | "captured" | "skip-out";
+  peakDecelG: number;
+  peakHeatFlux: number;
+  peakWallTemp: number;
+  heatLoad: number;
+}
+
+/**
+ * Fly the ship's current orbit into the atmosphere in-sim instead of teleporting it
+ * down: schedule an entry pass at the next atmospheric-interface crossing. The ship
+ * keeps coasting until then; at the interface it flies a ballistic (no-propellant)
+ * drag trajectory you can watch at any time-warp, ending in landed / captured /
+ * skip-out. Returns the predicted budget, or null if the ship isn't a coasting ship
+ * in an atmosphere's SOI whose orbit actually dips into the atmosphere.
+ */
+export function flyEntry(sim: Simulation, shipId: string): EntryPlan | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || ship.landed || ship.mode !== "coast") return null;
+  if (ship.entryLeg || ship.interstellarLeg || ship.spiral || ship.transfer) return null;
+  const body = BODY_BY_ID.get(ship.primary);
+  if (!body || body.hasSurface === false || !body.atmosphere || ship.primary === "sun") return null;
+
+  const el = shipOsculatingElements(ship, sim.world.t);
+  const x = entryInterfaceCrossing(body, el);
+  if (!x) return null; // orbit never reaches the atmosphere
+  const res = entryTrajectory(body, NOMINAL_ENTRY_VEHICLE, { entrySpeed: x.entrySpeed, flightPathAngle: x.flightPathAngle });
+  if (!res) return null;
+
+  const tStart = sim.world.t + x.dtToInterface;
+  sim.events.push({ t: tStart, kind: "entry-start", entityId: shipId });
+  return {
+    tStart, outcome: res.outcome, peakDecelG: res.peakDecelG,
+    peakHeatFlux: res.peakHeatFlux, peakWallTemp: res.peakWallTemp, heatLoad: res.heatLoad,
+  };
 }
 
 /**
