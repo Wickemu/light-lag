@@ -58,6 +58,14 @@ import { formatDate } from "../core/time.ts";
 import { length } from "../core/math/vec3.ts";
 import { el, button, kv, setDisabled, numberField, compactField, formatDur } from "./dom.ts";
 import { collapsible, type Collapsible } from "./collapsible.ts";
+import { markTerm } from "./tooltip.ts";
+
+/** A `.section-label` div tagged as a hover term (SURFACE OPS, ELECTRIC SPIRAL). */
+function sectionLabel(text: string): HTMLElement {
+  const e = el("div", "section-label", text);
+  markTerm(e, text);
+  return e;
+}
 
 const DIRS: BurnDir[] = ["prograde", "retrograde", "radial-out", "radial-in", "normal", "antinormal"];
 const DIR_LABEL: Record<BurnDir, string> = {
@@ -219,7 +227,7 @@ export class ShipPanel {
     // Surface ops — landing & takeoff Δv budgeting (shown only when the ship is
     // coasting in the SOI of a body with a surface, or already landed).
     this.surfaceEl = el("div", "surface-ops");
-    this.surfaceEl.appendChild(el("div", "section-label", "SURFACE OPS"));
+    this.surfaceEl.appendChild(sectionLabel("SURFACE OPS"));
     this.surfaceReadout = el("div", "surface-readout");
     this.surfaceEl.appendChild(this.surfaceReadout);
     const surfRow = el("div", "dv-row");
@@ -242,7 +250,7 @@ export class ShipPanel {
     // Electric drive — commit a low-thrust spiral to a target orbit (shown only
     // when the active stage is electric and the ship is coasting about a body).
     this.electricEl = el("div", "surface-ops");
-    this.electricEl.appendChild(el("div", "section-label", "ELECTRIC SPIRAL"));
+    this.electricEl.appendChild(sectionLabel("ELECTRIC SPIRAL"));
     const elRow = el("div", "dv-row");
     this.spiralAltInput = document.createElement("input");
     this.spiralAltInput.type = "number";
@@ -267,6 +275,7 @@ export class ShipPanel {
       });
       b.className = "dir-btn";
       b.dataset.dir = d;
+      markTerm(b, DIR_LABEL[d], { decorate: false });
       this.dirRow.appendChild(b);
     }
     mnv.appendChild(this.dirRow);
@@ -278,6 +287,7 @@ export class ShipPanel {
     this.dvInput.min = "0";
     this.dvInput.className = "dv-input";
     const dvLabel = el("span", "dv-label", "Δv (m/s)");
+    markTerm(dvLabel, "Δv (m/s)");
     this.executeBtn = button("Execute burn", () => this.execute());
     this.executeBtn.className = "primary";
     dvRow.append(dvLabel, this.dvInput, this.executeBtn);
