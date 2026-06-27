@@ -19,6 +19,7 @@ import { hohmann } from "./hohmann.ts";
 import { hyperbolicBurnDv, combinedPlaneChangeDv } from "../orbit.ts";
 import { maxTurnAngle } from "./flyby.ts";
 import { type Vec3, length, sub, dot } from "../math/vec3.ts";
+import { better, type Criterion, type Scorable, type ScoreRefs } from "./criteria.ts";
 
 /** Closest safe flyby radius: a 10% altitude margin above the surface. */
 export function minFlybyRadius(body: BodyDef): number {
@@ -223,23 +224,30 @@ export interface AssistSearch extends AssistParams {
   flybyWindow: [number, number]; // [min, max] flyby time (s since J2000)
   arriveWindow: [number, number]; // [min, max] arrival time
   steps?: number; // grid resolution per axis (default 28)
+  criterion?: Criterion; // ranking criterion (default "dv" — min total Δv)
+  refs?: ScoreRefs; // reference scales for the "balanced" criterion
 }
 
 /**
- * Grid-search the cheapest single-flyby assist for a fixed departure time. Bounded
- * (steps² Lambert pairs); returns the minimum-total-Δv result, or null if none.
+ * Grid-search the best single-flyby assist for a fixed departure time. Bounded
+ * (steps² Lambert pairs); returns the result that wins under `criterion` (default the
+ * minimum-total-Δv), or null if none. The comparator is a strict total order, so the
+ * winner is independent of grid traversal order.
  */
 export function searchAssist(
   originId: string, flybyId: string, targetId: string, s: AssistSearch,
 ): AssistResult | null {
   const n = s.steps ?? 28;
+  const crit = s.criterion ?? "dv";
+  const refs = s.refs ?? { dvRef: 1, tofRef: 1 };
+  const sc = (r: AssistResult): Scorable => ({ dvTotal: r.dvTotal, tof: r.tArrive - r.tDepart });
   let best: AssistResult | null = null;
   for (let i = 0; i < n; i++) {
     const tFlyby = s.flybyWindow[0] + ((s.flybyWindow[1] - s.flybyWindow[0]) * i) / (n - 1);
     for (let j = 0; j < n; j++) {
       const tArrive = s.arriveWindow[0] + ((s.arriveWindow[1] - s.arriveWindow[0]) * j) / (n - 1);
       const r = assistTransfer(originId, flybyId, targetId, s.tDepart, tFlyby, tArrive, s);
-      if (r && isFinite(r.dvTotal) && (!best || r.dvTotal < best.dvTotal)) best = r;
+      if (r && isFinite(r.dvTotal) && (!best || better(sc(r), sc(best), crit, refs))) best = r;
     }
   }
   return best;
@@ -250,6 +258,8 @@ export interface ChainSearch extends AssistParams {
   steps?: number; // TOF multipliers sampled per leg (default 7)
   tofLo?: number; // smallest per-leg TOF as a fraction of its Hohmann TOF (default 0.7)
   tofHi?: number; // largest (default 1.6)
+  criterion?: Criterion; // ranking criterion (default "dv")
+  refs?: ScoreRefs; // reference scales for the "balanced" criterion
 }
 
 /**
@@ -273,6 +283,9 @@ export function searchChain(
   const n = s.steps ?? 7;
   const lo = s.tofLo ?? 0.7, hi = s.tofHi ?? 1.6;
   const mult = (k: number): number => (n === 1 ? 1 : lo + ((hi - lo) * k) / (n - 1));
+  const crit = s.criterion ?? "dv";
+  const refs = s.refs ?? { dvRef: 1, tofRef: 1 };
+  const sc = (r: ChainAssistResult): Scorable => ({ dvTotal: r.dvTotal, tof: r.tArrive - r.tDepart });
 
   let best: { result: ChainAssistResult; times: number[] } | null = null;
   const total = Math.pow(n, legs);
@@ -285,7 +298,7 @@ export function searchChain(
       times.push(times[i]! + nomTof[i]! * mult(k));
     }
     const res = chainAssist(bodyIds, times, s);
-    if (res && isFinite(res.dvTotal) && (!best || res.dvTotal < best.result.dvTotal)) {
+    if (res && isFinite(res.dvTotal) && (!best || better(sc(res), sc(best.result), crit, refs))) {
       best = { result: res, times };
     }
   }

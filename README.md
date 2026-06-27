@@ -43,8 +43,10 @@ flyable, to-scale 3D Solar System.
   transfers, plane changes, and **gravity-assist flybys** — including **multi-flyby chains**:
   plan an Earth→Mars→Jupiter→Saturn tour and watch the heliocentric energy jump at *each*
   slingshot (every bend is free). One- and two-flyby missions fly in-sim via patched-conic
-  geometry; pick the via bodies in the transfer planner (VIA FLYBY 1 / 2) and the route draws
-  every leg.
+  geometry. The **mission planner** has a grouped destination list (planets / dwarfs / asteroids
+  / comets / moons), an **Optimize for** selector (least Δv · shortest flight · balanced) that
+  moves the porkchop crosshair, and a **Suggest** button that auto-searches the workhorse
+  gravity-assist routes (incl. VEEGA-style chains) and ranks them — or pick the flybys yourself.
 - **Landing & takeoff** Δv/propellant budgeting: a calibrated gravity-turn ascent through real
   exponential atmospheres (Earth→LEO ≈ 9.3 km/s, Moon ≈ 1.9, Mars ≈ 4.0), aerobraking on
   descent, and ships that sit on the surface co-rotating with the body.

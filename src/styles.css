@@ -990,6 +990,34 @@ button:disabled {
 .transfer-btns button {
   flex: 1 1 0;
 }
+.transfer-origin {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.transfer-modes {
+  display: flex;
+  gap: 4px;
+}
+.transfer-modes button {
+  flex: 1 1 0;
+  font-size: 11px;
+  padding: 3px 4px;
+}
+.transfer-modes button.active {
+  background: var(--accent, #4fd1e0);
+  color: #04121a;
+  border-color: var(--accent, #4fd1e0);
+}
+.transfer-suggest {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.suggest-row {
+  text-align: left;
+  font-size: 11px;
+  width: 100%;
+}
 
 /* ── Scale bar ─────────────────────────────────────────────────────────────── */
 .scale-bar {
