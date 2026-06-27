@@ -5,7 +5,14 @@
  * with slightly different names — `el`/`div`, `button`/`btn`, `kv`/`row`. They
  * are collected here so a panel builds its DOM from one vocabulary, and a fix
  * (a tooltip convention, a focus ring) lands in one place.
+ *
+ * Because the readouts and labelled fields funnel through `kv`/`numberField`/
+ * `compactField`, tagging recognised glossary terms here gives every panel hover
+ * definitions for free — see {@link glossary} and {@link tooltip}.
  */
+
+import { defineTerm, escapeTermAttr } from "./glossary.ts";
+import { markTerm } from "./tooltip.ts";
 
 /** Create an element with an optional class and text content. */
 export function el(tag: string, className = "", text = ""): HTMLElement {
@@ -31,9 +38,13 @@ export function button(label: string, onClick: () => void): HTMLButtonElement {
 /** Alias for {@link button} — some panels read better with the shorter name. */
 export const btn = button;
 
-/** A key/value readout row as an HTML string (joined into a readout block). */
+/** A key/value readout row as an HTML string (joined into a readout block).
+ *  When the key is a known glossary term, it's tagged so the hover card finds it. */
 export function kv(k: string, v: string): string {
-  return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+  const key = defineTerm(k)
+    ? `<span class="k term" data-term="${escapeTermAttr(k.trim())}">${k}</span>`
+    : `<span class="k">${k}</span>`;
+  return `<div class="kv">${key}<span class="v">${v}</span></div>`;
 }
 
 /** Toggle a button's disabled state and surface the reason as a native tooltip,
@@ -52,7 +63,9 @@ export function numberField(
   onChange: (v: number) => void,
 ): HTMLInputElement {
   const wrap = el("label", "field");
-  wrap.appendChild(el("span", "field-label", label));
+  const lbl = el("span", "field-label", label);
+  markTerm(lbl, label);
+  wrap.appendChild(lbl);
   const input = document.createElement("input");
   input.type = "number";
   input.value = String(value);
@@ -74,7 +87,9 @@ export function compactField(
   input.type = "number";
   input.value = String(value);
   input.oninput = () => { const v = parseFloat(input.value); if (isFinite(v)) onChange(v); };
-  wrap.append(input, el("span", "cfield-label", label));
+  const lbl = el("span", "cfield-label", label);
+  markTerm(lbl, label);
+  wrap.append(input, lbl);
   parent.appendChild(wrap);
 }
 

@@ -25,6 +25,7 @@ import { ShipPanel } from "../ui/shipPanel.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
 import { InterstellarPanel } from "../ui/interstellarPanel.ts";
 import { KeyboardManager } from "../ui/keyboard.ts";
+import { installTermTooltips } from "../ui/tooltip.ts";
 import { getFlag, setFlag } from "../ui/uiState.ts";
 import * as commands from "./commands.ts";
 
@@ -63,6 +64,10 @@ const shipPanel = new ShipPanel(
   (shipId) => interstellarPanel.open(shipId),
 );
 const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel, interstellarPanel);
+
+// Hover/focus glossary: one delegated listener over the whole overlay surfaces a
+// definition card for any term-tagged label (kv readouts, fields, headers, …).
+installTermTooltips(uiRoot);
 
 // Open on a gentle warp so the planets are visibly in motion immediately.
 sim.setWarpIndex(6); // 1 day/s

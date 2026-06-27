@@ -25,6 +25,14 @@ import { periapsisRadius } from "../core/orbit.ts";
 import { formatDate } from "../core/time.ts";
 import { type BodyDef, type BodyKind, BODIES, BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 import { div, btn, kv, setDisabled } from "./dom.ts";
+import { markTerm } from "./tooltip.ts";
+
+/** A `.section-label` div tagged as a hover term. */
+function sectionLabel(text: string): HTMLElement {
+  const e = div("section-label", text);
+  markTerm(e, text);
+  return e;
+}
 
 const CANVAS_W = 300;
 const CANVAS_H = 210;
@@ -241,6 +249,7 @@ export class TransferPanel {
     this.modeRow = div("transfer-modes");
     for (const [m, label] of [["direct", "Direct"], ["suggest", "Suggest"], ["via1", "1 flyby"], ["via2", "2 flybys"]] as const) {
       const b = btn(label, () => this.setRouteMode(m));
+      markTerm(b, label, { decorate: false });
       this.modeBtns[m] = b;
       this.modeRow.appendChild(b);
     }
@@ -248,7 +257,7 @@ export class TransferPanel {
 
     // Flyby pickers (shown only in via1/via2).
     this.viaRow = div("transfer-head");
-    this.viaRow.appendChild(div("section-label", "VIA FLYBY"));
+    this.viaRow.appendChild(sectionLabel("VIA FLYBY"));
     this.viaSel = document.createElement("select");
     this.viaSel.className = "target-sel";
     this.viaSel.onchange = () => { this.viaId = this.viaSel.value; this.refreshSelects(); this.recompute(); };
@@ -256,7 +265,7 @@ export class TransferPanel {
     this.panel.appendChild(this.viaRow);
 
     this.via2Row = div("transfer-head");
-    this.via2Row.appendChild(div("section-label", "VIA FLYBY 2"));
+    this.via2Row.appendChild(sectionLabel("VIA FLYBY 2"));
     this.via2Sel = document.createElement("select");
     this.via2Sel.className = "target-sel";
     this.via2Sel.onchange = () => { this.via2Id = this.via2Sel.value; this.refreshSelects(); this.recompute(); };
@@ -266,7 +275,7 @@ export class TransferPanel {
     // Optimize for — drives the porkchop crosshair and the assist/suggest ranking.
     this.critRow = div("transfer-head");
     const critRow = this.critRow;
-    critRow.appendChild(div("section-label", "OPTIMIZE FOR"));
+    critRow.appendChild(sectionLabel("OPTIMIZE FOR"));
     this.critSel = document.createElement("select");
     this.critSel.className = "target-sel";
     for (const [val, label] of [["dv", "Least Δv (fuel)"], ["time", "Shortest flight"], ["balanced", "Balanced"]] as const) {
@@ -280,7 +289,7 @@ export class TransferPanel {
 
     // Capture mode (direct arrivals at a body with an atmosphere).
     this.capRow = div("transfer-head");
-    this.capRow.appendChild(div("section-label", "CAPTURE MODE"));
+    this.capRow.appendChild(sectionLabel("CAPTURE MODE"));
     this.captureSel = document.createElement("select");
     this.captureSel.className = "target-sel";
     for (const [val, label] of [

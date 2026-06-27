@@ -9,6 +9,7 @@
  */
 
 import { el } from "./dom.ts";
+import { markTerm } from "./tooltip.ts";
 import { getFlag, setFlag } from "./uiState.ts";
 
 export interface Collapsible {
@@ -37,6 +38,8 @@ export function collapsible(label: string, opts: CollapsibleOpts = {}): Collapsi
   const header = el("button", "section-head") as HTMLButtonElement;
   const chevron = el("span", "section-chevron", "▾");
   const title = el("span", "section-head-label", label);
+  // The header is already an obvious control, so tag it without the underline hint.
+  markTerm(title, label, { decorate: false });
   const badge = el("span", "section-badge");
   header.append(chevron, title, badge);
 
