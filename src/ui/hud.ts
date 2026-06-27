@@ -62,6 +62,7 @@ export class Hud {
   private layersPopover!: Popover;
   private helpEl!: HTMLElement;
   private showFps = getFlag("showFps", false);
+  private bloomOn = getFlag("bloom", true);
   private labels = new Map<string, HTMLElement>();
   private listButtons = new Map<string, HTMLButtonElement>();
   // Show/hide controls: eye toggles per body and per kind, layer chips, and the
@@ -81,6 +82,8 @@ export class Hud {
     private vis: Visibility,
   ) {
     this.build();
+    // Apply the persisted graphics choice before the first frame.
+    this.sm.setBloomEnabled(this.bloomOn);
     this.vis.onChange(() => this.refreshVisibilityUI());
     this.refreshVisibilityUI();
     this.refreshViewSwitch();
@@ -261,6 +264,18 @@ export class Hud {
     }
     panel.appendChild(keys);
 
+    // Graphics toggles. Bloom (the soft glow on the Sun, bright limbs and stars)
+    // is by far the most expensive effect — turning it off bypasses the whole post
+    // chain for a large frame-rate gain while keeping tone mapping, the lit Sun,
+    // atmospheres, the ring shadow and the accurate star colours.
+    const bloomRow = el("label", "help-toggle");
+    const bloomCb = document.createElement("input");
+    bloomCb.type = "checkbox";
+    bloomCb.checked = this.bloomOn;
+    bloomCb.onchange = () => this.setBloom(bloomCb.checked);
+    bloomRow.append(bloomCb, el("span", "", "Bloom / glow (off boosts FPS)"));
+    panel.appendChild(bloomRow);
+
     const fpsRow = el("label", "help-toggle");
     const cb = document.createElement("input");
     cb.type = "checkbox";
@@ -288,6 +303,12 @@ export class Hud {
     this.showFps = on;
     this.fpsEl.style.display = on ? "block" : "none";
     setFlag("showFps", on);
+  }
+
+  private setBloom(on: boolean): void {
+    this.bloomOn = on;
+    this.sm.setBloomEnabled(on);
+    setFlag("bloom", on);
   }
 
   /** The chip row of cross-cutting overlay toggles (orbits, labels, stars, …). */

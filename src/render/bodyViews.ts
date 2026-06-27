@@ -101,54 +101,47 @@ function makeSunMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
  *    hemisphere and fades through the terminator to nothing on the night side —
  *    exactly how Earth's blue arc only hangs over the daylit limb.
  *
- * Additive, depth-tested but not depth-writing, and carrying the log-depth chunks
- * so it sits correctly in the solar-system-scale depth buffer. `uColor` folds in
- * intensity and may exceed 1.0 so the brightest arc blooms.
+ * Built as a patched MeshBasicMaterial (not a raw ShaderMaterial) so it inherits
+ * the engine's colour-space, tone-mapping AND log-depth handling automatically —
+ * which means it renders correctly both through the HDR post chain *and* on the
+ * cheaper direct-to-canvas path used when bloom is switched off. `uColor` folds
+ * in intensity and may exceed 1.0 so the brightest arc blooms. The caller passes
+ * in the sun-direction vector so it can aim it at the true Sun each frame.
  */
-function makeAtmosphereMaterial(glow: AtmoGlow): THREE.ShaderMaterial {
+function makeAtmosphereMaterial(glow: AtmoGlow, sunDir: THREE.Vector3): THREE.MeshBasicMaterial {
   const c = new THREE.Color(glow.color);
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: new THREE.Vector3(c.r * glow.intensity, c.g * glow.intensity, c.b * glow.intensity) },
-      uSunDir: { value: new THREE.Vector3(1, 0, 0) },
-      uPower: { value: glow.power },
-    },
-    vertexShader: `
-      #include <common>
-      #include <logdepthbuf_pars_vertex>
-      varying vec3 vWorldN;
-      varying vec3 vWorldPos;
-      void main() {
-        vWorldN = normalize(mat3(modelMatrix) * normal);
-        vec4 wp = modelMatrix * vec4(position, 1.0);
-        vWorldPos = wp.xyz;
-        gl_Position = projectionMatrix * viewMatrix * wp;
-        #include <logdepthbuf_vertex>
-      }
-    `,
-    fragmentShader: `
-      #include <common>
-      #include <logdepthbuf_pars_fragment>
-      uniform vec3 uColor;
-      uniform vec3 uSunDir;
-      uniform float uPower;
-      varying vec3 vWorldN;
-      varying vec3 vWorldPos;
-      void main() {
-        #include <logdepthbuf_fragment>
-        vec3 N = normalize(vWorldN);
-        vec3 V = normalize(cameraPosition - vWorldPos);
-        float rim = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), uPower);
-        float sun = smoothstep(-0.25, 0.35, dot(N, uSunDir));
-        float a = rim * sun;
-        gl_FragColor = vec4(uColor, a);
-      }
-    `,
+  const mat = new THREE.MeshBasicMaterial({
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
     side: THREE.FrontSide,
   });
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uColor = { value: new THREE.Vector3(c.r * glow.intensity, c.g * glow.intensity, c.b * glow.intensity) };
+    shader.uniforms.uSunDir = { value: sunDir };
+    shader.uniforms.uPower = { value: glow.power };
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vAtmoN;\nvarying vec3 vAtmoW;")
+      .replace(
+        "#include <project_vertex>",
+        "#include <project_vertex>\n  vAtmoN = normalize(mat3(modelMatrix) * normal);\n  vAtmoW = (modelMatrix * vec4(transformed, 1.0)).xyz;",
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nuniform vec3 uColor;\nuniform vec3 uSunDir;\nuniform float uPower;\nvarying vec3 vAtmoN;\nvarying vec3 vAtmoW;",
+      )
+      .replace(
+        "#include <map_fragment>",
+        `#include <map_fragment>
+        vec3 atmoN = normalize(vAtmoN);
+        vec3 atmoV = normalize(cameraPosition - vAtmoW);
+        float rim = pow(1.0 - clamp(dot(atmoN, atmoV), 0.0, 1.0), uPower);
+        float sun = smoothstep(-0.25, 0.35, dot(atmoN, uSunDir));
+        diffuseColor = vec4(uColor, rim * sun);`,
+      );
+  };
+  return mat;
 }
 
 function makeDotTexture(): THREE.Texture {
@@ -178,8 +171,9 @@ interface BodyVisual {
   node: THREE.Object3D;
   sphere: THREE.Mesh;
   clouds?: THREE.Mesh;
-  /** Atmospheric limb-glow shell material (its sun-direction uniform is set per frame). */
-  atmoMat?: THREE.ShaderMaterial;
+  /** Atmospheric limb-glow shell sun-direction uniform value: set per frame so the
+   *  glowing arc tracks the terminator. */
+  atmoSunDir?: THREE.Vector3;
   /** Ring-material sun-direction uniform value (Saturn): set per frame so the
    *  planet's shadow band falls across the rings from the true Sun. */
   ringSunDir?: THREE.Vector3;
@@ -267,9 +261,10 @@ export class BodyViews {
     }
 
     // Atmospheric limb-scattering glow (Earth, Venus, Mars, Titan, Pluto).
-    let atmoMat: THREE.ShaderMaterial | undefined;
+    let atmoSunDir: THREE.Vector3 | undefined;
     if (tex.atmoGlow) {
-      atmoMat = makeAtmosphereMaterial(tex.atmoGlow);
+      atmoSunDir = new THREE.Vector3(1, 0, 0);
+      const atmoMat = makeAtmosphereMaterial(tex.atmoGlow, atmoSunDir);
       const shell = new THREE.Mesh(new THREE.SphereGeometry(radius * tex.atmoGlow.scale, segW, segH), atmoMat);
       node.add(shell);
     }
@@ -308,7 +303,7 @@ export class BodyViews {
     const focusColor = color.clone().lerp(new THREE.Color(0xffffff), 0.5);
     const spinRate = def.rotationPeriod ? (2 * Math.PI) / def.rotationPeriod : 0;
     const visual: BodyVisual = {
-      def, marker, node, sphere, clouds, atmoMat, ringSunDir,
+      def, marker, node, sphere, clouds, atmoSunDir, ringSunDir,
       spinRate,
       cloudSpinRate: spinRate * 0.92, // a touch of cloud drift relative to the surface
       baseColor, focusColor,
@@ -430,11 +425,11 @@ export class BodyViews {
       // Direction from this body to the true Sun (render space). Drives both the
       // atmosphere's day-side arc and Saturn's ring-shadow band, so each tracks
       // the terminator as the body and Sun move.
-      if (vis.atmoMat || vis.ringSunDir) {
+      if (vis.atmoSunDir || vis.ringSunDir) {
         const sun = this.sm.sunRenderPosition;
         const sx = sun.x - tmp.x, sy = sun.y - tmp.y, sz = sun.z - tmp.z;
         const inv = 1 / (Math.hypot(sx, sy, sz) || 1);
-        if (vis.atmoMat) (vis.atmoMat.uniforms.uSunDir!.value as THREE.Vector3).set(sx * inv, sy * inv, sz * inv);
+        if (vis.atmoSunDir) vis.atmoSunDir.set(sx * inv, sy * inv, sz * inv);
         if (vis.ringSunDir) vis.ringSunDir.set(sx * inv, sy * inv, sz * inv);
       }
 
