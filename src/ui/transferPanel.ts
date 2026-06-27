@@ -152,6 +152,33 @@ export class TransferPanel {
       ? "aerocapture" : "propulsive";
   }
 
+  /**
+   * The budget verdict for a committed leg, honest about the WHOLE mission cost.
+   * `preCapture` is everything paid before arrival (injection, plus any flyby Δv);
+   * `capture` is the arrival burn. With no in-flight refuelling, a capture the ship
+   * can't afford strands it on a hyperbola at the target — so the planner must not
+   * green-light it. Returns the readout line and whether Commit should be allowed.
+   */
+  private budgetVerdict(
+    preCapture: number, capture: number, haveDv: number, aeroNote = false,
+  ): { html: string; ok: boolean } {
+    if (preCapture > haveDv) {
+      return { ok: false, html: `<div class="warn">✗ injection exceeds Δv budget</div>` };
+    }
+    if (preCapture + capture > haveDv) {
+      return {
+        ok: false,
+        html: `<div class="warn">✗ capture Δv exceeds remaining budget — the ship would arrive but can't capture. Try a loose-ellipse or aerocapture arrival.</div>`,
+      };
+    }
+    return {
+      ok: true,
+      html: aeroNote
+        ? `<div class="ok">✓ within budget — the atmosphere does the braking</div>`
+        : `<div class="ok">✓ injection + capture within budget</div>`,
+    };
+  }
+
   /** The capture line for a gravity-assist/chain arrival at `vInfArrive` under the current
    *  capture selection: the Δv paid, a human label, and feasibility (aerocapture can fail). */
   private assistCaptureLine(vInfArrive: number): { dvArrive: number; label: string; feasible: boolean } {
@@ -667,10 +694,11 @@ export class TransferPanel {
     if (this.chain && ship) {
       const r = this.chain.result;
       const haveDv = dvRemaining(ship);
-      const need = r.dvDepart + r.dvFlybyTotal;
-      const feasible = need <= haveDv;
       const names = r.flybys.map((f) => BODY_BY_ID.get(f.bodyId)!.name).join(" → ");
       const cap = this.assistCaptureLine(r.vInfArrive);
+      const verdict = cap.feasible
+        ? this.budgetVerdict(r.dvDepart + r.dvFlybyTotal, cap.dvArrive, haveDv)
+        : { ok: false, html: `<div class="warn">✗ ${cap.label}</div>` };
       this.axisEl.innerHTML = `<span>gravity-assist chain via ${names}</span>`;
       this.readout.innerHTML =
         optLine +
@@ -683,10 +711,8 @@ export class TransferPanel {
         kv("Flyby Δv (total)", `${(r.dvFlybyTotal / 1000).toFixed(3)} km/s${r.unpowered ? " (all free)" : ""}`) +
         kv("Capture Δv", cap.feasible ? `${(cap.dvArrive / 1000).toFixed(3)} km/s${cap.label}` : cap.label) +
         kv("Total Δv", `${((r.dvDepart + r.dvFlybyTotal + cap.dvArrive) / 1000).toFixed(3)} km/s`) +
-        (feasible && cap.feasible ? `<div class="ok">✓ injection + flybys within budget</div>`
-          : !cap.feasible ? `<div class="warn">✗ ${cap.label}</div>`
-          : `<div class="warn">✗ exceeds Δv budget</div>`);
-      setDisabled(this.commitBtn, !feasible || !cap.feasible, "Injection + flyby Δv exceeds the ship's budget, or aerocapture infeasible.");
+        verdict.html;
+      setDisabled(this.commitBtn, !verdict.ok, "Injection + flyby + capture Δv exceeds the ship's budget, or aerocapture infeasible.");
       return;
     }
 
@@ -704,10 +730,11 @@ export class TransferPanel {
         return;
       }
       const haveDv = dvRemaining(ship);
-      const need = a.dvDepart + a.dvFlyby;
-      const feasible = need <= haveDv;
       const directBest = this.pork ? bestPorkCell(this.pork, "dv")?.total : undefined;
       const cap = this.assistCaptureLine(a.vInfArrive);
+      const verdict = cap.feasible
+        ? this.budgetVerdict(a.dvDepart + a.dvFlyby, cap.dvArrive, haveDv)
+        : { ok: false, html: `<div class="warn">✗ ${cap.label}</div>` };
       this.axisEl.innerHTML = `<span>gravity assist via ${BODY_BY_ID.get(this.viaId)!.name}</span>`;
       this.readout.innerHTML =
         optLine +
@@ -720,10 +747,8 @@ export class TransferPanel {
         kv("Capture Δv", cap.feasible ? `${(cap.dvArrive / 1000).toFixed(3)} km/s${cap.label}` : cap.label) +
         kv("Total Δv", `${((a.dvDepart + a.dvFlyby + cap.dvArrive) / 1000).toFixed(3)} km/s`) +
         (directBest ? kv("Direct best Δv", `${(directBest / 1000).toFixed(3)} km/s`) : "") +
-        (feasible && cap.feasible ? `<div class="ok">✓ injection + flyby within budget</div>`
-          : !cap.feasible ? `<div class="warn">✗ ${cap.label}</div>`
-          : `<div class="warn">✗ exceeds Δv budget</div>`);
-      setDisabled(this.commitBtn, !feasible || !cap.feasible, "Injection + flyby Δv exceeds the ship's budget, or aerocapture infeasible.");
+        verdict.html;
+      setDisabled(this.commitBtn, !verdict.ok, "Injection + flyby + capture Δv exceeds the ship's budget, or aerocapture infeasible.");
       return;
     }
 
@@ -751,7 +776,10 @@ export class TransferPanel {
     const aero = this.captureMode === "aerocapture" && target?.atmosphere
       ? aerocapturePreview(effId, fromId, cell.depT, cell.arrT) : null;
     if (this.captureMode === "aerocapture" && target?.atmosphere) {
-      const feasible = aero != null && aero.feasible && cell.dvDepart <= haveDv;
+      // Aerocapture pays only a small post-pass trim, so the budget verdict folds that in.
+      const verdict = aero?.feasible
+        ? this.budgetVerdict(cell.dvDepart, aero.trimDv, haveDv, true)
+        : { ok: false, html: `<div class="warn">✗ arrival too fast to aerocapture here</div>` };
       this.readout.innerHTML =
         optLine +
         kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
@@ -761,10 +789,8 @@ export class TransferPanel {
         (aero?.feasible ? kv("Arrival trim Δv", `${(aero.trimDv / 1000).toFixed(3)} km/s`) : "") +
         (aero ? kv("Saved vs propulsive", `${(aero.propulsiveDv / 1000).toFixed(3)} km/s`) : "") +
         stage2 +
-        (feasible ? `<div class="ok">✓ injection within budget — atmosphere does the braking</div>`
-          : aero && !aero.feasible ? `<div class="warn">✗ arrival too fast to aerocapture here</div>`
-          : `<div class="warn">✗ injection exceeds Δv budget</div>`);
-      setDisabled(this.commitBtn, !feasible, "Aerocapture infeasible or injection exceeds budget.");
+        verdict.html;
+      setDisabled(this.commitBtn, !verdict.ok, "Aerocapture infeasible or injection exceeds budget.");
       return;
     }
 
@@ -779,7 +805,10 @@ export class TransferPanel {
         kv("Saved vs circular", `${((cell.dvArrive - captureDv) / 1000).toFixed(3)} km/s`)
       : "";
     const totalDv = cell.dvDepart + captureDv;
-    const feasible = cell.dvDepart <= haveDv;
+    // Gate on the WHOLE mission (injection + capture), not just injection — a deep-well
+    // arrival can be captured the cheap elliptical/aero way, and the planner should say so
+    // honestly rather than green-light a low-circular capture the ship can't afford.
+    const verdict = this.budgetVerdict(cell.dvDepart, captureDv, haveDv);
     this.readout.innerHTML =
       optLine +
       kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
@@ -790,8 +819,8 @@ export class TransferPanel {
       kv("Total Δv", `${(totalDv / 1000).toFixed(3)} km/s`) +
       stage2 +
       kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
-      (feasible ? `<div class="ok">✓ injection within budget</div>` : `<div class="warn">✗ injection exceeds Δv budget</div>`);
-    setDisabled(this.commitBtn, !feasible, "Injection Δv exceeds the ship's budget.");
+      verdict.html;
+    setDisabled(this.commitBtn, !verdict.ok, "Injection + capture Δv exceeds the ship's budget — pick a cheaper capture (loose ellipse / aerocapture).");
   }
 
   private commit(): void {
