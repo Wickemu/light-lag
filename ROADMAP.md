@@ -67,13 +67,19 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-1. **In-sim flyable entry / aerocapture pass** — the entry-heating + aerocapture budget
-   lands first today; flying the pass in-sim (with the live heat/decel readout) is the
-   next step. *(see "Landing / takeoff".)*
+1. **In-sim flyable aerocapture pass + B-plane / chained executors** — a deorbit/landing
+   entry now flies in-sim; the remaining in-sim gaps are an aerocapture pass that exits to a
+   bound orbit from a hyperbolic SOI arrival, and the chained-flyby / B-plane-targeted
+   executors. *(see "Landing / takeoff" and "Gravity assists".)*
 
-*(Done since last round: **defensible SNR-vs-range detection curve** — the IR detection
-model is now the radiometer equation: a real detector NEP (W/√Hz), an explicit
-integration time τ, an explicit SNR threshold (5σ), and background photon shot noise,
+*(Done since last round: **in-sim flyable entry pass** — a coasting ship whose orbit dips
+into the atmosphere can be flown down in-sim ("Fly entry") instead of teleported: a new
+read-time `EntryLeg` integrates the ballistic drag trajectory deterministically from the
+interface crossing (planar, lift = 0, reusing the entry.ts EOM), watchable at any time-warp
+with a live altitude / speed / g / heat-flux / wall-temp readout, ending in landed / captured
+/ skip-out (see "Landing / takeoff"). Earlier: **defensible SNR-vs-range detection curve** —
+the IR detection model is now the radiometer equation: a real detector NEP (W/√Hz), an
+explicit integration time τ, an explicit SNR threshold (5σ), and background photon shot noise,
 giving an honest SNR(d) curve that falls as 1/d² (see "Detection model"). Earlier:
 **aerocapture + atmospheric-entry heating** — a full ballistic
 entry trajectory RK4-integrated through the exponential atmosphere, reporting peak
@@ -211,8 +217,21 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   reporting the Δv saved vs the propulsive capture burn (`orbit.ts hyperbolicBurnDv`)
   minus a small post-pass periapsis-raise trim — pure functions, no world state, golden
   hash unmoved; the descent panel shows the live peak-g / heat-flux / wall-temp / heat-load
-  readout. Still to do: radiative (shock-layer) heating above ~11 km/s, an in-sim flyable
-  entry/aerocapture pass (the budget lands first), and an aerocapture planner UI.
+  readout. **In-sim flyable entry pass — DONE** (`world.ts EntryLeg`, `ships.ts
+  entryLegState`/`buildEntryLeg`, `commands.ts flyEntry`, `sim.ts` entry-start/entry-end
+  events): a coasting ship whose orbit dips below the atmospheric interface can be flown
+  down in-sim ("Fly entry") instead of teleported. `flyEntry` finds the interface crossing
+  (`entry.ts entryInterfaceCrossing`) and schedules the pass; at the crossing the ship flies
+  a ballistic (no-propellant) drag trajectory carried as a read-time **deterministic** leg —
+  the same `entry.ts` EOM integrated as a planar `[h, v, γ, θ]` state and reconstructed into
+  the orbital plane, re-derived from a fixed start so it is exact at any time-warp (one-step
+  and chunked runs hash identically) and golden-hash-neutral (a new optional `EntryLeg`
+  field, absent from the golden scenario). It ends in landed (co-rotating touchdown) /
+  captured (settles onto the post-pass orbit) / skip-out, with a live altitude / speed / g /
+  heat-flux / wall-temp / heat-load readout in the ship panel. Still to do: radiative
+  (shock-layer) heating above ~11 km/s; an in-sim aerocapture exit from a hyperbolic SOI
+  arrival (the entry leg flies deorbit/landing today); atmospheric co-rotation / lift in the
+  in-sim pass (planar ballistic first cut); and an aerocapture planner UI.
 - **More bodies** — DONE: 43 bodies (dwarfs, asteroids, gas-giant & other moons,
   plus TNOs and comets) on the fixed-J2000-conic (`FixedHelioRow`) + `MoonRow`
   paths, Horizons-checked. Still to do: irregular-moon precession, more small

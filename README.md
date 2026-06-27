@@ -52,6 +52,10 @@ flyable, to-scale 3D Solar System.
   the integrated heat load that sizes a heat shield. Aerocapture solves the single-pass
   corridor that captures a hyperbolic arrival into a bound orbit, saving nearly the whole
   propulsive capture burn (a Mars arrival captures for ~10 m/s of trim instead of ~2 km/s).
+  When a ship's orbit dips into the atmosphere you can **Fly entry** — ride the drag
+  trajectory down in-sim, watching altitude, speed, g-load, and heat flux build at any
+  time-warp, ending in a landing, a skip-out, or an aerocapture — a deterministic, save-safe
+  leg (no teleport).
 - **Electric (low-thrust) propulsion**: power-limited ion/Hall drives whose real thrust is
   `min(F_rated, 2ηP/vₑ)` with solar power falling as 1/r² — fly a multi-month Edelbaum spiral
   from LEO to GEO (or any near-circular orbit), charged up front and exact at any time-warp.

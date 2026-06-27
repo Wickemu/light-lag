@@ -5,7 +5,7 @@
  * currently on — coasting or mid-burn.
  */
 
-import { type Ship, type InterstellarLeg } from "./world.ts";
+import { type Ship, type InterstellarLeg, type EntryLeg } from "./world.ts";
 import { type Stage, deltaVBudget, exhaustVelocity, stageWetMass, consumeStageDv, boosterCount } from "./propulsion.ts";
 import {
   type State,
@@ -19,7 +19,9 @@ import { j2Rates } from "./orbit.ts";
 import { bodyState } from "./ephemeris.ts";
 import { STAR_BY_ID, starPosition } from "./stars.ts";
 import { BODY_BY_ID, C } from "./constants.ts";
-import { add, addScaled, sub, scale, normalize, length, distance } from "./math/vec3.ts";
+import { type Vec3, add, addScaled, sub, scale, dot, cross, normalize, length, distance } from "./math/vec3.ts";
+import { integrateEntryPlanar, entryTrajectory } from "./maneuver/entry.ts";
+import { DEFAULT_ENTRY_BETA } from "./surface.ts";
 import {
   solarFlux, hullArea, equilibriumTemp, detectionRange, minDetectablePowerW, radiatorArea,
   type SensorSpec, DEFAULT_SENSOR,
@@ -158,9 +160,121 @@ export function spiralElements(ship: Ship, t: number): KeplerElements {
   return { a, e: 0, i: leg.i, Omega: leg.Omega, omega: 0, M: wrapPi(theta) };
 }
 
+/** The nominal blunt-body entry vehicle used by the in-sim pass and the descent
+ *  panel — one shared calibration (matches the panel's `entryHeatRows`). */
+export const NOMINAL_ENTRY_VEHICLE = { noseRadius: 2, ballisticCoef: DEFAULT_ENTRY_BETA, emissivity: 0.85 };
+
+/** Orbital-plane basis from an interface state: the radial unit êr0 and the in-plane
+ *  downrange unit êt0 (the horizontal part of v0), with the entry speed and the
+ *  below-horizontal flight-path angle derived from r0,v0. */
+function planeBasis(r0: Vec3, v0: Vec3): { er0: Vec3; et0: Vec3; entrySpeed: number; fpa: number } {
+  const er0 = normalize(r0);
+  const speed = length(v0);
+  const vr = dot(v0, er0);
+  const horiz = sub(v0, scale(er0, vr));
+  let et0: Vec3;
+  if (length(horiz) > 1e-6) {
+    et0 = normalize(horiz);
+  } else {
+    // Pure radial entry — pick any in-plane perpendicular to êr0.
+    const ref: Vec3 = Math.abs(er0.z) < 0.9 ? { x: 0, y: 0, z: 1 } : { x: 1, y: 0, z: 0 };
+    et0 = normalize(cross(cross(er0, ref), er0));
+  }
+  const fpa = Math.asin(Math.max(-1, Math.min(1, -vr / speed)));
+  return { er0, et0, entrySpeed: speed, fpa };
+}
+
+/** Reconstruct the body-relative 3D state from a planar entry step (altitude h,
+ *  downrange angle θ, speed v, flight-path angle γ) and the orbital-plane basis. */
+function reconstructEntry(er0: Vec3, et0: Vec3, R: number, s: { h: number; v: number; gamma: number; theta: number }): State {
+  const r = R + s.h;
+  const ct = Math.cos(s.theta), st = Math.sin(s.theta);
+  const dir = add(scale(er0, ct), scale(et0, st)); // radial direction after sweeping θ
+  const tang = add(scale(er0, -st), scale(et0, ct)); // downrange unit = d(dir)/dθ
+  const vr = s.v * Math.sin(s.gamma); // γ positive-up: descending ⇒ vr < 0
+  const vt = s.v * Math.cos(s.gamma);
+  return { r: scale(dir, r), v: add(scale(dir, vr), scale(tang, vt)) };
+}
+
+/** Body-relative state of a ship flying an in-sim entry leg at time t. Re-integrates
+ *  the planar ballistic trajectory from the fixed interface state to the elapsed time
+ *  (deterministic, exact at any warp) and reconstructs the 3D state in the orbital
+ *  plane. At/after tEnd it returns the stored exit state (the finalize takes over). */
+export function entryLegState(leg: EntryLeg, t: number): State {
+  if (t >= leg.tEnd) return { r: leg.exitR, v: leg.exitV };
+  const body = BODY_BY_ID.get(leg.bodyId);
+  if (!body) return { r: leg.r0, v: leg.v0 };
+  const { er0, et0, entrySpeed, fpa } = planeBasis(leg.r0, leg.v0);
+  const elapsed = Math.max(0, t - leg.tStart);
+  const veh = { ballisticCoef: leg.ballisticCoef, noseRadius: leg.noseRadius, emissivity: leg.emissivity };
+  const s = integrateEntryPlanar(body, veh, entrySpeed, fpa, elapsed);
+  if (!s) return { r: leg.r0, v: leg.v0 };
+  return reconstructEntry(er0, et0, body.radius, s);
+}
+
+/** Build a complete entry leg from the interface-crossing state `r0,v0` at `tStart`:
+ *  run the fine entry pass for the outcome/duration/peak budget, integrate to the
+ *  terminal planar state, and reconstruct the body-relative exit state the finalize
+ *  uses. null for an airless body. */
+export function buildEntryLeg(
+  body: { id: string; radius: number; mu: number; atmosphere?: unknown },
+  r0: Vec3, v0: Vec3, tStart: number,
+  vehicle: { ballisticCoef: number; noseRadius: number; emissivity: number } = NOMINAL_ENTRY_VEHICLE,
+): EntryLeg | null {
+  const def = BODY_BY_ID.get(body.id);
+  if (!def) return null;
+  const { er0, et0, entrySpeed, fpa } = planeBasis(r0, v0);
+  const res = entryTrajectory(def, vehicle, { entrySpeed, flightPathAngle: fpa });
+  const term = integrateEntryPlanar(def, vehicle, entrySpeed, fpa);
+  if (!res || !term) return null;
+  const exit = reconstructEntry(er0, et0, def.radius, term);
+  return {
+    bodyId: body.id, tStart, tEnd: tStart + res.duration, r0, v0,
+    ballisticCoef: vehicle.ballisticCoef, noseRadius: vehicle.noseRadius, emissivity: vehicle.emissivity,
+    outcome: res.outcome, exitR: exit.r, exitV: exit.v,
+    peakDecelG: res.peakDecelG, peakHeatFlux: res.peakHeatFlux, peakWallTemp: res.peakWallTemp, heatLoad: res.heatLoad,
+  };
+}
+
+/** Live readout of a ship flying an entry leg: altitude/speed and the instantaneous
+ *  heating/deceleration, plus the precomputed peak budget and the predicted outcome.
+ *  null when the ship is not on an entry leg. */
+export interface EntryReadout {
+  bodyName: string;
+  altitudeM: number;
+  speedMS: number;
+  currentG: number;
+  currentHeatFluxW: number;
+  wallTempK: number;
+  heatLoad: number;
+  progress: number; // 0..1 through the pass
+  outcome: "landed" | "captured" | "skip-out";
+  peakDecelG: number;
+  peakHeatFlux: number;
+  peakWallTemp: number;
+}
+export function shipEntryReadout(ship: Ship, t: number): EntryReadout | null {
+  const leg = ship.entryLeg;
+  if (!leg) return null;
+  const body = BODY_BY_ID.get(leg.bodyId);
+  if (!body) return null;
+  const { entrySpeed, fpa } = planeBasis(leg.r0, leg.v0);
+  const elapsed = Math.max(0, Math.min(t, leg.tEnd) - leg.tStart);
+  const veh = { ballisticCoef: leg.ballisticCoef, noseRadius: leg.noseRadius, emissivity: leg.emissivity };
+  const s = integrateEntryPlanar(body, veh, entrySpeed, fpa, elapsed)!;
+  const span = leg.tEnd - leg.tStart;
+  return {
+    bodyName: body.name, altitudeM: s.h, speedMS: s.v, currentG: s.decelG,
+    currentHeatFluxW: s.q, wallTempK: s.wallTempK, heatLoad: s.heatLoad,
+    progress: span > 0 ? elapsed / span : 1, outcome: leg.outcome,
+    peakDecelG: leg.peakDecelG, peakHeatFlux: leg.peakHeatFlux, peakWallTemp: leg.peakWallTemp,
+  };
+}
+
 /** State of the ship relative to its primary (the Earth-centred frame, etc.). */
 export function shipRelativeState(ship: Ship, t: number): State {
   if (ship.landed) return landedRelativeState(ship, t);
+  if (ship.entryLeg) return entryLegState(ship.entryLeg, t);
   if (ship.interstellarLeg) return interstellarLegState(ship.interstellarLeg, t);
   if (ship.spiral) return elementsToState(spiralElements(ship, t), primaryMu(ship));
   if (ship.mode === "thrust" && ship.r && ship.v) {
@@ -226,6 +340,10 @@ export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
     return { a: length(interstellarLegState(ship.interstellarLeg, t).r), e: 0, i: 0, Omega: 0, omega: 0, M: 0 };
   }
   if (ship.spiral) return spiralElements(ship, t);
+  if (ship.entryLeg) {
+    const st = entryLegState(ship.entryLeg, t);
+    return stateToElements(st.r, st.v, primaryMu(ship));
+  }
   const mu = primaryMu(ship);
   if (ship.mode === "thrust" && ship.r && ship.v) {
     // Honour the requested time: linearly extrapolate the integrated state from

@@ -26,7 +26,7 @@ import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius } from "./orbit.ts";
 import {
   activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
-  interstellarProperTime, spiralElements,
+  interstellarProperTime, spiralElements, buildEntryLeg, NOMINAL_ENTRY_VEHICLE,
 } from "./ships.ts";
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
@@ -36,6 +36,7 @@ import { signalArrival } from "./comms.ts";
 import { aimArrival } from "./maneuver/arrival.ts";
 import { lambert } from "./maneuver/lambert.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
+import { entryInterfaceAlt } from "./maneuver/entry.ts";
 import { type BodyDef, BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
 import { type Vec3, add, sub, scale, normalize, length, cross } from "./math/vec3.ts";
 
@@ -543,6 +544,8 @@ export class Simulation {
       case "soi-crossing": this.enterSoi(ship); break;
       case "soi-exit": this.exitSoi(ship); break;
       case "capture": this.captureAtPeriapsis(ship); break;
+      case "entry-start": this.beginEntry(ship); break;
+      case "entry-end": this.finishEntry(ship); break;
       default: break;
     }
   }
@@ -892,5 +895,67 @@ export class Simulation {
     ship.mode = "coast";
     tr.arrived = true;
     tr.dvArrive = captureDv;
+  }
+
+  /**
+   * Begin an in-sim atmospheric-entry pass: the ship has coasted to the interface,
+   * so capture its body-relative state, build the (ballistic, no-propellant) entry
+   * leg, and schedule the finalize at its end. Re-validates that the ship is still
+   * coasting and actually at/descending through the interface (the player may have
+   * burned away in the interim) — otherwise it does nothing.
+   */
+  private beginEntry(ship: Ship): void {
+    if (ship.mode !== "coast" || ship.landed || ship.entryLeg || ship.interstellarLeg || ship.spiral) return;
+    const body = BODY_BY_ID.get(ship.primary);
+    if (!body || body.hasSurface === false || !body.atmosphere) return;
+    const t = this.world.t;
+    const st = shipRelativeState(ship, t);
+    const alt = length(st.r) - body.radius;
+    const descending = (st.r.x * st.v.x + st.r.y * st.v.y + st.r.z * st.v.z) < 0;
+    // Guard: only if the ship is near the interface and falling (orbit unchanged).
+    if (!descending || alt < 0 || alt > 1.3 * entryInterfaceAlt(body)) return;
+    const leg = buildEntryLeg(body, st.r, st.v, t, NOMINAL_ENTRY_VEHICLE);
+    if (!leg) return;
+    ship.entryLeg = leg;
+    ship.mode = "coast";
+    ship.elements = undefined;
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.epoch = t;
+    this.events.push({ t: leg.tEnd, kind: "entry-end", entityId: ship.id });
+  }
+
+  /**
+   * Finalize an in-sim entry at its end. A landed pass parks the ship on the surface
+   * (co-rotating, like landShip); a captured or skip-out pass settles onto the
+   * post-pass osculating orbit from the body-relative exit state. The leg is cleared.
+   */
+  private finishEntry(ship: Ship): void {
+    const leg = ship.entryLeg;
+    if (!leg) return;
+    const body = BODY_BY_ID.get(leg.bodyId);
+    if (!body) { ship.entryLeg = undefined; return; }
+    const t = this.world.t;
+    ship.entryLeg = undefined;
+    if (leg.outcome === "landed") {
+      // Store the touchdown site as a body-fixed direction (de-rotate by Ω·t), so the
+      // ship co-rotates with the surface — identical to landShip.
+      const dir = normalize(leg.exitR);
+      const T = body.rotationPeriod ?? 0;
+      const om = T !== 0 ? (2 * Math.PI) / T : 0;
+      const c = Math.cos(-om * t), s = Math.sin(-om * t);
+      ship.landed = { bodyId: body.id, surfaceDir: { x: dir.x * c - dir.y * s, y: dir.x * s + dir.y * c, z: dir.z } };
+      ship.mode = "coast";
+      ship.elements = undefined;
+      ship.r = undefined;
+      ship.v = undefined;
+      ship.epoch = t;
+    } else {
+      // Captured (now bound) or skip-out (still unbound): continue on the osculating
+      // orbit defined by the body-relative exit state.
+      ship.elements = stateToElements(leg.exitR, leg.exitV, body.mu);
+      ship.epoch = t;
+      ship.mode = "coast";
+    }
   }
 }

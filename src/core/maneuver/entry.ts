@@ -40,6 +40,8 @@ import { type BodyDef, SIGMA, G0 } from "../constants.ts";
 import { atmosphericDensity, DEFAULT_ENTRY_BETA } from "../surface.ts";
 import { visVivaSpeed, hyperbolicBurnDv } from "../orbit.ts";
 import { rk4 } from "../math/integrators.ts";
+import { type KeplerElements, elementsToState, propagate, period } from "../math/kepler.ts";
+import { type Vec3, dot, normalize, length } from "../math/vec3.ts";
 
 /** Sutton-Graves convective stagnation-point heating coefficient for AIR
  *  (Sutton & Graves, NASA TR R-376, 1971), SI: q = k·√(ρ/R_n)·v³ with q in W/m²,
@@ -226,6 +228,142 @@ export function entryTrajectory(
     duration: t,
     exitEnergy,
   };
+}
+
+// ── In-sim flyable entry leg ─────────────────────────────────────────────────
+//
+// The same ballistic EOM as entryTrajectory, but carried as a PLANAR state so a
+// ship can fly the pass in-sim and be watched at any time-warp. We add a downrange
+// angle θ (dθ/dt = v·cosγ/r) to the [h, v, γ] state; (h, θ) plus an orbital-plane
+// basis (built from the interface-crossing r0, v0) reconstruct the body-relative
+// 3D position. Deterministic: a pure function of the fixed start and the fixed step,
+// re-integrated on demand — exactly the read-time philosophy of the spiral /
+// interstellar legs, just integrated rather than closed-form (drag has no closed
+// form). First cut: planar, ballistic (lift = 0), atmospheric co-rotation ignored.
+
+/** A snapshot of a flying entry at `elapsed` seconds past the interface crossing. */
+export interface EntryPlanarStep {
+  elapsed: number; // s since the entry started
+  h: number; // altitude (m)
+  v: number; // speed (m/s)
+  gamma: number; // flight-path angle, positive-UP (rad) — descending is < 0
+  theta: number; // downrange angle swept in the orbital plane (rad)
+  heatLoad: number; // ∫ q dt so far (J/m²)
+  q: number; // instantaneous stagnation heat flux (W/m²)
+  decelG: number; // instantaneous drag deceleration (g0)
+  wallTempK: number; // instantaneous radiative-equilibrium wall temperature (K)
+  terminal: boolean; // a stop condition (landed / exited / stalled) was reached at/before elapsed
+}
+
+/**
+ * Integrate the planar ballistic entry from the interface to `maxElapsed` seconds
+ * (or to its terminal condition, whichever is first). Returns the state at the stop
+ * time. Shares entryTrajectory's EOM, step, and stop conditions; null if airless.
+ */
+export function integrateEntryPlanar(
+  body: BodyDef,
+  vehicle: EntryVehicle,
+  entrySpeed: number,
+  flightPathAngle: number,
+  maxElapsed = Infinity,
+): EntryPlanarStep | null {
+  const atm = body.atmosphere;
+  if (!atm) return null;
+  const R = body.radius, mu = body.mu;
+  const beta = vehicle.ballisticCoef ?? DEFAULT_ENTRY_BETA;
+  const Rn = vehicle.noseRadius;
+  const eps = vehicle.emissivity ?? DEFAULT_ENTRY_EMISSIVITY;
+  const k = vehicle.suttonGravesK ?? defaultSuttonGravesK(body);
+  const hIface = entryInterfaceAlt(body);
+
+  const deriv = (_t: number, s: number[]): number[] => {
+    const h = s[0]!, v = s[1]!, g = s[2]!;
+    const r = R + h;
+    const grav = mu / (r * r);
+    const rho = atmosphericDensity(body, h);
+    const dragAcc = (0.5 * rho * v * v) / beta;
+    return [
+      v * Math.sin(g), // dh/dt
+      -dragAcc - grav * Math.sin(g), // dv/dt
+      v > 1e-6 ? (v / r - grav / v) * Math.cos(g) : 0, // dγ/dt
+      v > 1e-6 ? (v * Math.cos(g)) / r : 0, // dθ/dt (downrange)
+      suttonGravesFlux(k, rho, Rn, v), // d(heatLoad)/dt
+    ];
+  };
+
+  let y = [hIface, entrySpeed, -flightPathAngle, 0, 0];
+  let t = 0;
+  const dt = 0.1, tMax = 6000;
+  let terminal = false;
+  while (t < tMax && t < maxElapsed) {
+    const h = y[0]!, g = y[2]!;
+    if (h <= 0) { y[0] = 0; terminal = true; break; } // landed
+    if (h >= hIface && g > 0) { terminal = true; break; } // exited climbing
+    if (y[1]! <= 1) { terminal = true; break; } // stalled in thick air
+    const step = Math.min(dt, maxElapsed - t);
+    y = rk4(y, t, step, deriv);
+    t += step;
+    if (y[1]! < 0) y[1] = 0;
+  }
+
+  const h = Math.max(y[0]!, 0), v = y[1]!;
+  const rho = atmosphericDensity(body, h);
+  const q = suttonGravesFlux(k, rho, Rn, v);
+  const dragAcc = (0.5 * rho * v * v) / beta;
+  return {
+    elapsed: t, h, v, gamma: y[2]!, theta: y[3]!, heatLoad: y[4]!,
+    q, decelG: dragAcc / G0, wallTempK: wallTemp(q, eps), terminal,
+  };
+}
+
+/** Where a coasting orbit first enters the atmosphere. */
+export interface InterfaceCrossing {
+  dtToInterface: number; // s from the elements' epoch to the inbound interface crossing
+  r0: Vec3; // body-relative position at the crossing (m)
+  v0: Vec3; // body-relative velocity at the crossing (m/s)
+  entrySpeed: number; // |v0| (m/s)
+  flightPathAngle: number; // below-horizontal angle of v0 (rad), > 0 descending
+}
+
+/**
+ * Find where an osculating orbit (elements about `body`, valid at dt = 0) first
+ * descends through the atmospheric interface. Returns null if the periapsis stays
+ * above the interface (the orbit never enters). Deterministic sample-then-bisect on
+ * the analytic Kepler propagation — no integration.
+ */
+export function entryInterfaceCrossing(body: BodyDef, el: KeplerElements): InterfaceCrossing | null {
+  const atm = body.atmosphere;
+  if (!atm) return null;
+  const mu = body.mu;
+  const rIface = body.radius + entryInterfaceAlt(body);
+  const rp = el.a * (1 - el.e); // periapsis radius (a < 0 for hyperbola ⇒ still > 0)
+  if (!(rp < rIface)) return null; // never reaches the atmosphere
+
+  const radiusAt = (dt: number): number => length(elementsToState(propagate(el, mu, dt), mu).r);
+  // Scan forward for the first downward crossing of rIface, then bisect.
+  const scanMax = el.a > 0 ? period(el.a, mu) * 1.01 : 12 * 3600;
+  const steps = 720;
+  const dtStep = scanMax / steps;
+  let prevT = 0, prevR = radiusAt(0);
+  let lo = NaN, hi = NaN;
+  for (let i = 1; i <= steps; i++) {
+    const tt = i * dtStep;
+    const rr = radiusAt(tt);
+    if (prevR > rIface && rr <= rIface) { lo = prevT; hi = tt; break; } // inbound crossing
+    prevT = tt; prevR = rr;
+  }
+  if (Number.isNaN(lo)) return null;
+  for (let i = 0; i < 60; i++) {
+    const mid = 0.5 * (lo + hi);
+    if (radiusAt(mid) > rIface) lo = mid; else hi = mid;
+  }
+  const dtX = 0.5 * (lo + hi);
+  const st = elementsToState(propagate(el, mu, dtX), mu);
+  const speed = length(st.v);
+  const rHat = normalize(st.r);
+  const vr = dot(st.v, rHat); // radial rate (negative inbound)
+  const fpa = Math.asin(Math.max(-1, Math.min(1, -vr / speed))); // below-horizontal, > 0 descending
+  return { dtToInterface: dtX, r0: st.r, v0: st.v, entrySpeed: speed, flightPathAngle: fpa };
 }
 
 /** Apoapsis radius (m) of the osculating orbit at an entry's exit state, or
