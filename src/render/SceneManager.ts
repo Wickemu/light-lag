@@ -13,6 +13,10 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { type Vec3, vec3 } from "../core/math/vec3.ts";
 import { bodyPosition } from "../core/ephemeris.ts";
 import { BODY_BY_ID } from "../core/constants.ts";
@@ -30,11 +34,29 @@ const BG: Record<Theme, number> = {
   light: 0xdfe6ef,
 };
 
+/** Bloom tuning per theme. Bloom runs in linear-HDR space *before* tone mapping,
+ *  so the threshold is a linear luminance: only values brighter than it glow.
+ *  - Dark (the "in space" mode): the Sun (HDR-emissive) blooms hard and bright
+ *    sunlit limbs catch a touch of glow — the way a camera/eye responds.
+ *  - Light (the "daylight blueprint" mode): the pale sky background sits at ~0.78
+ *    linear, so we lift the threshold above it and soften the strength — only the
+ *    Sun itself blooms, never the backdrop. */
+const BLOOM: Record<Theme, { strength: number; radius: number; threshold: number }> = {
+  dark: { strength: 0.72, radius: 0.55, threshold: 0.85 },
+  light: { strength: 0.35, radius: 0.4, threshold: 1.05 },
+};
+
 export class SceneManager {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: THREE.WebGLRenderer;
   readonly controls: OrbitControls;
+
+  /** Post-processing chain: scene → bloom → tone-map/output. The whole renderer
+   *  is HDR (half-float) and linear until the final OutputPass, so the Sun can be
+   *  genuinely brighter than white and bloom the way a real camera responds. */
+  private composer!: EffectComposer;
+  private bloom!: UnrealBloomPass;
 
   /** Active map. The in-system views and the interstellar view each draw only in
    *  their own mode (they self-park in the other), and the frame loop updates the
@@ -62,6 +84,12 @@ export class SceneManager {
       logarithmicDepthBuffer: true,
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Filmic response curve: the scene is lit in linear HDR (the Sun is far
+    // brighter than white), and ACES rolls that enormous dynamic range down to
+    // the display the way a real camera does — bright sunlit limbs stay detailed
+    // instead of clipping to flat white, dark night sides keep their shape.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.0;
 
     this.camera = new THREE.PerspectiveCamera(50, 1, 1e-5, 1e9);
     // Start looking at the inner system from above the ecliptic.
@@ -77,6 +105,7 @@ export class SceneManager {
     this.controls.zoomSpeed = 1.2;
 
     this.addLighting();
+    this.setupComposer();
     this.setTheme(this._theme);
     this.resize();
 
@@ -89,18 +118,58 @@ export class SceneManager {
   }
 
   private addLighting(): void {
-    // The Sun is the only real light source; a faint ambient keeps night sides
-    // from being pure black. Its render position is updated every frame to track
-    // the real Sun through the floating origin (see updateOrigin), so a focused
-    // planet's terminator faces the true Sun rather than the camera.
-    this.sunLight = new THREE.PointLight(0xfff4e0, 3, 0, 0);
+    // The Sun is the only real light source. `decay: 0` keeps its irradiance
+    // constant across the system — a deliberate visibility choice, since true
+    // 1/r² falloff would blow out Mercury and leave Neptune black in the same
+    // frame (the sim itself still models real solar flux as 1/r²). Its render
+    // position tracks the real Sun through the floating origin (updateOrigin), so
+    // every body's terminator faces the actual Sun, not the camera.
+    this.sunLight = new THREE.PointLight(0xfff4ea, 4.0, 0, 0);
     this.scene.add(this.sunLight);
-    this.scene.add(new THREE.AmbientLight(0x223044, 0.6));
+    // A whisper of cool fill so night sides keep their silhouette instead of
+    // crushing to unreadable black — the only concession to readability. Real
+    // space is near-black on the night side; this is starlight/zodiacal-light
+    // dim, an order of magnitude below the old value so terminators read sharply.
+    this.scene.add(new THREE.AmbientLight(0x1a2438, 0.12));
+  }
+
+  /** Build the HDR post chain: render the linear scene into a multisampled
+   *  half-float target, add bloom, then tone-map + encode to the canvas. */
+  private setupComposer(): void {
+    const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    // Half-float so HDR (Sun > 1.0) survives into the bloom pass; 4× MSAA so the
+    // composer keeps the crisp geometry edges the bare renderer's antialias gave.
+    const target = new THREE.WebGLRenderTarget(Math.max(size.x, 1), Math.max(size.y, 1), {
+      type: THREE.HalfFloatType,
+      samples: 4,
+    });
+    this.composer = new EffectComposer(this.renderer, target);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    const b = BLOOM[this._theme];
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), b.strength, b.radius, b.threshold);
+    this.composer.addPass(this.bloom);
+    // OutputPass applies the renderer's tone mapping + sRGB encoding as the final
+    // step, so bloom mixes in linear light before the curve is applied.
+    this.composer.addPass(new OutputPass());
+  }
+
+  /** The Sun's current render-space position (metres mapped through the floating
+   *  origin). Body atmosphere/ring shaders read this to light their limbs and
+   *  cast the planet's shadow with the true Sun direction. */
+  get sunRenderPosition(): THREE.Vector3 {
+    return this.sunLight.position;
   }
 
   setTheme(theme: Theme): void {
     this._theme = theme;
     this.scene.background = new THREE.Color(BG[theme]);
+    // Retune bloom for the new backdrop so the pale light-mode sky never glows.
+    if (this.bloom) {
+      const b = BLOOM[theme];
+      this.bloom.strength = b.strength;
+      this.bloom.radius = b.radius;
+      this.bloom.threshold = b.threshold;
+    }
   }
 
   /** Centre on an arbitrary moving world point (in metres), e.g. a ship. */
@@ -223,10 +292,14 @@ export class SceneManager {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    // Keep the post chain matched to the (device-pixel) drawing buffer.
+    const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    this.composer?.setSize(size.x, size.y);
+    this.bloom?.setSize(size.x, size.y);
   }
 
   render(): void {
     this.controls.update();
-    this.renderer.render(this.scene, this.camera);
+    this.composer.render();
   }
 }
