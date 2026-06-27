@@ -22,6 +22,8 @@
 
 import * as THREE from "three";
 import { type BodyDef, type BodyKind } from "../core/constants.ts";
+import { LAND_POLYS } from "./earthLand.ts";
+import { BODY_FEATURES } from "./bodyFeatures.ts";
 
 // ── Determinism ──────────────────────────────────────────────────────────────
 
@@ -338,17 +340,313 @@ function paintGasGiant(def: BodyDef, w: number, h: number, fbm: ReturnType<typeo
   return { surface: tex };
 }
 
-/** Earth: a recognisable blue marble — oceans, fractal continents tinted by
- *  latitude (deserts low, forest mid, tundra high), and polar ice. Returns a
- *  bump map too (land stands proud of the sea). */
+// ── Real surface features ──────────────────────────────────────────────────
+//
+// The Jupiter-spot idea, generalised: a body's recognisable geography is a small
+// table of REAL features (selenographic/areographic coordinates from the IAU
+// gazetteer), stamped over the procedural base. Same contract as the coastlines —
+// real data, drawn procedurally, zero image files. Four primitives cover it:
+//   ellipse    — a soft-edged oval (maria, albedo regions, volcanic paterae)
+//   polyline   — a stroked path (Europa's lineae, Valles Marineris, ridges)
+//   cap        — everything poleward of a latitude (Triton's pink south cap)
+//   hemisphere — a longitudinal darkening (Iapetus' two-tone leading face)
+// Coordinates are east-positive degrees, mapped equirectangularly the same way
+// the textures are: u = (lon+180)/360, v = (90−lat)/180.
+
+export type FeatureShape = "ellipse" | "polyline" | "cap" | "hemisphere" | "global";
+export type FeatureTone =
+  | "much_darker" | "darker" | "slightly_darker" | "neutral"
+  | "slightly_brighter" | "brighter" | "much_brighter";
+
+export interface SurfaceFeature {
+  name?: string;
+  kind: string;
+  shape: FeatureShape;
+  /** Centre (ellipse/cap edge anchor); east-positive lon [-180,180], lat [-90,90]. */
+  lon?: number;
+  lat?: number;
+  /** Angular semi-axes in degrees (ellipse). */
+  semiMajorDeg?: number;
+  semiMinorDeg?: number;
+  /** Long-axis tilt in degrees (ellipse), optional. */
+  orientationDeg?: number;
+  /** Flat [lon,lat,lon,lat,…] for shape="polyline". */
+  polyline?: number[];
+  /** Stroke width in degrees for shape="polyline". */
+  strokeWidthDeg?: number;
+  /** Latitude where a polar cap ends (shape="cap"); sign picks the pole. */
+  capEdgeLatDeg?: number;
+  /** Longitude the darkened hemisphere is centred on (shape="hemisphere"). */
+  hemisphereCenterLonDeg?: number;
+  /** Brightness relative to the body base colour. */
+  tone: FeatureTone;
+  /** Optional explicit sRGB hex when the feature has a distinct hue. */
+  toneHex?: number;
+  /** Edge softness 0..1 (0 = crisp, 1 = fully feathered). Default 0.45. */
+  softness?: number;
+  /** Coverage alpha 0..1. Default 0.8 — lets underlying relief read through. */
+  alpha?: number;
+}
+
+/** Map a relative tone to an RGB, working from the body's reference land/surface
+ *  colour. Explicit hex wins when the feature carries its own hue. */
+function toneToRgb(base: RGB, tone: FeatureTone, hex?: number): RGB {
+  if (hex !== undefined) return hexToRgb(hex);
+  const scale = (k: number): RGB => [base[0] * k, base[1] * k, base[2] * k];
+  const toWhite = (t: number): RGB => [
+    base[0] + (1 - base[0]) * t, base[1] + (1 - base[1]) * t, base[2] + (1 - base[2]) * t,
+  ];
+  switch (tone) {
+    case "much_darker": return scale(0.42);
+    case "darker": return scale(0.60);
+    case "slightly_darker": return scale(0.80);
+    case "slightly_brighter": return toWhite(0.20);
+    case "brighter": return toWhite(0.36);
+    case "much_brighter": return toWhite(0.58);
+    default: return [base[0], base[1], base[2]];
+  }
+}
+
+function rgbaStr(c: RGB, a: number): string {
+  return `rgba(${(c[0] * 255) | 0},${(c[1] * 255) | 0},${(c[2] * 255) | 0},${a})`;
+}
+
+/** lon/lat (deg) → canvas pixel. Equal degrees-per-pixel on both axes (2:1 map). */
+function lonLatToPx(lon: number, lat: number, w: number, h: number): [number, number] {
+  return [((lon + 180) / 360) * w, ((90 - lat) / 180) * h];
+}
+const DEG_TO_PX = (w: number): number => w / 360; // degrees → pixels (both axes)
+
+/** Stamp a soft elliptical feature, wrapping across the u=0/1 seam when it straddles. */
+function stampEllipse(ctx: CanvasRenderingContext2D, w: number, h: number, f: SurfaceFeature, color: RGB): void {
+  const [cx, cy] = lonLatToPx(f.lon ?? 0, f.lat ?? 0, w, h);
+  const rx = (f.semiMajorDeg ?? 5) * DEG_TO_PX(w);
+  const ry = (f.semiMinorDeg ?? f.semiMajorDeg ?? 5) * DEG_TO_PX(w);
+  const alpha = f.alpha ?? 0.8;
+  const core = clamp01(1 - (f.softness ?? 0.45));
+  const xs = (cx < rx || cx > w - rx) ? [cx, cx < rx ? cx + w : cx - w] : [cx];
+  for (const x of xs) {
+    ctx.save();
+    ctx.translate(x, cy);
+    if (f.orientationDeg) ctx.rotate((f.orientationDeg * Math.PI) / 180);
+    ctx.scale(rx, Math.max(ry, 0.0001));
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    g.addColorStop(0, rgbaStr(color, alpha));
+    g.addColorStop(core, rgbaStr(color, alpha));
+    g.addColorStop(1, rgbaStr(color, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+/** Stroke a lon/lat path. Segments that jump the antimeridian are lifted, not
+ *  smeared horizontally across the whole map. */
+function stampPolyline(ctx: CanvasRenderingContext2D, w: number, h: number, f: SurfaceFeature, color: RGB): void {
+  const pts = f.polyline;
+  if (!pts || pts.length < 4) return;
+  ctx.save();
+  ctx.strokeStyle = rgbaStr(color, f.alpha ?? 0.7);
+  ctx.lineWidth = Math.max(1, (f.strokeWidthDeg ?? 1.2) * DEG_TO_PX(w));
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  let started = false, prevX = 0;
+  ctx.beginPath();
+  for (let i = 0; i < pts.length; i += 2) {
+    const [x, y] = lonLatToPx(pts[i]!, pts[i + 1]!, w, h);
+    if (started && Math.abs(x - prevX) > w / 2) { ctx.stroke(); ctx.beginPath(); started = false; }
+    if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    prevX = x;
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Fill a polar cap: full coverage poleward of capEdgeLat, feathered only in a
+ *  narrow band at the edge (so the cap actually reads, not just a thin rim). */
+function stampCap(ctx: CanvasRenderingContext2D, w: number, h: number, f: SurfaceFeature, color: RGB): void {
+  const edge = f.capEdgeLatDeg ?? (f.lat ?? 70);
+  const yEdge = ((90 - edge) / 180) * h;
+  const north = edge > 0;
+  const band = Math.max(6, 0.06 * h); // feather band near the edge only
+  const a = f.alpha ?? 0.85;
+  // Transparent exactly at the edge, ramping to full alpha within `band` toward
+  // the pole; the gradient clamps to full beyond that, so the rest of the cap is
+  // solid.
+  const g = north
+    ? ctx.createLinearGradient(0, yEdge, 0, yEdge - band)
+    : ctx.createLinearGradient(0, yEdge, 0, yEdge + band);
+  g.addColorStop(0, rgbaStr(color, 0));
+  g.addColorStop(1, rgbaStr(color, a));
+  ctx.save();
+  ctx.fillStyle = g;
+  ctx.fillRect(0, north ? 0 : yEdge, w, north ? yEdge : (h - yEdge));
+  ctx.restore();
+}
+
+/** A faint procedural web of reddish hairline cracks for Europa, drawn under the
+ *  named lineae to sell the "cracked ice" look the dozen catalogued bands can't
+ *  carry alone. Deterministic from the body's seeded PRNG; clearly an impression,
+ *  not catalogued geography. */
+function paintEuropaWeb(p: Painted, w: number, h: number, rng: () => number): void {
+  const ctx = p.canvas.getContext("2d")!;
+  ctx.save();
+  ctx.lineCap = "round";
+  for (let i = 0; i < 52; i++) {
+    const lon0 = rng() * 360 - 180;
+    const lat0 = rng() * 150 - 75;
+    const ang = rng() * Math.PI * 2;
+    const len = 8 + rng() * 42; // degrees
+    const curve = (rng() - 0.5) * len * 0.25;
+    ctx.strokeStyle = `rgba(150,105,80,${(0.08 + rng() * 0.12).toFixed(3)})`;
+    ctx.lineWidth = 0.6 + rng() * 0.8;
+    ctx.beginPath();
+    let prevX: number | null = null;
+    const segs = 6;
+    for (let s = 0; s <= segs; s++) {
+      const fr = s / segs;
+      const lon = lon0 + Math.cos(ang) * len * fr;
+      const lat = lat0 + Math.sin(ang) * len * fr + Math.sin(fr * Math.PI) * curve;
+      const [x, y] = lonLatToPx(lon, lat, w, h);
+      if (prevX !== null && Math.abs(x - prevX) > w / 2) { ctx.stroke(); ctx.beginPath(); prevX = null; }
+      if (prevX === null) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      prevX = x;
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Tint the entire surface toward a colour (Europa's icy base over its tan
+ *  default). Operates per-pixel on the supplied ImageData. */
+function applyGlobal(img: ImageData, color: RGB, a: number): void {
+  const d = img.data;
+  const r = color[0] * 255, g = color[1] * 255, b = color[2] * 255;
+  for (let i = 0; i < d.length; i += 4) {
+    d[i] = (d[i]! + (r - d[i]!) * a) | 0;
+    d[i + 1] = (d[i + 1]! + (g - d[i + 1]!) * a) | 0;
+    d[i + 2] = (d[i + 2]! + (b - d[i + 2]!) * a) | 0;
+  }
+}
+
+/** Darken/recolour a whole hemisphere by a cosine falloff in longitude
+ *  (Iapetus). Operates per-pixel on the supplied ImageData. */
+function applyHemisphere(img: ImageData, w: number, h: number, f: SurfaceFeature, color: RGB): void {
+  const c0 = ((f.hemisphereCenterLonDeg ?? f.lon ?? 0) + 180) / 360; // 0..1 centre in u
+  const a = f.alpha ?? 0.9;
+  const d = img.data;
+  for (let x = 0; x < w; x++) {
+    const u = x / w;
+    let du = Math.abs(u - c0);
+    if (du > 0.5) du = 1 - du; // wrap
+    // Solid across the whole hemisphere (du up to ~0.19 ≈ 68°), then a quick fade
+    // to nothing at the ±90° boundary meridians — so opposing hemispheres (Iapetus'
+    // dark leading / bright trailing) hand off cleanly instead of bleeding.
+    const wgt = clamp01((0.25 - du) / 0.06) * a;
+    if (wgt <= 0) continue;
+    for (let y = 0; y < h; y++) {
+      const i = (y * w + x) * 4;
+      d[i] = (d[i]! + (color[0] * 255 - d[i]!) * wgt) | 0;
+      d[i + 1] = (d[i + 1]! + (color[1] * 255 - d[i + 1]!) * wgt) | 0;
+      d[i + 2] = (d[i + 2]! + (color[2] * 255 - d[i + 2]!) * wgt) | 0;
+    }
+  }
+}
+
+/** Nudge the bump map for features with real relief: mountains rise, basins and
+ *  canyons sink. Subtle — the relief should read, not cartoon. */
+function stampFeatureBump(bctx: CanvasRenderingContext2D, w: number, h: number, f: SurfaceFeature): void {
+  const raise = f.kind === "mountain";
+  const sink = f.kind === "mare" || f.kind === "basin" || f.kind === "linea" || f.kind === "patera";
+  if (!raise && !sink) return;
+  const tone: RGB = raise ? [0.85, 0.85, 0.85] : [0.4, 0.4, 0.4];
+  if (f.shape === "ellipse") stampEllipse(bctx, w, h, { ...f, alpha: 0.5, softness: 0.7 }, tone);
+  else if (f.shape === "polyline") stampPolyline(bctx, w, h, { ...f, alpha: 0.5 }, tone);
+}
+
+/** Stamp a body's whole feature table over the (already-current) canvas. The
+ *  caller must have flushed its pixels onto the canvas first; the final pixels
+ *  are left on the canvas, so build the texture with onCanvas=true. */
+function paintFeatures(
+  surf: Painted, bump: Painted | null, w: number, h: number,
+  features: readonly SurfaceFeature[], base: RGB,
+): void {
+  const ctx = surf.canvas.getContext("2d")!;
+  const bctx = bump ? bump.canvas.getContext("2d")! : null;
+
+  // Global tints and hemisphere recolours act on the base coat first (per-pixel),
+  // under the stamps.
+  const perPixel = features.filter((f) => f.shape === "global" || f.shape === "hemisphere");
+  if (perPixel.length) {
+    const img = ctx.getImageData(0, 0, w, h);
+    for (const f of perPixel) {
+      const color = toneToRgb(base, f.tone, f.toneHex);
+      if (f.shape === "global") applyGlobal(img, color, f.alpha ?? 0.5);
+      else applyHemisphere(img, w, h, f, color);
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  for (const f of features) {
+    if (f.shape === "hemisphere" || f.shape === "global") continue;
+    const color = toneToRgb(base, f.tone, f.toneHex);
+    if (f.shape === "ellipse") stampEllipse(ctx, w, h, f, color);
+    else if (f.shape === "polyline") stampPolyline(ctx, w, h, f, color);
+    else if (f.shape === "cap") stampCap(ctx, w, h, f, color);
+    if (bctx) stampFeatureBump(bctx, w, h, f);
+  }
+}
+
+/** Rasterise the real coastline polygons (earthLand.ts) into a land-coverage
+ *  field: 1 = land, 0 = sea, with anti-aliased shores (fractional coverage) the
+ *  painter reads to find the waterline. Each landmass is filled with the even-odd
+ *  rule so its interior seas/lakes punch back to ocean, and the whole set is drawn
+ *  three times — at x−w, x and x+w — so masses crossing the ±180° antimeridian
+ *  wrap seamlessly. Returns a Float32 coverage array of length w*h. */
+function buildLandMask(w: number, h: number): Float32Array {
+  const { ctx } = makeCanvas(w, h);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = "#fff";
+  for (const dx of [-w, 0, w]) {
+    for (const land of LAND_POLYS) {
+      ctx.beginPath();
+      for (const ring of land) {
+        for (let i = 0; i < ring.length; i += 2) {
+          const [px, py] = lonLatToPx(ring[i]!, ring[i + 1]!, w, h);
+          if (i === 0) ctx.moveTo(px + dx, py); else ctx.lineTo(px + dx, py);
+        }
+        ctx.closePath();
+      }
+      ctx.fill("evenodd");
+    }
+  }
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const mask = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) mask[i] = data[i * 4]! / 255;
+  return mask;
+}
+
+/** Sample the land-coverage field, wrapping in longitude and clamping in latitude. */
+function sampleMask(mask: Float32Array, w: number, h: number, u: number, v: number): number {
+  let xi = Math.floor((((u % 1) + 1) % 1) * w);
+  if (xi >= w) xi = w - 1;
+  let yi = Math.floor(clamp01(v) * h);
+  if (yi >= h) yi = h - 1;
+  return mask[yi * w + xi]!;
+}
+
+/** Earth: a recognisable blue marble — real coastlines (earthLand.ts) rasterised
+ *  into a land/sea mask, oceans shaded by depth, land tinted by latitude biome and
+ *  by real desert/forest/ice regions, and polar ice. Returns a bump map too (land
+ *  stands proud of the sea). */
 function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAniso: number): { surface: THREE.Texture; bump: THREE.Texture } {
   const { painted } = makeCanvas(w, h);
   const { painted: bump } = makeCanvas(w, h);
+  const land = buildLandMask(w, h);
 
-  // Earth is ~71% ocean: a sea level above the noise mean keeps it a blue marble,
-  // not a supercontinent. Peak land/ice values stay below 1 so the sunward limb
-  // doesn't blow out under the bright point light.
-  const SEA_LEVEL = 0.56;
   const ocean: RGB = hexToRgb(0x16335f);
   const oceanShallow: RGB = hexToRgb(0x2e6b8f);
   const desert: RGB = hexToRgb(0xbda478);
@@ -357,16 +655,23 @@ function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAn
   const ice: RGB = hexToRgb(0xdde7ee);
   const tmp: RGB = [0, 0, 0];
 
+  // Ragged the 1:110m coastline: a little domain warp before sampling the mask
+  // breaks up the simplification's straight segments into a natural shore.
+  const COAST_WARP = 0.006;
+
   for (let y = 0; y < h; y++) {
     const v = y / h;
     const lat = Math.abs(v - 0.5) * 2; // 0 equator → 1 pole
     for (let x = 0; x < w; x++) {
       const u = x / w;
-      const elev = fbm(u, v, 6, 5);
+      const wu = u + (fbm(u + 20.0, v + 20.0, 4, 6) - 0.5) * COAST_WARP;
+      const wv = clamp01(v + (fbm(u + 30.0, v + 10.0, 4, 6) - 0.5) * COAST_WARP * 0.5);
+      const cov = sampleMask(land, w, h, wu, wv);
       const i = (y * w + x) * 4;
-      if (elev < SEA_LEVEL) {
-        // Sea — shallow near coasts.
-        lerpRgb(ocean, oceanShallow, clamp01((SEA_LEVEL - elev) * 6), tmp);
+      if (cov < 0.5) {
+        // Sea — shallow where the coverage rises toward the waterline.
+        const shallow = clamp01(cov * 2);
+        lerpRgb(ocean, oceanShallow, shallow * shallow, tmp);
         setPx(painted.data, i, tmp[0], tmp[1], tmp[2]);
         setPx(bump.data, i, 0.35, 0.35, 0.35);
       } else {
@@ -380,7 +685,8 @@ function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAn
         tmp[1] = clamp01(tmp[1] * k);
         tmp[2] = clamp01(tmp[2] * k);
         setPx(painted.data, i, tmp[0], tmp[1], tmp[2]);
-        const b = clamp01(0.45 + (elev - SEA_LEVEL) * 1.1);
+        const relief = fbm(u + 9.0, v + 2.0, 5, 18);
+        const b = clamp01(0.5 + relief * 0.4);
         setPx(bump.data, i, b, b, b);
       }
       // Polar ice caps blended over everything near the poles.
@@ -394,6 +700,18 @@ function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAn
         setPx(bump.data, i, nb, nb, nb);
       }
     }
+  }
+
+  // Real large-scale regions (deserts/forests/ice sheets/ranges) over the land.
+  const features = BODY_FEATURES.earth;
+  if (features?.length) {
+    painted.canvas.getContext("2d")!.putImageData(painted.data, 0, 0);
+    bump.canvas.getContext("2d")!.putImageData(bump.data, 0, 0);
+    paintFeatures(painted, bump, w, h, features, hexToRgb(0x5b6b48));
+    return {
+      surface: toTexture(painted, maxAniso, true, true),
+      bump: toTexture(bump, maxAniso, false, true),
+    };
   }
   return {
     surface: toTexture(painted, maxAniso, true),
@@ -454,10 +772,20 @@ function paintRocky(def: BodyDef, w: number, h: number, rng: () => number, fbm: 
   let nCraters = craterDensity[def.kind];
   if (def.atmosphere) nCraters = Math.round(nCraters * 0.2);
   if (def.id === "earth") nCraters = 0;
+  // Young, resurfaced worlds wear far fewer impact scars than their class default:
+  // Io's volcanism and Europa's ice erase them almost entirely; Triton is young too.
+  if (def.id === "io" || def.id === "europa") nCraters = Math.round(nCraters * 0.06);
+  else if (def.id === "triton") nCraters = Math.round(nCraters * 0.3);
   paintCraters(painted, bump, w, h, nCraters, rng);
 
-  // paintCraters has drawn the final pixels directly onto the canvases, so build
-  // the textures straight from them (no redundant ImageData re-upload).
+  // Real named features (maria, albedo regions, lineae, polar caps) stamped over
+  // the cratered base — semi-transparent, so the relief still reads through them.
+  const features = BODY_FEATURES[def.id];
+  if (features?.length) paintFeatures(painted, bump, w, h, features, hexToRgb(def.color));
+  if (def.id === "europa") paintEuropaWeb(painted, w, h, rng);
+
+  // paintCraters / paintFeatures have drawn the final pixels directly onto the
+  // canvases, so build the textures straight from them (no ImageData re-upload).
   return {
     surface: toTexture(painted, maxAniso, true, true),
     bump: bump ? toTexture(bump, maxAniso, false, true) : undefined,
