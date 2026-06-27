@@ -101,7 +101,15 @@ the planner's CAPTURE MODE control now shows for the flyby route modes. A Cassin
 → Saturn tour captures into an eccentric Saturn orbit for **~0.3 km/s** instead of ~11 km/s — the real
 deep-well SOI-insertion technique, now flyable end-to-end. All new fields are optional ⇒ golden hash
 unmoved; impulsive + scheduled-event ⇒ chunk-invariant (a fresh `assistCapture.test.ts` checks the
-one-step ≡ chunked hash). Earlier: **Oberth-cheap elliptical capture** — `captureAtPeriapsis` no
+one-step ≡ chunked hash). **Planner budget honesty (follow-up):** the feasibility gate now scores the
+WHOLE mission Δv (injection + flyby + capture), not just the injection. Previously the planner
+green-lit a deep-well arrival on a low-circular capture the ship couldn't afford (e.g. an
+Earth → Jupiter → Europa mission showing a 17.9 km/s Stage-1 Jupiter capture against a ~9.8 km/s ship,
+labelled "✓ injection within budget") — committing it would strand the craft on a hyperbola at arrival.
+The readout now warns "✗ capture Δv exceeds remaining budget — try a loose-ellipse or aerocapture
+arrival" and disables Commit until the chosen capture actually fits (a `budgetVerdict` helper applied
+across the direct / mission / assist / chain branches), turning the impossible 24 km/s low-circular plan
+into a feasible ~7 km/s loose-ellipse one. Earlier: **Oberth-cheap elliptical capture** — `captureAtPeriapsis` no
 longer always circularizes; a transfer can capture into a loose, eccentric ellipse (low periapsis,
 apoapsis at ~½ the SOI) via a new optional `ShipTransfer.captureApoAlt` + `ellipticalCaptureDv`,
 which is how real deep-well orbit insertions are flown — burning at the low periapsis where the
