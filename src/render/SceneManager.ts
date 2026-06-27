@@ -71,6 +71,26 @@ export class SceneManager {
   focusId = "sun";
   private focusPos: Vec3 = vec3(0, 0, 0);
   private focusFn: (t: number) => Vec3 = (t) => bodyPosition("sun", t);
+
+  /** An in-progress fly-to. While set, the floating origin stays on the *old*
+   *  focus and we pan/zoom the camera across to where the new target is, so the
+   *  scene glides over instead of snapping. On arrival the origin is handed off
+   *  to the new target (see `advanceFlight`). */
+  private flight?: {
+    fn: (t: number) => Vec3; // the new focus point (target of the flight)
+    dist: number; // framing distance to settle at, in render units
+    dir: THREE.Vector3; // unit camera→target offset direction, held constant
+    startTarget: THREE.Vector3; // camera target at lift-off (old-origin render space)
+    startCam: THREE.Vector3; // camera position at lift-off
+    elapsed: number; // seconds since lift-off
+    duration: number; // total flight time, seconds
+  };
+  /** Real-time clock (ms) of the previous flight step, for frame-rate-independent
+   *  easing; undefined when no flight is running. */
+  private flightLastMs?: number;
+  /** Most recent sim time handed to `updateOrigin`; lets an interrupt (a user
+   *  grab) re-home the origin at the correct instant. */
+  private lastT = 0;
   private _theme: Theme = "dark";
   private sunLight!: THREE.PointLight;
 
@@ -103,6 +123,10 @@ export class SceneManager {
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
+    // Grabbing the view mid-flight hands control back to the user at once: keep
+    // the camera where their pointer caught it, just re-home precision on the
+    // target body. (OrbitControls 'start' fires on drag/zoom, not keyboard.)
+    this.controls.addEventListener("start", () => this.cancelFlight());
     this.controls.target.set(0, 0, 0); // always the focused body
     this.controls.minDistance = 1e-3;
     this.controls.maxDistance = 5e6;
@@ -188,8 +212,17 @@ export class SceneManager {
     }
   }
 
-  /** Centre on an arbitrary moving world point (in metres), e.g. a ship. */
+  /** Centre on an arbitrary moving world point (in metres), e.g. a ship. When a
+   *  framing distance is given and we're in the in-system view, the camera flies
+   *  there instead of snapping (see `startFlight`); otherwise the origin is
+   *  re-homed instantly — the right behaviour for a continuous follow or the
+   *  interstellar map, which frames itself. */
   setFocusTarget(id: string, fn: (t: number) => Vec3, frameDistanceUnits?: number): void {
+    if (frameDistanceUnits !== undefined && this.viewMode === "system") {
+      this.startFlight(id, fn, frameDistanceUnits);
+      return;
+    }
+    this.flight = undefined;
     this.focusId = id;
     this.focusFn = fn;
     if (frameDistanceUnits !== undefined) this.placeCamera(frameDistanceUnits);
@@ -221,6 +254,7 @@ export class SceneManager {
    *  park in the other mode (they read `viewMode` each frame). */
   setViewMode(mode: ViewMode): void {
     if (mode === this.viewMode) return;
+    this.flight = undefined; // a mode switch reframes the camera outright
     this.viewMode = mode;
     if (mode === "interstellar") {
       this.savedSystem = {
@@ -261,6 +295,7 @@ export class SceneManager {
    *  focus is left untouched — the interstellar view computes its own positions
    *  about Sol and never consults the floating origin. */
   private frameInterstellar(): void {
+    this.flight = undefined;
     this.controls.minDistance = 5;
     this.controls.maxDistance = 5000;
     this.controls.target.set(0, 0, 0);
@@ -278,10 +313,85 @@ export class SceneManager {
     this.controls.update();
   }
 
+  /** Begin a fly-to: the new focus is highlighted at once, but the floating
+   *  origin stays on the current body so the camera can glide across to the
+   *  target (panning the look-at point and easing the distance) before the
+   *  origin is handed off. Re-selecting during a flight simply retargets it. */
+  private startFlight(id: string, fn: (t: number) => Vec3, dist: number): void {
+    const dir = this.camera.position.clone().sub(this.controls.target);
+    if (dir.lengthSq() === 0) dir.set(0, 0.5, 1);
+    dir.normalize();
+    this.focusId = id; // light up the selection immediately
+    this.flight = {
+      fn,
+      dist,
+      dir,
+      startTarget: this.controls.target.clone(),
+      startCam: this.camera.position.clone(),
+      elapsed: 0,
+      duration: 0.8,
+    };
+    this.flightLastMs = undefined;
+    // focusFn is deliberately left on the old body: it remains the render origin
+    // until advanceFlight lands and swaps it.
+  }
+
+  /** Advance the active fly-to by one frame. The look-at point and camera ease
+   *  from lift-off toward the target (recomputed each frame, so a moving target
+   *  is tracked); on arrival the origin is swapped to the target. Shifting both
+   *  the origin and the camera by the same vector leaves the rendered image
+   *  unchanged, so the hand-off is seamless — and precision re-centres on the
+   *  new focus. */
+  private advanceFlight(t: number): void {
+    const f = this.flight!;
+    const now = typeof performance !== "undefined" ? performance.now() : 0;
+    const dt = this.flightLastMs === undefined ? 0 : Math.max(0, (now - this.flightLastMs) / 1000);
+    this.flightLastMs = now;
+    f.elapsed += dt;
+    const p = f.duration > 0 ? Math.min(1, f.elapsed / f.duration) : 1;
+    const e = p * p * (3 - 2 * p); // smoothstep: ease in and out
+
+    // Target's position in the *current* (old-origin) render space, and the
+    // camera seat a framing distance back along the held direction.
+    const endTarget = this.toRender(f.fn(t));
+    const endCam = endTarget.clone().add(f.dir.clone().multiplyScalar(f.dist));
+    this.controls.target.copy(f.startTarget).lerp(endTarget, e);
+    this.camera.position.copy(f.startCam).lerp(endCam, e);
+
+    if (p >= 1) {
+      this.focusFn = f.fn;
+      this.focusPos = f.fn(t);
+      this.controls.target.set(0, 0, 0);
+      this.camera.position.copy(f.dir).multiplyScalar(f.dist);
+      this.flight = undefined;
+      this.flightLastMs = undefined;
+    }
+  }
+
+  /** Abort any fly-to, re-homing the floating origin on the target without
+   *  moving the camera — precision follows the new focus while the user keeps
+   *  the exact view they grabbed. */
+  private cancelFlight(): void {
+    const f = this.flight;
+    if (!f) return;
+    const shift = this.toRender(f.fn(this.lastT));
+    this.controls.target.sub(shift);
+    this.camera.position.sub(shift);
+    this.focusFn = f.fn;
+    this.focusPos = f.fn(this.lastT);
+    this.flight = undefined;
+    this.flightLastMs = undefined;
+  }
+
   /** Recompute the floating origin for the current sim time. Call once per frame
    *  before positioning any body. */
   updateOrigin(t: number): void {
+    this.lastT = t;
     this.focusPos = this.focusFn(t);
+    // Drive any in-progress fly-to before the rest of the scene reads the camera;
+    // it may hand the floating origin off to the flight's target (and recompute
+    // focusPos), so it runs against the old origin set just above.
+    if (this.flight) this.advanceFlight(t);
     // Keep the Sun's light at the real Sun, expressed through the floating origin.
     this.sunLight.position.copy(this.toRender(bodyPosition("sun", t)));
   }
