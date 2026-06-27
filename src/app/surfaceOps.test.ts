@@ -20,6 +20,13 @@ function moonShip(sim: Simulation): string {
   return id;
 }
 
+/** Step the sim well past any in-flight ascent/descent leg (capped at 2 h) so it
+ *  finalizes — landShip/launchShip now FLY the powered arc in-sim before seating the
+ *  ship on the surface / parking orbit, so the final state lands at the leg's tEnd. */
+function settle(sim: Simulation): void {
+  sim.step(10_000);
+}
+
 describe("landing and launch", () => {
   it("a lunar landing deducts the descent Δv and marks the ship landed", () => {
     const sim = new Simulation(createWorld(1, 0));
@@ -31,15 +38,18 @@ describe("landing and launch", () => {
     expect(op.feasible).toBe(true);
     expect(op.dv / 1000).toBeGreaterThan(1.7); // ~lunar orbital speed + losses
     expect(op.dv / 1000).toBeLessThan(2.2);
-    expect(ship.landed?.bodyId).toBe("moon");
-    // Δv fell by ~the descent cost (propellant was spent).
+    // Δv fell by ~the descent cost (propellant spent at commit, before the arc flies).
     expect(dvBefore - dvRemaining(ship)).toBeGreaterThan(1500);
+    // The powered descent flies in-sim; after it finalizes the ship is landed.
+    settle(sim);
+    expect(ship.landed?.bodyId).toBe("moon");
   });
 
   it("a landed ship sits on the surface, moving at SURFACE speed, not orbital speed", () => {
     const sim = new Simulation(createWorld(1, 0));
     const id = moonShip(sim);
     landShip(sim, id);
+    settle(sim); // fly the descent arc down to touchdown
     const ship = sim.world.ships.get(id)!;
     const t = sim.world.t;
     // Distance from the Moon's centre is its radius (on the surface).
@@ -55,18 +65,27 @@ describe("landing and launch", () => {
     const sim = new Simulation(createWorld(1, 0));
     const id = moonShip(sim);
     landShip(sim, id);
+    settle(sim); // land first
     const ship = sim.world.ships.get(id)!;
+    expect(ship.landed?.bodyId).toBe("moon");
     const dvBefore = dvRemaining(ship);
 
     const op = launchShip(sim, id, 100)!;
     expect(op.feasible).toBe(true);
+    // The ascent arc is now flying: the ship has left the surface but isn't yet coasting
+    // the parking orbit. Δv is charged at commit.
     expect(ship.landed).toBeUndefined();
     expect(ship.mode).toBe("coast");
-    // Now in a ~100 km lunar orbit.
+    expect(ship.launchLeg).toBeDefined();
+    expect(dvBefore - dvRemaining(ship)).toBeGreaterThan(1500);
+
+    // After the arc finalizes the ship is in a ~100 km circular lunar orbit.
+    settle(sim);
+    expect(ship.launchLeg).toBeUndefined();
     const alt = ship.elements!.a - MOON.radius;
     expect(alt / 1000).toBeGreaterThan(90);
     expect(alt / 1000).toBeLessThan(160);
-    expect(dvBefore - dvRemaining(ship)).toBeGreaterThan(1500);
+    expect(ship.elements!.e).toBeLessThan(0.02); // ~circular insertion
   });
 
   it("refuses to land where there is no surface", () => {
@@ -82,6 +101,7 @@ describe("landing and launch", () => {
     const sim = new Simulation(createWorld(1, 0));
     const id = moonShip(sim);
     landShip(sim, id);
+    settle(sim); // fly the descent down to the landed state
 
     const json = serializeWorld(sim.world);
     const restored = deserializeWorld(json);

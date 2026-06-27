@@ -81,27 +81,46 @@ read-time analytic, suite green, golden hash documented if it moves.
    moon capture can also choose the cheap loose ellipse. (The moon flyby TOUR already threads
    `captureApoAlt` and searches a small parent-centric grid; this brings the single-hop window
    to parity.) *(see "Transfer toolkit".)*
-3. **Animated launch / landing trajectories (no more snapping)** — `launchShip` / `landShip`
-   currently teleport the ship from the surface straight onto its parking orbit (or vice-versa).
-   Show the (temporally minor) ascent/descent arc instead: add a `LaunchLeg` / `DescentLeg` to
-   `world.ts` (parallel to `EntryLeg`), have `launchShip`/`landShip` create the leg + schedule a
-   `launch-arrive` / `land-arrive` event at `tStart + burnTime` (the burn time is already computed
-   by `ascentBudget`/`descentBudget`), add `shipRelativeState` dispatch branches that evaluate a
-   **precomputed spline** of `[t, altitude, speed]` sampled from the budget integrator at commit
-   (O(1) read, deterministic, exact at any warp), and finalize in `sim.ts`. `trajectoryViews`
-   picks up the arc for free via `shipForecastPath`. Pairs with the in-sim entry pass already
-   flown for descents through an atmosphere. *(Observation #5.)*
-4. **Follow ships (and other objects) in the interstellar view** — entering the interstellar map
+3. **Follow ships (and other objects) in the interstellar view** — entering the interstellar map
    hard-locks the camera target to Sol (`SceneManager.frameInterstellar` sets `controls.target` to
    the origin). Let it follow an interstellar-leg ship instead: add an optional focus id to
    `setViewMode` / a per-frame `updateFocus()` hook the interstellar view calls, have
    `interstellarView.update` drive `setFocusTarget` from the scaled ship position when one is
    selected, and surface ship selection in the HUD. Respect the view-mode isolation invariant
    (the interstellar view computes its own positions about Sol). *(Observation #2.)*
-5. **ISRU / depots (Phase 7)** — mass economy: propellant depots + refueling, ISRU from
+4. **ISRU / depots (Phase 7)** — mass economy: propellant depots + refueling, ISRU from
    moon/comet/regolith volatiles, and a colony supplied within a transfer window. *(see Phase 7.)*
 
-*(Done since last round: **playtest-feedback round (lifecycle, hazards, content, camera)** —
+*(**Animated launch / landing trajectories** — candidate #3 last round — is now DONE; see the
+"Done since last round" note below.)*
+
+*(Done since last round: **animated launch / landing trajectories (no more snapping)** —
+`launchShip`/`landShip` no longer teleport the ship between the surface and its parking orbit; the
+powered ascent/descent now FLIES in-sim as a read-time leg. New optional `LaunchLeg` / `DescentLeg`
+(`world.ts`, parallel to `EntryLeg`) carry a compact spline `[t, altitude, speed, flight-path-angle,
+downrange-angle]` sampled ONCE from the gravity-turn budget integrator at commit: `surface.ts`
+`ascentBudget` gained a decoupled downrange-angle (θ) state — `dθ/dt = v·cosγ/r`, feeding back into
+nothing so every budget number is byte-identical — plus an optional sampler; `descentBudget` flies the
+AIRLESS powered descent as that ascent spline **time-reversed** (a powered landing is the kinematic
+mirror of a powered ascent), while atmospheric arrivals keep using the drag-pass `EntryLeg`
+(`flyEntry`) so the entry-heating physics is never duplicated. `shipRelativeState` /
+`shipOsculatingElements` gained dispatch branches (`poweredLegState`) that interpolate the stored
+spline (O(log n)) and reconstruct the 3D arc with the EXACT `planeBasis`/`reconstructEntry` geometry
+the entry leg uses. `launchShip`/`landShip` charge the Δv at commit, build the leg
+(`buildLaunchLeg`/`buildDescentLeg`), clear the old state, and schedule a `launch-arrive` /
+`land-arrive` finalize (`sim.ts arriveLaunch`/`arriveLand`, mirroring `finishEntry`) that seats the
+ship on the pinned parking orbit / co-rotating touchdown site; a degenerate climb (drag-stalled, or an
+absurd burn time) falls back to the old instant snap. The arc renders for FREE via `shipForecastPath`
+(the forecast horizon caps at the arrive event, so the drawn arc stops exactly at touchdown/insertion).
+The arc altitude is rescaled to connect the surface to the requested parking orbit, and the exit is
+pinned to the arc's downrange end, so surface↔orbit is position-continuous — a flown arc, not a snap.
+All new state is optional ⇒ **golden hash unmoved**; the stored spline + scheduled finalize ⇒
+chunk-invariant (a new `app/launchLeg.test.ts` checks one-step ≡ chunked and a mid-arc serialize
+round-trip; the existing `surfaceOps.test.ts` now steps through the arc before asserting the landed /
+orbit state). *(Candidate #3; Observation #5. Still to do: a live ASCENDING/DESCENDING HUD readout, and
+optional in-atmosphere powered-descent animation distinct from the ballistic entry pass.)*)*
+
+*(Earlier — Done since prior round: **playtest-feedback round (lifecycle, hazards, content, camera)** —
 seven observations from real play, landed additively (suite green: +21 tests; golden hash
 unmoved — all new state is optional and serializes only when present). **(1) Ships now crash and
 are lost** on flying their orbit into a body: `sim.step` analytically finds the surface-crossing time
@@ -406,7 +425,17 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   periapsis clear of the atmosphere (`tr.arrived`). A Mars arrival captures for ~80 m/s of
   trim instead of a ~2.5 km/s burn — the transfer planner's CAPTURE MODE toggle shows the
   saving (disabled for airless targets). Impulsive + read-time-leg + impulsive-trim, so
-  chunk-invariant and golden-hash-neutral. Still to do: radiative (shock-layer) heating above
+  chunk-invariant and golden-hash-neutral. **Animated launch / landing arcs — DONE**
+  (`world.ts LaunchLeg`/`DescentLeg`, `ships.ts buildLaunchLeg`/`buildDescentLeg`/`poweredLegState`,
+  `commands.ts launchShip`/`landShip`, `sim.ts arriveLaunch`/`arriveLand`): `launchShip`/`landShip`
+  no longer teleport surface↔parking-orbit — the powered ascent/descent flies in-sim as a read-time
+  spline sampled from the gravity-turn budget integrator (`surface.ts` now emits a `[t,h,v,γ,θ]`
+  trajectory; the airless descent is the ascent reversed), reconstructed with the same
+  `planeBasis`/`reconstructEntry` geometry as the entry leg and rendered for free via
+  `shipForecastPath`. Δv charged at commit; a `launch-arrive`/`land-arrive` finalize seats the ship
+  on the pinned parking orbit / co-rotating touchdown. Atmospheric descents still use the ballistic
+  `EntryLeg`. Optional ⇒ golden hash unmoved; stored spline + scheduled finalize ⇒ chunk-invariant
+  (`app/launchLeg.test.ts`). Still to do: radiative (shock-layer) heating above
   ~11 km/s; atmospheric co-rotation / lift in the in-sim pass (planar ballistic first cut);
   and a B-plane-targeted aim (the arrival uses a patched-conic periapsis aim today).
 - **More bodies** — DONE: 43 bodies (dwarfs, asteroids, gas-giant & other moons,

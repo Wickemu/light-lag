@@ -673,6 +673,8 @@ export class Simulation {
       case "capture": this.captureAtPeriapsis(ship); break;
       case "entry-start": this.beginEntry(ship); break;
       case "entry-end": this.finishEntry(ship); break;
+      case "launch-arrive": this.arriveLaunch(ship); break;
+      case "land-arrive": this.arriveLand(ship); break;
       case "aero-trim": this.trimAerocapture(ship); break;
       default: break;
     }
@@ -1297,6 +1299,48 @@ export class Simulation {
         }
       }
     }
+  }
+
+  /**
+   * Finalize a powered ASCENT (`launch-arrive`): the ship reaches its parking orbit. The
+   * orbit is the leg's pinned exit state (a clean circular insertion at the arc's downrange
+   * end), so the in-flight arc and the post-arc coast are continuous. The leg is cleared.
+   */
+  private arriveLaunch(ship: Ship): void {
+    const leg = ship.launchLeg;
+    if (!leg) return;
+    const body = BODY_BY_ID.get(leg.bodyId);
+    ship.launchLeg = undefined;
+    if (!body) return;
+    ship.elements = stateToElements(leg.exitR, leg.exitV, body.mu);
+    ship.epoch = this.world.t;
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+  }
+
+  /**
+   * Finalize a powered DESCENT (`land-arrive`): the ship touches down. The touchdown site is
+   * the leg's pinned exit position, stored as a body-fixed direction (de-rotate by Ω·t) so the
+   * ship co-rotates with the surface — identical to landShip's snap. The leg is cleared.
+   */
+  private arriveLand(ship: Ship): void {
+    const leg = ship.descentLeg;
+    if (!leg) return;
+    const body = BODY_BY_ID.get(leg.bodyId);
+    ship.descentLeg = undefined;
+    if (!body) return;
+    const t = this.world.t;
+    const dir = normalize(leg.exitR);
+    const T = body.rotationPeriod ?? 0;
+    const om = T !== 0 ? (2 * Math.PI) / T : 0;
+    const c = Math.cos(-om * t), s = Math.sin(-om * t);
+    ship.landed = { bodyId: body.id, surfaceDir: { x: dir.x * c - dir.y * s, y: dir.x * s + dir.y * c, z: dir.z } };
+    ship.mode = "coast";
+    ship.elements = undefined;
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.epoch = t;
   }
 
   /**

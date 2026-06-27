@@ -5,7 +5,7 @@
  * currently on — coasting or mid-burn.
  */
 
-import { type Ship, type InterstellarLeg, type EntryLeg } from "./world.ts";
+import { type Ship, type InterstellarLeg, type EntryLeg, type LaunchLeg, type DescentLeg, type PoweredSample } from "./world.ts";
 import { type Stage, deltaVBudget, exhaustVelocity, stageWetMass, consumeStageDv, boosterCount } from "./propulsion.ts";
 import {
   type State,
@@ -15,11 +15,11 @@ import {
   propagate,
   wrapPi,
 } from "./math/kepler.ts";
-import { j2Rates } from "./orbit.ts";
+import { j2Rates, circularSpeed } from "./orbit.ts";
 import { bodyState } from "./ephemeris.ts";
 import { retardedTime, dopplerFactor, redshiftZ } from "./comms.ts";
 import { STAR_BY_ID, starPosition } from "./stars.ts";
-import { BODY_BY_ID, C, j2RefRadius } from "./constants.ts";
+import { BODY_BY_ID, C, j2RefRadius, type BodyDef } from "./constants.ts";
 import { type Vec3, add, addScaled, sub, scale, dot, cross, normalize, length, distance } from "./math/vec3.ts";
 import { integrateEntryPlanar, entryTrajectory } from "./maneuver/entry.ts";
 import { DEFAULT_ENTRY_BETA } from "./surface.ts";
@@ -213,6 +213,48 @@ export function entryLegState(leg: EntryLeg, t: number): State {
   return reconstructEntry(er0, et0, body.radius, s);
 }
 
+/** Linearly interpolate a powered ascent/descent spline at `elapsed` seconds since the
+ *  leg started, returning the planar `{h, v, gamma, theta}` `reconstructEntry` consumes.
+ *  Binary search (O(log n)); clamps to the endpoints outside the sampled range. */
+function sampleSpline(samples: PoweredSample[], elapsed: number): { h: number; v: number; gamma: number; theta: number } {
+  const n = samples.length;
+  if (n === 0) return { h: 0, v: 0, gamma: 0, theta: 0 };
+  const first = samples[0]!;
+  if (elapsed <= first.t) return { h: first.h, v: first.v, gamma: first.gamma, theta: first.theta };
+  const last = samples[n - 1]!;
+  if (elapsed >= last.t) return { h: last.h, v: last.v, gamma: last.gamma, theta: last.theta };
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (samples[mid]!.t <= elapsed) lo = mid;
+    else hi = mid;
+  }
+  const a = samples[lo]!, b = samples[hi]!;
+  const span = b.t - a.t;
+  const f = span > 0 ? (elapsed - a.t) / span : 0;
+  return {
+    h: a.h + (b.h - a.h) * f,
+    v: a.v + (b.v - a.v) * f,
+    gamma: a.gamma + (b.gamma - a.gamma) * f,
+    theta: a.theta + (b.theta - a.theta) * f,
+  };
+}
+
+/** Body-relative state of a ship flying an in-sim powered ascent (LaunchLeg) or descent
+ *  (DescentLeg) at time t. Interpolates the precomputed spline and reconstructs the 3D
+ *  state in the launch/descent plane (the exact `planeBasis`/`reconstructEntry` geometry
+ *  the entry leg uses). At/after tEnd it returns the PINNED exit state (the finalize takes
+ *  over). Read-time deterministic and exact at any time-warp (the spline is fixed at commit,
+ *  so the read at t is independent of how the sim was stepped there). */
+export function poweredLegState(leg: LaunchLeg | DescentLeg, t: number): State {
+  if (t >= leg.tEnd) return { r: leg.exitR, v: leg.exitV };
+  const body = BODY_BY_ID.get(leg.bodyId);
+  if (!body) return { r: leg.r0, v: leg.v0 };
+  const { er0, et0 } = planeBasis(leg.r0, leg.v0);
+  const s = sampleSpline(leg.samples, Math.max(0, t - leg.tStart));
+  return reconstructEntry(er0, et0, body.radius, s);
+}
+
 /** Build a complete entry leg from the interface-crossing state `r0,v0` at `tStart`:
  *  run the fine entry pass for the outcome/duration/peak budget, integrate to the
  *  terminal planar state, and reconstruct the body-relative exit state the finalize
@@ -235,6 +277,57 @@ export function buildEntryLeg(
     outcome: res.outcome, exitR: exit.r, exitV: exit.v,
     peakDecelG: res.peakDecelG, peakHeatFlux: res.peakHeatFlux, peakWallTemp: res.peakWallTemp, heatLoad: res.heatLoad,
   };
+}
+
+/** The arc-end (downrange) radial & tangential unit vectors in the launch/descent plane,
+ *  given the plane basis and the spline's final downrange angle θ. The leg's pinned exit
+ *  is placed along these so the visual arc connects seamlessly to the finalize state. */
+function arcEndFrame(er0: Vec3, et0: Vec3, theta: number): { dir: Vec3; tang: Vec3 } {
+  const ct = Math.cos(theta), st = Math.sin(theta);
+  return { dir: add(scale(er0, ct), scale(et0, st)), tang: add(scale(er0, -st), scale(et0, ct)) };
+}
+
+/** Build a powered ASCENT leg from the liftoff state `r0,v0` at `tStart`. The `samples`
+ *  spline (from `ascentBudget`, h ∈ [0, natural-insertion]) is rescaled in altitude so the
+ *  arc climbs to the requested `parkingAlt` (the budget's impulsive Hohmann raise shown as a
+ *  continuous climb), and the exit is PINNED to a clean circular parking-orbit insertion at
+ *  the arc's downrange end — so the visual arc connects seamlessly to the post-arc orbit. */
+export function buildLaunchLeg(
+  body: BodyDef,
+  r0: Vec3, v0: Vec3, parkingAlt: number, tStart: number, burnTime: number, samples: PoweredSample[],
+): LaunchLeg {
+  const insAlt = samples[samples.length - 1]!.h; // natural gravity-turn insertion altitude
+  const hScale = parkingAlt / Math.max(insAlt, 1);
+  for (const s of samples) s.h *= hScale;
+  const { er0, et0 } = planeBasis(r0, v0);
+  const { dir, tang } = arcEndFrame(er0, et0, samples[samples.length - 1]!.theta);
+  const rEnd = body.radius + parkingAlt;
+  return {
+    bodyId: body.id, tStart, tEnd: tStart + burnTime, r0, v0, samples,
+    exitR: scale(dir, rEnd), exitV: scale(tang, circularSpeed(body.mu, rEnd)),
+  };
+}
+
+/** Build a powered DESCENT leg (airless bodies) from the orbital state `r0,v0` at `tStart`.
+ *  The `samples` spline (from `descentBudget`, the time-reversed ascent, h ∈ [0, insertion])
+ *  is rescaled so the arc starts at the actual parking altitude and ends at the surface; the
+ *  exit is PINNED to the co-rotating touchdown site at the arc's downrange end. The finalize
+ *  (`land-arrive`) de-rotates `exitR` to the body-fixed landing site. */
+export function buildDescentLeg(
+  body: BodyDef,
+  r0: Vec3, v0: Vec3, tStart: number, burnTime: number, samples: PoweredSample[],
+): DescentLeg {
+  const parkingAlt = length(r0) - body.radius;
+  const startAlt = samples[0]!.h; // the descent begins at the ascent's natural insertion alt
+  const hScale = parkingAlt / Math.max(startAlt, 1);
+  for (const s of samples) s.h *= hScale;
+  const { er0, et0 } = planeBasis(r0, v0);
+  const { dir } = arcEndFrame(er0, et0, samples[samples.length - 1]!.theta);
+  const exitR = scale(dir, body.radius); // touchdown on the surface
+  const T = body.rotationPeriod ?? 0;
+  const om = T !== 0 ? (2 * Math.PI) / T : 0;
+  const exitV = { x: -om * exitR.y, y: om * exitR.x, z: 0 }; // ω × r — surface co-rotation
+  return { bodyId: body.id, tStart, tEnd: tStart + burnTime, r0, v0, samples, exitR, exitV };
 }
 
 /** Live readout of a ship flying an entry leg: altitude/speed and the instantaneous
@@ -274,6 +367,8 @@ export function shipEntryReadout(ship: Ship, t: number): EntryReadout | null {
 
 /** State of the ship relative to its primary (the Earth-centred frame, etc.). */
 export function shipRelativeState(ship: Ship, t: number): State {
+  if (ship.launchLeg) return poweredLegState(ship.launchLeg, t);
+  if (ship.descentLeg) return poweredLegState(ship.descentLeg, t);
   if (ship.landed) return landedRelativeState(ship, t);
   if (ship.entryLeg) return entryLegState(ship.entryLeg, t);
   if (ship.interstellarLeg) return interstellarLegState(ship.interstellarLeg, t);
@@ -362,6 +457,14 @@ export function applyImpulsiveDv(ship: Ship, dv: number): boolean {
  *  An interstellar ship is not on a closed orbit; callers should check
  *  ship.interstellarLeg first — this returns a far placeholder to avoid crashing. */
 export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
+  if (ship.launchLeg) {
+    const st = poweredLegState(ship.launchLeg, t);
+    return stateToElements(st.r, st.v, primaryMu(ship));
+  }
+  if (ship.descentLeg) {
+    const st = poweredLegState(ship.descentLeg, t);
+    return stateToElements(st.r, st.v, primaryMu(ship));
+  }
   if (ship.landed) {
     const b = BODY_BY_ID.get(ship.landed.bodyId);
     return { a: b?.radius ?? 1, e: 0, i: 0, Omega: 0, omega: 0, M: 0 };
