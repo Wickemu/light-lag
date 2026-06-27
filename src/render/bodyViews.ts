@@ -180,6 +180,9 @@ interface BodyVisual {
   clouds?: THREE.Mesh;
   /** Atmospheric limb-glow shell material (its sun-direction uniform is set per frame). */
   atmoMat?: THREE.ShaderMaterial;
+  /** Ring-material sun-direction uniform value (Saturn): set per frame so the
+   *  planet's shadow band falls across the rings from the true Sun. */
+  ringSunDir?: THREE.Vector3;
   /** Angular speed of the texture spin (rad/s of sim time); 0 if non-rotating. */
   spinRate: number;
   cloudSpinRate: number;
@@ -272,7 +275,7 @@ export class BodyViews {
     }
 
     // Ring system (Saturn): a flat annulus in the equatorial plane.
-    if (tex.ring) this.addRing(node, radius, tex);
+    const ringSunDir = tex.ring ? this.addRing(node, radius, tex) : undefined;
 
     // The Sun is a light source, not a lit ball — wrap the limb-darkened disk in
     // a layered corona: a tight, hot inner glow over a wide, faint outer halo.
@@ -305,7 +308,7 @@ export class BodyViews {
     const focusColor = color.clone().lerp(new THREE.Color(0xffffff), 0.5);
     const spinRate = def.rotationPeriod ? (2 * Math.PI) / def.rotationPeriod : 0;
     const visual: BodyVisual = {
-      def, marker, node, sphere, clouds, atmoMat,
+      def, marker, node, sphere, clouds, atmoMat, ringSunDir,
       spinRate,
       cloudSpinRate: spinRate * 0.92, // a touch of cloud drift relative to the surface
       baseColor, focusColor,
@@ -332,8 +335,13 @@ export class BodyViews {
   }
 
   /** Build the ring annulus and remap its UVs so the radial texture strip runs
-   *  inner→outer (RingGeometry's default UVs are a bounding-box square, not radial). */
-  private addRing(node: THREE.Object3D, radius: number, tex: BodyTextureSet): void {
+   *  inner→outer (RingGeometry's default UVs are a bounding-box square, not radial).
+   *  The material is patched to cast the planet's shadow across the rings: a
+   *  fragment is darkened when it sits on the anti-sun side of the globe and
+   *  within the globe's radius of the sun-line — the cylindrical shadow that
+   *  paints the famous dark band over Saturn's rings. Returns the sun-direction
+   *  uniform value so the caller can aim it at the true Sun every frame. */
+  private addRing(node: THREE.Object3D, radius: number, tex: BodyTextureSet): THREE.Vector3 {
     const ring = tex.ring!;
     const inner = radius * ring.inner;
     const outer = radius * ring.outer;
@@ -345,16 +353,44 @@ export class BodyViews {
       uv.setXY(i, (r - inner) / (outer - inner), 0.5);
     }
     uv.needsUpdate = true;
+    const sunDir = new THREE.Vector3(1, 0, 0);
     const mat = new THREE.MeshBasicMaterial({
       map: ring.texture,
       transparent: true,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uSunDir = { value: sunDir };
+      shader.uniforms.uPlanetR = { value: radius };
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 vRingW;\nvarying vec3 vRingC;")
+        .replace(
+          "#include <project_vertex>",
+          "#include <project_vertex>\n  vRingW = (modelMatrix * vec4(transformed, 1.0)).xyz;\n  vRingC = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;",
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          "#include <common>\nuniform vec3 uSunDir;\nuniform float uPlanetR;\nvarying vec3 vRingW;\nvarying vec3 vRingC;",
+        )
+        .replace(
+          "#include <map_fragment>",
+          `#include <map_fragment>
+          vec3 dRing = vRingW - vRingC;
+          float sProj = dot(dRing, uSunDir);
+          if (sProj < 0.0) {
+            float perp = length(dRing - sProj * uSunDir);
+            float lit = smoothstep(uPlanetR * 0.97, uPlanetR * 1.12, perp);
+            diffuseColor.rgb *= mix(0.16, 1.0, lit);
+          }`,
+        );
+    };
     const mesh = new THREE.Mesh(geo, mat);
     // RingGeometry lies in the XY plane; rotate into the equatorial (local XZ) plane.
     mesh.rotation.x = -Math.PI / 2;
     node.add(mesh);
+    return sunDir;
   }
 
   /** Park every body's marker, sphere and orbit (interstellar view is active). */
@@ -391,12 +427,15 @@ export class BodyViews {
       vis.marker.position.copy(tmp);
       vis.node.position.copy(tmp);
 
-      // Point the atmosphere's day-side term at the true Sun (render space), so the
-      // glowing arc tracks the terminator as the body and Sun move.
-      if (vis.atmoMat) {
+      // Direction from this body to the true Sun (render space). Drives both the
+      // atmosphere's day-side arc and Saturn's ring-shadow band, so each tracks
+      // the terminator as the body and Sun move.
+      if (vis.atmoMat || vis.ringSunDir) {
         const sun = this.sm.sunRenderPosition;
-        const dir = vis.atmoMat.uniforms.uSunDir!.value as THREE.Vector3;
-        dir.set(sun.x - tmp.x, sun.y - tmp.y, sun.z - tmp.z).normalize();
+        const sx = sun.x - tmp.x, sy = sun.y - tmp.y, sz = sun.z - tmp.z;
+        const inv = 1 / (Math.hypot(sx, sy, sz) || 1);
+        if (vis.atmoMat) (vis.atmoMat.uniforms.uSunDir!.value as THREE.Vector3).set(sx * inv, sy * inv, sz * inv);
+        if (vis.ringSunDir) vis.ringSunDir.set(sx * inv, sy * inv, sz * inv);
       }
 
       // Axial rotation at the real sidereal rate (retrograde from a negative rate).
