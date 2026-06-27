@@ -31,10 +31,12 @@ that no amount of engineering can wish away.
 **Phases 1–6 + core-mechanics expansion complete** — a deterministic physics engine and a
 flyable, to-scale 3D Solar System.
 
-- Real JPL ephemeris for **43 bodies** — the 8 planets, the dwarf planets, major asteroids, the
+- Real JPL ephemeris for **50 bodies** — the 8 planets, the dwarf planets, major asteroids
+  (Vesta, Pallas, 433 Eros, 10 Hygiea, 3 Juno), the Kuiper flyby target Arrokoth, the
   gas-giant & other moons (Galileans, Titan + six Saturnians, five Uranians, Triton, Phobos/Deimos,
-  Charon), and TNOs + comets (Sedna, Quaoar, Gonggong, Orcus, 1P/Halley, 2P/Encke); analytic
-  Keplerian propagation exact at any time-warp, cross-checked to machine precision at J2000 vs Horizons.
+  Charon), TNOs + comets (Sedna, Quaoar, Gonggong, Orcus, 1P/Halley, 2P/Encke), and major
+  man-made satellites (ISS, Hubble, Tiangong); analytic Keplerian propagation exact at any
+  time-warp, cross-checked to machine precision at J2000 vs Horizons.
 - **Light-lag command** — the thesis of the game: commands propagate from Earth at `c`; your view
   of every ship is a retarded snapshot (delayed by `distance / c`), and orders are acknowledged
   only a round-trip later. A NACK arrives if the ship can't execute (out of propellant, wrong
@@ -83,7 +85,13 @@ flyable, to-scale 3D Solar System.
   from LEO to GEO (or any near-circular orbit), charged up front and exact at any time-warp.
 - **Interstellar** first steps: a relativistic propulsion layer (rapidity rocket equation +
   constant-proper-accel brachistochrone), the ~24 nearest star systems, a transit estimator, and
-  an in-sim flyable flip-and-burn where the crew clock and Earth clock visibly diverge.
+  an in-sim flyable flip-and-burn where the crew clock and Earth clock visibly diverge — torchships
+  include the Project Hail Mary astrophage **spin drive** (a near-photon torch).
+- **Ship lifecycle**: a ship flown into a body (e.g. a retrograde burn that drops periapsis below
+  the surface) **crashes and is lost** — destroyed at the analytic surface crossing and frozen as a
+  wreck, with the flight console reporting CONTACT LOST. Ships can be **deleted** outright, and a
+  planned transfer offers **Warp to departure** — jump the clock to just before a delayed departure
+  instead of fast-forwarding by hand.
 - **Thermal & detection** — there is no stealth in space: hull temperature (Stefan-Boltzmann),
   IR signature, and a defensible **SNR-vs-range** detection curve are live readouts. The
   detection model is the radiometer equation — a real detector noise-equivalent power,
@@ -119,7 +127,7 @@ Controls:
 | Space | Pause / resume |
 | `,` / `.` | Slower / faster time-warp |
 | `1`–`8` | Focus Sun, Mercury, Venus, Earth, Moon, Mars, Jupiter, Saturn |
-| Tab / Shift+Tab | Cycle focus forward / backward through all 43 bodies |
+| Tab / Shift+Tab | Cycle focus forward / backward through all 50 bodies |
 | `F` | Toggle ship designer & flight console |
 | `V` | Cycle camera view angle (isometric → top-down → edge-on) |
 | `R` / Home | Reset camera distance for current focus |

@@ -173,6 +173,10 @@ export interface Ship {
   /** Accumulated proper time (s). Equal to coordinate time in-system; kept so an
    *  eventual relativistic expansion stays consistent. */
   tau: number;
+  /** Set when the ship has been destroyed (flew its orbit into a body's surface).
+   *  A lost ship is frozen as a wreck at the impact site (stored in `landed`); the
+   *  UI shows CONTACT LOST and offers only deletion. Absent ⇒ the ship is active. */
+  status?: "lost";
 }
 
 export interface Station {

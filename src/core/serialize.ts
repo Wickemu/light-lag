@@ -127,6 +127,7 @@ function qShip(s: Ship): Record<string, unknown> {
   if (s.spiral) o.spiral = qSpiral(s.spiral);
   if (s.entryLeg) o.entryLeg = qEntryLeg(s.entryLeg);
   if (s.landed) o.landed = { bodyId: s.landed.bodyId, surfaceDir: qv(s.landed.surfaceDir) };
+  if (s.status) o.status = s.status;
   o.stages = s.stages.map(qStage);
   return o;
 }
@@ -207,7 +208,7 @@ export function hashWorld(world: WorldState): string {
  *  restore the non-finite tokens q() emits into NUMERIC fields only, so a string
  *  field that happens to equal a token (e.g. a ship named "Inf") is left alone. */
 const STRING_KEYS = new Set([
-  "id", "name", "primary", "mode", "targetId", "shipId", "label", "kind", "dir", "type", "controlNode",
+  "id", "name", "primary", "mode", "targetId", "shipId", "label", "kind", "dir", "type", "controlNode", "status",
 ]);
 
 /** Inverse of q()'s non-finite tokens, applied during JSON.parse. */

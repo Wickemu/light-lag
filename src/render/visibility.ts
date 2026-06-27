@@ -38,7 +38,7 @@ export const LAYER_KEYS: LayerKey[] = [
 
 export class Visibility {
   private kinds: Record<BodyKind, boolean> = {
-    star: true, planet: true, dwarf: true, asteroid: true, moon: true, comet: true,
+    star: true, planet: true, dwarf: true, asteroid: true, moon: true, comet: true, satellite: true,
   };
   private layers: Record<LayerKey, boolean> = {
     orbits: true, trajectory: true, route: false, labels: true, ships: true,

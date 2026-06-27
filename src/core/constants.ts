@@ -118,7 +118,7 @@ export interface Atmosphere {
   scaleHeight: number;     // H, m
 }
 
-export type BodyKind = "star" | "planet" | "dwarf" | "asteroid" | "moon" | "comet";
+export type BodyKind = "star" | "planet" | "dwarf" | "asteroid" | "moon" | "comet" | "satellite";
 
 export interface BodyDef {
   id: string;
@@ -266,6 +266,27 @@ export const BODIES: BodyDef[] = [
     kind: "asteroid", color: 0xa8a090,
     rotationPeriod: 19231.0, hasSurface: true,
     helio: { a: 2.3615349347, e: 0.09002244561937413, i: 7.133935828421654, node: 103.9514370845001, peri: 149.5866679599199, M0: 341.0238343838706 },
+  },
+  {
+    // 433 Eros — the Mars-crossing NEA NEAR Shoemaker orbited and landed on (2001).
+    // GM/radius from JPL; elements @ J2000 (Horizons, ecliptic-J2000, ω not ϖ).
+    id: "eros", name: "433 Eros", parent: "sun", mu: 4.463e5, radius: 8.42e3,
+    kind: "asteroid", color: 0x9a7b5a, rotationPeriod: 18972.0, hasSurface: true, // 5.27 h
+    helio: { a: 1.458339407824060, e: 0.2227585463818351, i: 10.82844050869488, node: 304.4156610725765, peri: 178.6458706145036, M0: 57.69232527092141 },
+  },
+  {
+    // 10 Hygiea — the fourth-largest main-belt asteroid (a dark C-type), rounding out
+    // the "big four" with Ceres/Vesta/Pallas. GM ~7 km³/s² (Horizons).
+    id: "hygiea", name: "10 Hygiea", parent: "sun", mu: 7e9, radius: 2.0356e5,
+    kind: "asteroid", color: 0x5a5a55, rotationPeriod: 49780.8, hasSurface: true, // 13.83 h
+    helio: { a: 3.138421324853723, e: 0.1194647926154634, i: 3.842651449337091, node: 283.6632054163321, peri: 314.3682343023398, M0: 339.2148139451292 },
+  },
+  {
+    // 3 Juno — one of the first asteroids discovered (1804), a large S-type. Its GM is
+    // not well measured; a representative estimate is used (nothing orbits it here).
+    id: "juno", name: "3 Juno", parent: "sun", mu: 1.5e9, radius: 1.23298e5,
+    kind: "asteroid", color: 0x9a8a72, rotationPeriod: 25956.0, hasSurface: true, // 7.21 h
+    helio: { a: 2.668034901649998, e: 0.2584434725495511, i: 12.96742544316528, node: 170.1725855271043, peri: 248.0317243376480, M0: 240.2686465738877 },
   },
   {
     id: "pluto", name: "Pluto", parent: "sun", mu: 8.696e11, radius: 1.1883e6,
@@ -432,6 +453,14 @@ export const BODIES: BodyDef[] = [
     helio: { a: 39.26252229, e: 0.2257511424, i: 20.53929450, node: 268.45724311, peri: 73.75098678, M0: 150.04005960 },
   },
   {
+    // (486958) Arrokoth — the cold-classical Kuiper-belt contact binary New Horizons
+    // flew past in 2019, the most distant body ever explored. GM unmeasured (tiny);
+    // radius ~10 km. Classed "asteroid" here (the taxonomy has no KBO kind).
+    id: "arrokoth", name: "Arrokoth", parent: "sun", mu: 5e4, radius: 1.0e4,
+    kind: "asteroid", color: 0x8a4a3a, rotationPeriod: 57304.8, hasSurface: true, // 15.92 h; 2014 MU69
+    helio: { a: 44.07371295812492, e: 0.03971684377527177, i: 2.448398975784269, node: 159.2027822226525, peri: 189.4428790567422, M0: 278.0873839113186 },
+  },
+  {
     id: "halley", name: "1P/Halley", parent: "sun", mu: 1.5e4, radius: 5.5e3,
     kind: "comet", color: 0xcfd8e0, hasSurface: true,
     helio: { a: 17.92150741, e: 0.9672702024, i: 162.19604262, node: 59.50786535, peri: 112.44962203, M0: 65.84890058 },
@@ -440,6 +469,29 @@ export const BODIES: BodyDef[] = [
     id: "encke", name: "2P/Encke", parent: "sun", mu: 7e2, radius: 2.4e3,
     kind: "comet", color: 0xcfd8e0, hasSurface: true,
     helio: { a: 2.21753963, e: 0.8470517263, i: 11.76429574, node: 334.62961233, peri: 186.47268752, M0: 284.74223251 },
+  },
+
+  // ── Major crewed/scientific satellites in Earth orbit ────────────────────────
+  // Representative low-Earth-orbit elements (these are actively station-kept and
+  // decay in reality, so a fixed J2000-anchored conic is a deliberate stand-in):
+  // a/e/i are real, the J2 nodal/apsidal precession rates are derived from the
+  // orbit, and the phase (node/peri/M0) is illustrative. mu/radius are the body's
+  // own (negligible) — nothing patches into their gravity. hasSurface:false, so
+  // landing/launch is disabled (you don't set down on a space station).
+  {
+    id: "iss", name: "ISS", parent: "earth", mu: 3.0e-5, radius: 54,
+    kind: "satellite", color: 0xdfe6ef, hasSurface: false, // ~415 km, 51.64°
+    moon: { a: 6.793e6, e: 0.0006, i: 51.64, node: 60.0, nodeDot: -4.948671, peri: 90.0, periDot: 3.690867, M0: 0.0, MDot: 5582.295740 },
+  },
+  {
+    id: "hubble", name: "Hubble (HST)", parent: "earth", mu: 8.0e-7, radius: 7,
+    kind: "satellite", color: 0xc8d0d8, hasSurface: false, // ~540 km, 28.47°
+    moon: { a: 6.918e6, e: 0.0003, i: 28.47, node: 110.0, nodeDot: -6.576303, peri: 250.0, periDot: 10.712022, M0: 200.0, MDot: 5431.683128 },
+  },
+  {
+    id: "tiangong", name: "Tiangong", parent: "earth", mu: 6.7e-6, radius: 30,
+    kind: "satellite", color: 0xe8d0a0, hasSurface: false, // ~390 km, 41.47°
+    moon: { a: 6.771e6, e: 0.0005, i: 41.47, node: 200.0, nodeDot: -6.043164, peri: 130.0, periDot: 7.287870, M0: 300.0, MDot: 5609.524408 },
   },
 ];
 

@@ -22,6 +22,7 @@ import {
   launchShip,
   flyEntry,
   planSpiral,
+  deleteShip,
   shipSurfaceParams,
 } from "../app/commands.ts";
 import {
@@ -49,7 +50,7 @@ import {
   shipEntryReadout,
   primaryMu,
 } from "../core/ships.ts";
-import { summarizeOrbit, periapsisRadius, j2Rates } from "../core/orbit.ts";
+import { summarizeOrbit, periapsisRadius, orbitalPeriod, j2Rates } from "../core/orbit.ts";
 import { bodyPosition } from "../core/ephemeris.ts";
 import { retardedTime } from "../core/comms.ts";
 import { STAR_BY_ID } from "../core/stars.ts";
@@ -99,6 +100,8 @@ export class ShipPanel {
   private executeBtn!: HTMLButtonElement;
   private planBtn!: HTMLButtonElement;
   private interstellarBtn!: HTMLButtonElement;
+  private warpDepartBtn!: HTMLButtonElement;
+  private deleteBtn!: HTMLButtonElement;
   private surfaceEl!: HTMLElement;
   private surfaceReadout!: HTMLElement;
   private surfaceAltInput!: HTMLInputElement;
@@ -224,6 +227,12 @@ export class ShipPanel {
     this.interstellarBtn.className = "wide-btn";
     flt.appendChild(this.interstellarBtn);
 
+    // Skip the wait to a delayed departure: jump the clock to just before it.
+    this.warpDepartBtn = button("⏩ Warp to departure", () => this.warpToDeparture());
+    this.warpDepartBtn.className = "wide-btn";
+    this.warpDepartBtn.style.display = "none";
+    flt.appendChild(this.warpDepartBtn);
+
     // Surface ops — landing & takeoff Δv budgeting (shown only when the ship is
     // coasting in the SOI of a body with a surface, or already landed).
     this.surfaceEl = el("div", "surface-ops");
@@ -294,6 +303,13 @@ export class ShipPanel {
     mnv.appendChild(dvRow);
 
     this.flightEl.appendChild(maneuverSection.root);
+
+    // Scrap/abandon the selected ship (removes it from the sim entirely).
+    this.deleteBtn = button("🗑 Delete ship", () => this.doDelete());
+    this.deleteBtn.className = "wide-btn danger";
+    this.deleteBtn.title = "Remove this ship from the simulation. Cannot be undone.";
+    this.flightEl.appendChild(this.deleteBtn);
+
     panel.appendChild(this.flightEl);
 
     this.root.appendChild(panel);
@@ -448,16 +464,7 @@ export class ShipPanel {
 
   private select(id: string): void {
     this.selectedId = id;
-    const ship = this.sim.world.ships.get(id);
-    if (ship) {
-      const el = shipOsculatingElements(ship, this.sim.world.t);
-      const ra = el.a * (1 + el.e);
-      const distUnits = Math.max((ra / 1e9) * 2.2, 0.02);
-      this.sm.setFocusTarget(id, (t) => {
-        const s = this.sim.world.ships.get(id);
-        return s ? shipWorldState(s, t).r : { x: 0, y: 0, z: 0 };
-      }, distUnits);
-    }
+    if (this.sim.world.ships.get(id)) this.frameShip(id);
     this.flightEl.style.display = "block";
     // First time a ship is selected this session, fold the designer to surface
     // the flight controls — a convenience nudge, not a persisted override.
@@ -466,6 +473,37 @@ export class ShipPanel {
       this.designerSection.setOpen(false);
     }
     this.refreshShipList();
+  }
+
+  /** Centre the camera on a ship — but, when chasing it would strobe (a short, fast
+   *  orbit at high warp), frame its PARENT body instead so you watch it circle. This
+   *  is the fix for the LEO-launch strobe: at 1 day/s a ship laps Earth ~16×/s. */
+  private frameShip(id: string): void {
+    const ship = this.sim.world.ships.get(id);
+    if (!ship) return;
+    if (this.shouldFrameParent(ship)) {
+      this.sm.focusBody(ship.primary);
+      return;
+    }
+    const el = shipOsculatingElements(ship, this.sim.world.t);
+    const ra = el.a * (1 + el.e);
+    const distUnits = Math.max((ra / 1e9) * 2.2, 0.02);
+    this.sm.setFocusTarget(id, (t) => {
+      const s = this.sim.world.ships.get(id);
+      return s ? shipWorldState(s, t).r : { x: 0, y: 0, z: 0 };
+    }, distUnits);
+  }
+
+  /** True when directly framing the ship would strobe: a bound, short-period orbit
+   *  about a body at a warp where many revolutions elapse per real second. */
+  private shouldFrameParent(ship: Ship): boolean {
+    if (ship.primary === "sun" || ship.interstellarLeg || ship.landed || ship.mode === "thrust") return false;
+    if (!BODY_BY_ID.get(ship.primary)) return false;
+    const el = shipOsculatingElements(ship, this.sim.world.t);
+    if (el.e >= 1 || el.a <= 0) return false; // unbound — not a tight fast loop
+    const period = orbitalPeriod(el.a, primaryMu(ship));
+    // Revolutions swept per real second at the current warp; past ~¼ rev/s the chase strobes.
+    return period > 0 && this.sim.warp / period > 0.25;
   }
 
   private execute(): void {
@@ -505,6 +543,11 @@ export class ShipPanel {
     if (!ship) {
       this.selectedId = null;
       this.flightEl.style.display = "none";
+      return;
+    }
+    // A destroyed ship has no live orbit to read — show the loss and offer only deletion.
+    if (ship.status === "lost") {
+      this.renderLost(ship);
       return;
     }
 
@@ -586,6 +629,13 @@ export class ShipPanel {
         lines.push(kv("In transit", `→ ${tName}, arrive in ${((tr.tArrive - t) / DAY).toFixed(0)} d`));
         lines.push(kv("Capture Δv", `${(tr.dvArrive / 1000).toFixed(2)} km/s`));
       }
+    }
+    // "Warp to departure": only meaningful for a planned, not-yet-departed transfer.
+    const planned = !!tr && !tr.departed;
+    this.warpDepartBtn.style.display = planned ? "block" : "none";
+    if (planned) {
+      setDisabled(this.warpDepartBtn, this.sim.anyThrust(), "Can't skip time while a burn is running.");
+      this.warpDepartBtn.textContent = `⏩ Warp to ${formatDate(tr!.tDepart)}`;
     }
     // Interstellar leg status.
     const leg = ship.interstellarLeg;
@@ -718,7 +768,46 @@ export class ShipPanel {
 
   private doLaunch(): void {
     if (!this.selectedId) return;
-    launchShip(this.sim, this.selectedId, Math.max(0, Number(this.surfaceAltInput.value) || 0));
+    const res = launchShip(this.sim, this.selectedId, Math.max(0, Number(this.surfaceAltInput.value) || 0));
+    // Re-frame after reaching orbit: at high warp this lands on the parent body so the
+    // fresh LEO ship is watched circling it, not chased into a strobe.
+    if (res && res.feasible) this.frameShip(this.selectedId);
+  }
+
+  /** Jump the clock to just before this ship's (delayed) transfer departure. */
+  private warpToDeparture(): void {
+    if (!this.selectedId) return;
+    const tr = this.sim.world.ships.get(this.selectedId)?.transfer;
+    if (!tr || tr.departed) return;
+    this.sim.jumpToTime(tr.tDepart - 300); // stop ~5 min out, so the injection is watchable
+  }
+
+  /** Remove the selected ship from the sim and redirect focus if it was watched. */
+  private doDelete(): void {
+    if (!this.selectedId) return;
+    const ship = this.sim.world.ships.get(this.selectedId);
+    const wasFocused = this.sm.focusId === this.selectedId;
+    const fallback = ship && ship.primary !== "sun" ? ship.primary : "earth";
+    if (deleteShip(this.sim, this.selectedId) && wasFocused) this.sm.focusBody(fallback);
+    this.selectedId = null;
+    this.flightEl.style.display = "none";
+    this.refreshShipList();
+  }
+
+  /** Flight console for a destroyed ship: a CONTACT LOST banner, every action
+   *  disabled, and only the Delete button live to clear the wreck. */
+  private renderLost(ship: Ship): void {
+    const where = BODY_BY_ID.get(ship.landed?.bodyId ?? ship.primary)?.name ?? "a body";
+    this.readoutEl.innerHTML =
+      kv("Status", "CONTACT LOST") +
+      `<div class="warn">✗ ${ship.name} was destroyed — impact with ${where}.</div>`;
+    this.surfaceEl.style.display = "none";
+    this.electricEl.style.display = "none";
+    this.warpDepartBtn.style.display = "none";
+    setDisabled(this.planBtn, true, "Ship lost.");
+    setDisabled(this.interstellarBtn, true, "Ship lost.");
+    setDisabled(this.executeBtn, true, "Ship lost.");
+    this.executeBtn.textContent = "Execute burn";
   }
 
   /** Commit a low-thrust Edelbaum spiral from the current circular orbit to the

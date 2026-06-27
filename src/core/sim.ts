@@ -23,14 +23,14 @@
 import { type WorldState, type Ship, type ShipBurn, type ShipCommand, type BurnDir } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
-import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius, visVivaSpeed } from "./orbit.ts";
+import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius, visVivaSpeed, j2Rates } from "./orbit.ts";
 import {
   activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
   interstellarProperTime, spiralElements, buildEntryLeg, NOMINAL_ENTRY_VEHICLE,
 } from "./ships.ts";
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
-import { stateToElements, meanMotion } from "./math/kepler.ts";
+import { stateToElements, meanMotion, wrapTwoPi } from "./math/kepler.ts";
 import { bodyState, bodyElements, bodyStateRelative } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
 import { aimArrival, aimMoonArrival } from "./maneuver/arrival.ts";
@@ -89,6 +89,19 @@ export class Simulation {
 
   togglePause(): void {
     this.paused = !this.paused;
+  }
+
+  /**
+   * Leap the clock forward to absolute time `t` (e.g. "warp to just before a
+   * scheduled departure"). Coasting is analytic, so the jump is exact and cheap —
+   * scheduled events along the way (other ships' captures, message arrivals) still
+   * fire in order. It refuses while anything is thrusting: an active burn must be
+   * sub-stepped at the warp cap, never skipped, so a far-off burn blocks the jump
+   * until it ends. A no-op when `t` is not in the future.
+   */
+  jumpToTime(t: number): void {
+    if (t <= this.world.t || this.anyThrust()) return;
+    this.step(t - this.world.t);
   }
 
   anyThrust(): boolean {
@@ -153,8 +166,19 @@ export class Simulation {
         }
         this.world.t = segEnd;
       } else {
-        // Coasting: bodies and ships are analytic — jump straight to the next event.
-        this.world.t = Math.min(target, nextEvent);
+        // Coasting: bodies and ships are analytic — jump straight to the next event,
+        // but stop at the earliest impending surface impact so a ship is destroyed
+        // exactly when (and where) its orbit first meets the surface. impactTime is a
+        // pure function of the ship's (time-invariant) conic, so the crash fires at a
+        // deterministic absolute t regardless of how the interval was chunked.
+        let stop = Math.min(target, nextEvent);
+        let crasher: Ship | undefined;
+        for (const ship of this.world.ships.values()) {
+          const tImpact = this.impactTime(ship);
+          if (tImpact !== null && tImpact <= stop) { stop = tImpact; crasher = ship; }
+        }
+        this.world.t = stop;
+        if (crasher) this.crashShip(crasher, stop);
       }
       this.drainEvents(this.world.t);
     }
@@ -528,6 +552,92 @@ export class Simulation {
     }
     ship.mode = "coast";
     ship.burn = undefined;
+  }
+
+  // ── Surface impact (a ship flown into a body) ─────────────────────────────
+
+  /**
+   * The absolute time a COASTING ship's conic next crosses its primary's surface
+   * (r = body.radius) on the way down — or null if it never will (periapsis clears
+   * the surface) or the ship isn't a plain coasting orbit. Derived analytically
+   * from the osculating conic, so it is exact at any time-warp and chunk-invariant.
+   * Legs with their own kinematics (interstellar / spiral / entry / landed) and
+   * powered flight are skipped — they own their own terminal handling.
+   */
+  private impactTime(ship: Ship): number | null {
+    if (ship.status === "lost" || ship.mode !== "coast") return null;
+    if (ship.landed || ship.interstellarLeg || ship.spiral || ship.entryLeg || !ship.elements) return null;
+    const body = BODY_BY_ID.get(ship.primary);
+    if (!body) return null;
+    const R = body.radius;
+    const t = this.world.t;
+    const el = shipOsculatingElements(ship, t);
+    const rp = el.a * (1 - el.e); // periapsis radius (a<0·(1−e)<0 ⇒ >0 for hyperbolae too)
+    if (!(rp < R)) return null; // periapsis clears the surface — safe
+    const mu = body.mu;
+    const rNow = length(shipRelativeState(ship, t).r);
+    if (rNow <= R) return t; // already at/under the surface → destroyed now
+    // Convert ΔM → Δt at the SAME rate coastElements advances the mean anomaly: the
+    // Kepler mean motion PLUS the J2 secular rate (bound orbits only). Using the bare
+    // mean motion here would make the impact time depend on the evaluation epoch and
+    // break chunk-invariance over a precessing orbit.
+    const n = meanMotion(el.a, mu);
+    const nEff = body.J2 && el.e < 1 ? n + j2Rates(mu, R, body.J2, el.a, el.e, el.i).anomalyDot : n;
+    if (el.e < 1) {
+      // Eccentric anomaly at r = R; the impact is the DESCENDING crossing (toward
+      // periapsis), whose mean anomaly is 2π − M_ascending.
+      const cosE = Math.max(-1, Math.min(1, (1 - R / el.a) / el.e));
+      const Ecross = Math.acos(cosE);
+      const Mdesc = wrapTwoPi(-(Ecross - el.e * Math.sin(Ecross)));
+      let dt = (Mdesc - wrapTwoPi(el.M)) / nEff;
+      if (dt < 0) dt += (2 * Math.PI) / nEff;
+      return t + dt;
+    }
+    // Hyperbolic: r = R at hyperbolic anomaly F (cosh F = (1 − R/a)/e, a < 0). The
+    // inbound crossing is at mean anomaly −M_cross; if already past it the ship has
+    // dived through periapsis (below the surface) and is doomed now.
+    const coshF = (1 - R / el.a) / el.e;
+    if (coshF < 1) return null;
+    const F = Math.acosh(coshF);
+    const Mcross = el.e * Math.sinh(F) - F;
+    const dt = (-Mcross - el.M) / n;
+    return dt >= 0 ? t + dt : t;
+  }
+
+  /**
+   * Destroy a ship that has flown its orbit into a body: freeze it as a wreck at
+   * the impact site (co-rotating with the surface, like a landing), mark it lost,
+   * cancel any pending legs/orders, drop its scheduled events, and radio a final
+   * "signal lost" home. The wreck stays in the world so the player can see where it
+   * died and choose to scrap it; the UI offers only deletion from here.
+   */
+  private crashShip(ship: Ship, t: number): void {
+    const body = BODY_BY_ID.get(ship.primary);
+    // Capture the impact direction from the live conic BEFORE clearing it.
+    let surfaceDir: Vec3 | undefined;
+    if (body) {
+      const dir = normalize(shipRelativeState(ship, t).r);
+      const T = body.rotationPeriod ?? 0;
+      const om = T !== 0 ? (2 * Math.PI) / T : 0;
+      const c = Math.cos(-om * t), s = Math.sin(-om * t);
+      surfaceDir = { x: dir.x * c - dir.y * s, y: dir.x * s + dir.y * c, z: dir.z };
+    }
+    ship.status = "lost";
+    ship.mode = "coast";
+    ship.burn = undefined;
+    ship.transfer = undefined;
+    ship.spiral = undefined;
+    ship.entryLeg = undefined;
+    ship.interstellarLeg = undefined;
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = undefined;
+    ship.epoch = t;
+    if (body && surfaceDir) ship.landed = { bodyId: body.id, surfaceDir };
+    // Drop any other scheduled events for this ship (capture, SOI, …) — the wreck
+    // must not still try to fly them.
+    this.events.removeByEntity(ship.id);
+    this.emitTelemetry(ship, `signal lost: ${ship.name} impacted ${body?.name ?? ship.primary}`);
   }
 
   /** Event dispatch. */
