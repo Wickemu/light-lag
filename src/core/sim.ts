@@ -960,14 +960,21 @@ export class Simulation {
     const t = this.world.t;
     const st = shipRelativeState(ship, t); // at periapsis (coast about target)
     const r = length(st.r);
-    const vCirc = Math.sqrt(body.mu / r);
 
-    // True circularization impulse: target the tangential (prograde) direction
-    // and take the FULL vector difference, so any residual radial component is
-    // removed and the propellant charged matches the burn actually flown. (At
-    // exact periapsis this equals the scalar |v| − vCirc.)
+    // Capture speed at periapsis: circularize (vCirc) by default, or — for an ELLIPTICAL capture
+    // (tr.captureApoAlt set) — only slow to the periapsis speed of a bound ellipse reaching that
+    // apoapsis. The latter is the Oberth-cheap deep-well insertion; it leaves periapsis here.
+    let vTarget = Math.sqrt(body.mu / r);
+    if (tr.captureApoAlt !== undefined) {
+      const rApo = Math.max(r, body.radius + tr.captureApoAlt);
+      vTarget = Math.sqrt(body.mu * (2 / r - 2 / (r + rApo)));
+    }
+
+    // Target the tangential (prograde) direction and take the FULL vector difference, so any
+    // residual radial component is removed and the propellant charged matches the burn actually
+    // flown. (At exact periapsis this equals the scalar |v| − vTarget.)
     const tHat = normalize(cross(cross(st.r, st.v), st.r));
-    const targetV = scale(tHat, vCirc);
+    const targetV = scale(tHat, vTarget);
     const captureDv = length(sub(targetV, st.v));
     if (!applyImpulsiveDv(ship, captureDv)) return; // can't afford — stays on the hyperbola
 

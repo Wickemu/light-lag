@@ -9,6 +9,7 @@ import {
   orbitFrame,
   summarizeOrbit,
   hyperbolicBurnDv,
+  ellipticalCaptureDv,
 } from "./orbit.ts";
 import { elementsToState, period } from "./math/kepler.ts";
 import { dot, length } from "./math/vec3.ts";
@@ -65,6 +66,39 @@ describe("Oberth-aware injection / capture burn", () => {
     const dv = hyperbolicBurnDv(3000, MU_EARTH, 1e15);
     expect(dv).toBeGreaterThan(2990);
     expect(dv).toBeLessThan(3001);
+  });
+});
+
+describe("elliptical (Oberth-cheap) capture", () => {
+  const MU_JUP = BODY_BY_ID.get("jupiter")!.mu;
+  const R_JUP = BODY_BY_ID.get("jupiter")!.radius;
+  const rPeri = R_JUP + 4e5;
+
+  it("reduces exactly to the circular capture when apoapsis = periapsis", () => {
+    const vInf = 5600;
+    expect(ellipticalCaptureDv(vInf, MU_JUP, rPeri, rPeri)).toBeCloseTo(hyperbolicBurnDv(vInf, MU_JUP, rPeri), 6);
+  });
+
+  it("a loose ellipse is far cheaper than a low circular capture at a deep well", () => {
+    const vInf = 5600;
+    const circular = hyperbolicBurnDv(vInf, MU_JUP, rPeri);
+    const ellipse = ellipticalCaptureDv(vInf, MU_JUP, rPeri, rPeri + 2e10); // huge apoapsis
+    expect(ellipse).toBeLessThan(circular);
+    expect(ellipse).toBeLessThan(0.3 * circular); // the bulk of the burn is saved
+    expect(ellipse).toBeGreaterThan(0); // still a real (barely-bound) capture burn
+  });
+
+  it("gets cheaper as the capture apoapsis rises (monotone toward the parabolic limit)", () => {
+    const vInf = 5600;
+    const dvs = [rPeri, rPeri + 1e9, rPeri + 1e10, rPeri + 1e11].map((ra) =>
+      ellipticalCaptureDv(vInf, MU_JUP, rPeri, ra));
+    for (let i = 1; i < dvs.length; i++) expect(dvs[i]!).toBeLessThan(dvs[i - 1]!);
+  });
+
+  it("clamps apoapsis below periapsis to the circular capture (never cheaper than parabolic)", () => {
+    const vInf = 5600;
+    expect(ellipticalCaptureDv(vInf, MU_JUP, rPeri, rPeri * 0.5))
+      .toBeCloseTo(hyperbolicBurnDv(vInf, MU_JUP, rPeri), 6);
   });
 });
 

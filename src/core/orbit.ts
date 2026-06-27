@@ -43,6 +43,23 @@ export function hyperbolicBurnDv(vInf: number, mu: number, rPark: number): numbe
 }
 
 /**
+ * Δv to CAPTURE an arrival hyperbola (excess speed vInf) into a BOUND orbit with periapsis
+ * `rPeri` and apoapsis `rApo`, burning once at periapsis (where speed is highest, so the Oberth
+ * effect is strongest). With `rApo === rPeri` this is the circular capture and reduces exactly to
+ * `hyperbolicBurnDv`; a high apoapsis (a loose, eccentric capture ellipse) is far cheaper — you
+ * shed only enough energy to drop just below escape. This is how real deep-well arrivals (a
+ * Jupiter/Saturn orbit insertion) are flown: a low periapsis + a huge ellipse, not a low circular
+ * orbit. `rApo` is clamped to ≥ `rPeri`.
+ */
+export function ellipticalCaptureDv(vInf: number, mu: number, rPeri: number, rApo: number): number {
+  const ra = Math.max(rApo, rPeri);
+  const a = (rPeri + ra) / 2;
+  const vHypPeri = Math.sqrt(vInf * vInf + 2 * mu / rPeri);
+  const vEllPeri = Math.sqrt(mu * (2 / rPeri - 1 / a));
+  return vHypPeri - vEllPeri;
+}
+
+/**
  * Δv for a PURE plane change of angle `di` (rad) at orbital speed `v`: rotating
  * the velocity vector by `di` without changing its magnitude is an isoceles
  * triangle, so Δv = 2·v·sin(di/2). This is why plane changes are done at apoapsis

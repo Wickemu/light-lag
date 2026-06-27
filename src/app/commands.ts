@@ -10,7 +10,7 @@
 import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir } from "../core/world.ts";
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/propulsion.ts";
-import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
+import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "../core/orbit.ts";
 import { hohmann } from "../core/maneuver/hohmann.ts";
 import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "../core/maneuver/entry.ts";
@@ -24,7 +24,7 @@ import { STAR_BY_ID, starPosition } from "../core/stars.ts";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
 } from "../core/surface.ts";
-import { bodyState, bodyStateRelative } from "../core/ephemeris.ts";
+import { bodyState, bodyStateRelative, bodyElements } from "../core/ephemeris.ts";
 import { lambert } from "../core/maneuver/lambert.ts";
 import { length, sub, normalize, distance } from "../core/math/vec3.ts";
 import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT, type BodyDef } from "../core/constants.ts";
@@ -110,6 +110,7 @@ export function planTransfer(
   tDepart: number,
   tArrive: number,
   captureMode: "propulsive" | "aerocapture" = "propulsive",
+  captureApoAlt?: number, // propulsive only: capture into an ellipse reaching this apoapsis alt
 ): TransferPlan | null {
   const ship = sim.world.ships.get(shipId);
   if (!ship || tArrive <= tDepart) return null;
@@ -149,8 +150,15 @@ export function planTransfer(
     return { dvDepart, dvArrive: ac.trimDv, tof: tArrive - tDepart };
   }
 
-  const dvArrive = hyperbolicBurnDv(vInfArrive, target.mu, rParkTo);
-  ship.transfer = { targetId, tDepart, tArrive, dvDepart, dvArrive, departed: false, inSoi: false, arrived: false };
+  // Propulsive capture: circular by default, or — when an apoapsis is given — a cheap
+  // Oberth-efficient elliptical insertion (low periapsis, high apoapsis), as flown at deep wells.
+  const dvArrive = captureApoAlt !== undefined
+    ? ellipticalCaptureDv(vInfArrive, target.mu, rParkTo, target.radius + captureApoAlt)
+    : hyperbolicBurnDv(vInfArrive, target.mu, rParkTo);
+  ship.transfer = {
+    targetId, tDepart, tArrive, dvDepart, dvArrive, departed: false, inSoi: false, arrived: false,
+    ...(captureApoAlt !== undefined ? { captureApoAlt } : {}),
+  };
   sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
   return { dvDepart, dvArrive, tof: tArrive - tDepart };
 }
@@ -175,6 +183,41 @@ export function aerocapturePreview(
   return { feasible: !!ac && ac.feasible, trimDv: ac?.trimDv ?? 0, propulsiveDv };
 }
 
+/** Fraction of a body's sphere of influence used as the apoapsis of a "loose" elliptical
+ *  capture — well inside the SOI (so it stays bound and stable) yet eccentric enough to win
+ *  most of the Oberth saving over a low circular capture. */
+const LOOSE_CAPTURE_SOI_FRACTION = 0.5;
+
+/** Apoapsis ALTITUDE (m) of a sensible loose elliptical capture at `targetId`: half its SOI,
+ *  measured above the surface. Scales naturally across wells (a Jupiter ellipse is vast, a Mars
+ *  one modest). Used by the planner to offer the cheap elliptical-capture option. */
+export function looseCaptureApoAlt(targetId: string, t: number): number {
+  const body = BODY_BY_ID.get(targetId);
+  if (!body) return DEFAULT_CAPTURE_ALT;
+  const parentMu = body.parent ? (BODY_BY_ID.get(body.parent)?.mu ?? MU_SUN) : MU_SUN;
+  const a = bodyElements(body, t)?.a ?? 0;
+  const rSoi = soiRadius(a, body.mu, parentMu);
+  return Math.max(DEFAULT_CAPTURE_ALT, LOOSE_CAPTURE_SOI_FRACTION * rSoi - body.radius);
+}
+
+/** Read-only preview of the propulsive capture Δv for a heliocentric arrival — circular
+ *  (`captureApoAlt` omitted) or a cheaper elliptical insertion to that apoapsis altitude. null if
+ *  the bodies are unknown or no Lambert solution exists. Lets the planner show the live saving. */
+export function captureDvPreview(
+  targetId: string, depBodyId: string, tDepart: number, tArrive: number, captureApoAlt?: number,
+): number | null {
+  const depBody = BODY_BY_ID.get(depBodyId);
+  const target = BODY_BY_ID.get(targetId);
+  if (!depBody || !target || tArrive <= tDepart) return null;
+  const sol = lambert(bodyState(depBody, tDepart).r, bodyState(target, tArrive).r, tArrive - tDepart, MU_SUN, true);
+  if (!sol) return null;
+  const vInf = length(sub(sol.v2, bodyState(target, tArrive).v));
+  const rPark = target.radius + DEFAULT_CAPTURE_ALT;
+  return captureApoAlt !== undefined
+    ? ellipticalCaptureDv(vInf, target.mu, rPark, target.radius + captureApoAlt)
+    : hyperbolicBurnDv(vInf, target.mu, rPark);
+}
+
 /**
  * Plan a transfer from the ship's current planet-orbit to one of that planet's MOONS — a
  * transfer flown about the PARENT planet (not the Sun), so the ship stays in the planet's
@@ -184,6 +227,7 @@ export function aerocapturePreview(
  */
 export function planMoonTransfer(
   sim: Simulation, shipId: string, moonId: string, tDepart: number, tArrive: number,
+  captureApoAlt?: number, // capture into an ellipse reaching this apoapsis alt (else circular)
 ): TransferPlan | null {
   const ship = sim.world.ships.get(shipId);
   if (!ship || tArrive <= tDepart || ship.mode !== "coast" || ship.landed) return null;
@@ -202,13 +246,18 @@ export function planMoonTransfer(
   const aim = aimMoonArrival(parent, moon, shipDep.r, tDepart, tArrive, rParkTo);
   if (!aim) return null;
   const dvDepart = length(sub(aim.v1, shipDep.v));
-  // Capture about the moon: the approach v∞ from the (centre) Lambert vs the moon's velocity.
+  // Capture about the moon: the approach v∞ from the (centre) Lambert vs the moon's velocity —
+  // circular by default, or a cheaper elliptical insertion when an apoapsis is given.
   const approach = lambert(shipDep.r, moonArr.r, tArrive - tDepart, parent.mu, true);
-  const dvArrive = approach ? hyperbolicBurnDv(length(sub(approach.v2, moonArr.v)), moon.mu, rParkTo) : 0;
+  const vInf = approach ? length(sub(approach.v2, moonArr.v)) : 0;
+  const dvArrive = !approach ? 0 : captureApoAlt !== undefined
+    ? ellipticalCaptureDv(vInf, moon.mu, rParkTo, moon.radius + captureApoAlt)
+    : hyperbolicBurnDv(vInf, moon.mu, rParkTo);
 
   ship.transfer = {
     targetId: moonId, tDepart, tArrive, dvDepart, dvArrive,
     departed: false, inSoi: false, arrived: false, central: ship.primary,
+    ...(captureApoAlt !== undefined ? { captureApoAlt } : {}),
   };
   sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
   return { dvDepart, dvArrive, tof: tArrive - tDepart };
@@ -246,6 +295,7 @@ function estimateMoonLeg(parent: BodyDef, moon: BodyDef, tArrive: number): numbe
 export function planMoonMission(
   sim: Simulation, shipId: string, moonId: string, tDepart: number, tArrive: number,
   captureMode: "propulsive" | "aerocapture" = "propulsive",
+  captureApoAlt?: number, // Stage-1 elliptical capture apoapsis alt at the parent (else circular)
 ): MoonMissionPlan | null {
   const ship = sim.world.ships.get(shipId);
   const moon = BODY_BY_ID.get(moonId);
@@ -254,7 +304,7 @@ export function planMoonMission(
   // Only a cross-system moon (parent is a heliocentric planet, and not where we already are).
   if (!parent || parent.parent !== "sun" || parent.id === ship.primary) return null;
 
-  const stage1 = planTransfer(sim, shipId, parent.id, tDepart, tArrive, captureMode);
+  const stage1 = planTransfer(sim, shipId, parent.id, tDepart, tArrive, captureMode, captureApoAlt);
   if (!stage1) return null;
   // Tag the just-planned transfer so the sim flies the moon leg on arrival.
   ship.transfer!.thenMoonId = moonId;

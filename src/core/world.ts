@@ -116,6 +116,10 @@ export interface ShipTransfer {
    *  periapsis to this altitude (m, inside the atmosphere) so a drag pass — not a propulsive
    *  burn — sheds the energy to capture. Only a small post-pass periapsis-raise trim is paid. */
   aeroPeriAlt?: number;
+  /** Apoapsis altitude (m) of an ELLIPTICAL propulsive capture. When set, the capture burn at
+   *  periapsis targets a bound ellipse [parking periapsis, this apoapsis] instead of circularizing
+   *  — the Oberth-cheap, realistic deep-well insertion. Absent ⇒ the classic low circular capture. */
+  captureApoAlt?: number;
   /** Cruise central body for the transfer (default "sun"). A MOON transfer cruises about the
    *  parent PLANET instead — the ship stays in the planet's SOI and patches into the moon's. */
   central?: string;
