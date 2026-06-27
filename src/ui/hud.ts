@@ -19,6 +19,9 @@ import { surfaceGravity, escapeVelocity } from "../core/surface.ts";
 import { period as orbitalPeriod } from "../core/math/kepler.ts";
 import { length, distance } from "../core/math/vec3.ts";
 import { formatDate } from "../core/time.ts";
+import { el, button, kv } from "./dom.ts";
+import { popover, type Popover } from "./popover.ts";
+import { getFlag, setFlag } from "./uiState.ts";
 
 /** Focus-list groups, in display order. The Sun (star) gets no header — it sits
  *  alone at the top, directly under FOCUS. BODIES is ordered by heliocentric
@@ -56,6 +59,9 @@ export class Hud {
   private labelLayer!: HTMLElement;
   private systemBtn!: HTMLButtonElement;
   private interstellarBtn!: HTMLButtonElement;
+  private layersPopover!: Popover;
+  private helpEl!: HTMLElement;
+  private showFps = getFlag("showFps", false);
   private labels = new Map<string, HTMLElement>();
   private listButtons = new Map<string, HTMLButtonElement>();
   // Show/hide controls: eye toggles per body and per kind, layer chips, and the
@@ -84,20 +90,13 @@ export class Hud {
     // Note: do NOT clear this.root here — other overlays (ship labels, panels)
     // share #ui-root and would be wiped.
 
-    // Header.
+    // Compact wordmark (top-left). The subtitle moved to the Help overlay; the
+    // mark just anchors the corner now that the controls live on the right.
     const header = el("div", "panel header");
-    header.innerHTML = `<div class="title">LIGHTLAG</div>
-      <div class="subtitle">a physics-true Solar System · nothing hand-waved</div>`;
+    header.innerHTML = `<div class="title">LIGHTLAG</div>`;
     this.root.appendChild(header);
 
-    // Theme toggle.
-    const themeBtn = el("button", "icon-btn theme-toggle") as HTMLButtonElement;
-    themeBtn.textContent = "◐";
-    themeBtn.title = "Toggle light / dark";
-    themeBtn.onclick = () => this.toggleTheme();
-    this.root.appendChild(themeBtn);
-
-    // Clock + warp (top centre).
+    // Clock + warp (top centre) — the one always-critical global control.
     const clock = el("div", "panel clock");
     this.dateEl = el("div", "date");
     this.warpEl = el("div", "warp");
@@ -109,25 +108,19 @@ export class Hud {
     clock.append(this.dateEl, warpRow);
     this.root.appendChild(clock);
 
-    // Two-state map switch: the in-system orrery vs. the to-scale interstellar
-    // neighbourhood. (Keyboard: M.)
-    const viewSwitch = el("div", "panel view-switch");
-    this.systemBtn = button("System", () => this.setView("system"));
-    this.interstellarBtn = button("Interstellar", () => this.setView("interstellar"));
-    this.systemBtn.title = "In-system orrery (M)";
-    this.interstellarBtn.title = "Interstellar map (M)";
-    viewSwitch.append(this.systemBtn, this.interstellarBtn);
-    this.root.appendChild(viewSwitch);
+    // Top-right control cluster: the scene's chrome, gathered into one card
+    // instead of scattered loose icons — view switch, a Layers popover (the
+    // cross-cutting overlay toggles), theme, and help.
+    this.root.appendChild(this.buildTopCluster());
 
-    // Body selector + visibility (right). With 43 bodies the flat list ran
-    // off-screen, so the panel scrolls (under a sticky head) and the bodies are
-    // grouped by kind. Each row carries an eye toggle (show/hide that body), each
-    // group header an eye toggle for the whole kind, and the head a row of chips
-    // for the cross-cutting overlays (orbits, labels, the star sky, ships, comms).
-    const list = el("div", "panel body-list");
+    // Right "Navigation" dock: the body selector (scrolls — 43 bodies overflow)
+    // with the focused-body readout pinned beneath it, so you pick and inspect in
+    // one place. Each row carries an eye toggle (show/hide that body); each group
+    // header an eye toggle for the whole kind.
+    const dock = el("div", "panel nav-dock");
+    const list = el("div", "nav-list");
     const head = el("div", "list-head");
     head.appendChild(el("div", "panel-title", "FOCUS"));
-    head.appendChild(this.buildLayerChips());
     list.appendChild(head);
 
     for (const g of GROUPS) {
@@ -158,39 +151,27 @@ export class Hud {
         list.appendChild(row);
       }
     }
-    this.root.appendChild(list);
+    dock.appendChild(list);
 
-    // Focus readout (bottom-left).
-    const focus = el("div", "panel focus");
+    // Focused-body readout — pinned as the dock's non-scrolling footer, directly
+    // under the body you just picked from the list above it.
+    const focus = el("div", "nav-focus");
     this.focusTitle = el("div", "focus-title");
     this.focusBody = el("div", "focus-body");
     focus.append(this.focusTitle, this.focusBody);
-    this.root.appendChild(focus);
+    dock.appendChild(focus);
+    this.root.appendChild(dock);
 
-    // Controls hint + fps.
-    const foot = el("div", "panel foot");
-    this.fpsEl = el("span", "fps");
-    const hint = el("div", "hint");
-    const shortcuts: [string, string][] = [
-      ["drag / WASD", "orbit"],
-      ["scroll / ±", "zoom"],
-      ["space", "pause"],
-      [", .", "warp"],
-      ["1–8", "focus"],
-      ["tab", "cycle"],
-      ["M", "map"],
-      ["F", "ships"],
-      ["V", "angle"],
-      ["R", "reset"],
-    ];
-    for (const [keys, label] of shortcuts) {
-      const item = el("span");
-      item.appendChild(el("span", "key", keys));
-      item.appendChild(el("span", "lbl", ` ${label}`));
-      hint.appendChild(item);
-    }
-    foot.append(hint, this.fpsEl);
-    this.root.appendChild(foot);
+    // Tiny FPS readout (bottom-right), off by default — a debug aid, not chrome.
+    // Toggled from the Help overlay; the per-frame write is cheap regardless.
+    this.fpsEl = el("div", "fps-mini");
+    this.fpsEl.style.display = this.showFps ? "block" : "none";
+    this.root.appendChild(this.fpsEl);
+
+    // Help overlay — the keyboard reference (formerly an always-on footer) plus
+    // the FPS toggle, opened from the cluster's ? button or the ? key.
+    this.helpEl = this.buildHelpOverlay();
+    this.root.appendChild(this.helpEl);
 
     // Label layer.
     this.labelLayer = el("div", "label-layer");
@@ -202,6 +183,111 @@ export class Hud {
     }
 
     this.focus(this.sm.focusId);
+  }
+
+  /** The top-right control cluster: view switch, Layers popover, theme, help. */
+  private buildTopCluster(): HTMLElement {
+    const cluster = el("div", "panel top-cluster");
+
+    // System ⇄ Interstellar segmented toggle (keyboard: M).
+    const seg = el("div", "view-switch");
+    this.systemBtn = button("System", () => this.setView("system"));
+    this.interstellarBtn = button("Interstellar", () => this.setView("interstellar"));
+    this.systemBtn.title = "In-system orrery (M)";
+    this.interstellarBtn.title = "Interstellar map (M)";
+    seg.append(this.systemBtn, this.interstellarBtn);
+    cluster.appendChild(seg);
+
+    // Layers popover: the cross-cutting overlay toggles, lifted out of the body
+    // list into a menu you open only when you want it.
+    this.layersPopover = popover(this.root, "≣ Layers ▾", {
+      title: "Scene overlays",
+      className: "layers-popover",
+    });
+    this.layersPopover.content.appendChild(el("div", "section-label", "SCENE LAYERS"));
+    this.layersPopover.content.appendChild(this.buildLayerChips());
+    cluster.appendChild(this.layersPopover.trigger);
+
+    // Theme + help icons.
+    const themeBtn = button("◐", () => this.toggleTheme());
+    themeBtn.className = "icon-btn";
+    themeBtn.title = "Toggle light / dark";
+    const helpBtn = button("?", () => this.toggleHelp());
+    helpBtn.className = "icon-btn";
+    helpBtn.title = "Keyboard shortcuts & help (?)";
+    cluster.append(themeBtn, helpBtn);
+
+    return cluster;
+  }
+
+  /** The help modal: the keyboard reference (formerly an always-on footer) and
+   *  the FPS-readout toggle. Opened from the ? button or the ? key. */
+  private buildHelpOverlay(): HTMLElement {
+    const panel = el("div", "panel help-overlay");
+    panel.style.display = "none";
+
+    const head = el("div", "panel-head");
+    head.appendChild(el("div", "panel-title", "CONTROLS"));
+    const close = button("✕", () => this.closeHelp());
+    close.className = "panel-close";
+    close.title = "Close (Esc)";
+    head.appendChild(close);
+    panel.appendChild(head);
+
+    panel.appendChild(
+      el("div", "subtitle", "a physics-true Solar System · nothing hand-waved"),
+    );
+
+    const shortcuts: [string, string][] = [
+      ["drag / WASD", "orbit camera"],
+      ["scroll / + −", "zoom"],
+      ["space", "pause / resume"],
+      [", .", "slower / faster warp"],
+      ["1–8", "focus Sun … Saturn"],
+      ["tab", "cycle focus"],
+      ["M", "system ⇄ interstellar map"],
+      ["F", "ship / flight panel"],
+      ["V", "cycle view angle"],
+      ["R", "reset camera framing"],
+      ["?", "this help"],
+      ["esc", "close panel / overlay"],
+    ];
+    const keys = el("div", "help-keys");
+    for (const [k, label] of shortcuts) {
+      const item = el("div", "help-key-row");
+      item.appendChild(el("span", "key", k));
+      item.appendChild(el("span", "lbl", label));
+      keys.appendChild(item);
+    }
+    panel.appendChild(keys);
+
+    const fpsRow = el("label", "help-toggle");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = this.showFps;
+    cb.onchange = () => this.setShowFps(cb.checked);
+    fpsRow.append(cb, el("span", "", "Show FPS counter"));
+    panel.appendChild(fpsRow);
+
+    return panel;
+  }
+
+  /** Toggle the help overlay (cluster ? button and the ? key). */
+  toggleHelp(): void {
+    if (this.isHelpOpen()) this.closeHelp();
+    else this.helpEl.style.display = "flex";
+  }
+  isHelpOpen(): boolean {
+    return this.helpEl.style.display !== "none";
+  }
+  closeHelp(): void {
+    this.helpEl.style.display = "none";
+  }
+
+  private setShowFps(on: boolean): void {
+    this.showFps = on;
+    this.fpsEl.style.display = on ? "block" : "none";
+    setFlag("showFps", on);
   }
 
   /** The chip row of cross-cutting overlay toggles (orbits, labels, stars, …). */
@@ -316,41 +402,41 @@ export class Hud {
 
     if (def.id !== "sun") {
       const rSun = length(state.r);
-      lines.push(row("Distance from Sun", `${(rSun / AU).toFixed(3)} AU`));
-      lines.push(row("Orbital speed", `${(length(state.v) / 1000).toFixed(2)} km/s`));
-      lines.push(row("Solar flux", `${solarFlux(rSun).toFixed(0)} W/m²`));
+      lines.push(kv("Distance from Sun", `${(rSun / AU).toFixed(3)} AU`));
+      lines.push(kv("Orbital speed", `${(length(state.v) / 1000).toFixed(2)} km/s`));
+      lines.push(kv("Solar flux", `${solarFlux(rSun).toFixed(0)} W/m²`));
 
       const el = bodyElements(def, t);
       const parent = def.parent ? BODY_BY_ID.get(def.parent) : undefined;
       const mu = parent && parent.id !== "sun" ? parent.mu : MU_SUN;
       if (el) {
         const T = orbitalPeriod(el.a, mu);
-        lines.push(row("Orbital period", formatPeriod(T)));
-        lines.push(row("Eccentricity", el.e.toFixed(4)));
-        lines.push(row("Inclination", `${((el.i * 180) / Math.PI).toFixed(2)}°`));
+        lines.push(kv("Orbital period", formatPeriod(T)));
+        lines.push(kv("Eccentricity", el.e.toFixed(4)));
+        lines.push(kv("Inclination", `${((el.i * 180) / Math.PI).toFixed(2)}°`));
       }
 
       // Surface physics (drives the landing/takeoff budget in the ship panel).
-      lines.push(row("Surface gravity", `${surfaceGravity(def).toFixed(2)} m/s²`));
-      lines.push(row("Escape velocity", `${(escapeVelocity(def) / 1000).toFixed(2)} km/s`));
+      lines.push(kv("Surface gravity", `${surfaceGravity(def).toFixed(2)} m/s²`));
+      lines.push(kv("Escape velocity", `${(escapeVelocity(def) / 1000).toFixed(2)} km/s`));
       if (def.atmosphere) {
         const bar = def.atmosphere.surfacePressure / 101325;
-        lines.push(row("Surface pressure", bar >= 0.01 ? `${bar.toFixed(2)} atm` : `${def.atmosphere.surfacePressure.toFixed(1)} Pa`));
+        lines.push(kv("Surface pressure", bar >= 0.01 ? `${bar.toFixed(2)} atm` : `${def.atmosphere.surfacePressure.toFixed(1)} Pa`));
       } else if (def.hasSurface !== false) {
-        lines.push(row("Atmosphere", "none (airless)"));
+        lines.push(kv("Atmosphere", "none (airless)"));
       }
     } else {
-      lines.push(row("Role", "central star"));
-      lines.push(row("Luminosity", "3.828×10²⁶ W"));
+      lines.push(kv("Role", "central star"));
+      lines.push(kv("Luminosity", "3.828×10²⁶ W"));
     }
 
     // The light-lag teaser: one-way light-time from Earth.
     if (def.id !== "earth") {
       const earth = BODY_BY_ID.get("earth")!;
       const d = distance(bodyState(earth, t).r, state.r);
-      lines.push(row("Light-time from Earth", formatLightTime(d / C)));
+      lines.push(kv("Light-time from Earth", formatLightTime(d / C)));
     } else {
-      lines.push(row("Light-time from Earth", "— (you are here)"));
+      lines.push(kv("Light-time from Earth", "— (you are here)"));
     }
 
     this.focusBody.innerHTML = lines.join("");
@@ -385,25 +471,7 @@ export class Hud {
   }
 }
 
-// ── tiny DOM helpers ────────────────────────────────────────────────────────
-function el(tag: string, className = "", text = ""): HTMLElement {
-  const e = document.createElement(tag);
-  if (className) e.className = className;
-  if (text) e.textContent = text;
-  return e;
-}
-
-function button(label: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.textContent = label;
-  b.onclick = onClick;
-  return b;
-}
-
-function row(k: string, v: string): string {
-  return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
-}
-
+// ── helpers ───────────────────────────────────────────────────────────────────
 function formatPeriod(seconds: number): string {
   if (!isFinite(seconds)) return "—";
   const years = seconds / (365.25 * 86400);

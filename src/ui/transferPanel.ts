@@ -21,6 +21,7 @@ import { periapsisRadius, orbitalPeriod } from "../core/orbit.ts";
 import { bodyElements } from "../core/ephemeris.ts";
 import { formatDate } from "../core/time.ts";
 import { BODIES, BODY_BY_ID, DAY, MU_SUN, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
+import { div, btn, kv, setDisabled } from "./dom.ts";
 
 /** Every heliocentric body (planets, dwarfs, asteroids) is a valid destination;
  *  the porkchop solves any of them. Ordered by distance from the Sun. */
@@ -398,25 +399,3 @@ export class TransferPanel {
   }
 }
 
-// ── helpers ─────────────────────────────────────────────────────────────────
-function div(className: string, text = ""): HTMLElement {
-  const e = document.createElement("div");
-  e.className = className;
-  if (text) e.textContent = text;
-  return e;
-}
-function btn(label: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.textContent = label;
-  b.onclick = onClick;
-  return b;
-}
-function kv(k: string, v: string): string {
-  return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
-}
-/** Disable a button and surface the reason as a native hover tooltip. */
-function setDisabled(btn: HTMLButtonElement, disabled: boolean, reason = ""): void {
-  btn.disabled = disabled;
-  if (disabled && reason) btn.title = reason;
-  else btn.removeAttribute("title");
-}

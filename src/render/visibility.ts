@@ -30,6 +30,12 @@ export type LayerKey =
   | "starLabels"
   | "forces";
 
+/** All layer keys, for iterating (e.g. hydrating/persisting saved toggles). */
+export const LAYER_KEYS: LayerKey[] = [
+  "orbits", "trajectory", "route", "labels", "ships",
+  "comms", "stars", "starLabels", "forces",
+];
+
 export class Visibility {
   private kinds: Record<BodyKind, boolean> = {
     star: true, planet: true, dwarf: true, asteroid: true, moon: true, comet: true,

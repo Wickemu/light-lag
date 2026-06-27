@@ -97,44 +97,53 @@ body {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
 }
 
-/* Unobtrusive scrollbars for the overflowing panels (body list, ship panel). */
-.panel {
+/* Unobtrusive scrollbars for the overflowing panels (nav list, ship panel). */
+.panel,
+.nav-list {
   scrollbar-width: thin;
   scrollbar-color: var(--panel-border) transparent;
 }
-.panel::-webkit-scrollbar {
+.panel::-webkit-scrollbar,
+.nav-list::-webkit-scrollbar {
   width: 7px;
 }
-.panel::-webkit-scrollbar-thumb {
+.panel::-webkit-scrollbar-thumb,
+.nav-list::-webkit-scrollbar-thumb {
   background: var(--panel-border);
   border-radius: 4px;
 }
-.panel::-webkit-scrollbar-track {
+.panel::-webkit-scrollbar-track,
+.nav-list::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .header {
   top: 16px;
   left: 16px;
+  padding: 7px 12px;
 }
 .title {
-  font-size: 20px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 4px;
+  letter-spacing: 3px;
   color: var(--text);
 }
 .subtitle {
   font-size: 11px;
   color: var(--text-dim);
   letter-spacing: 0.5px;
-  margin-top: 2px;
+  margin: 2px 0 8px;
 }
 
-.theme-toggle {
-  position: absolute;
+/* Top-right control cluster: view switch + Layers menu + theme + help, gathered
+   into one card so the scene's chrome lives in a single corner. */
+.top-cluster {
   top: 16px;
   right: 16px;
-  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
 }
 
 .clock {
@@ -163,17 +172,30 @@ body {
   text-align: left;
 }
 
-.body-list {
+/* Right "Navigation" dock: a scrolling body list with the focus readout pinned
+   beneath it — pick a body and read its physics in one place. */
+.nav-dock {
   top: 96px;
   right: 16px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 132px;
-  /* 43 bodies overflow the viewport — cap the height and scroll inside. */
+  min-width: 150px;
+  /* 43 bodies + the readout overflow the viewport — cap and scroll the list. */
   max-height: calc(100vh - 112px);
+}
+.nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0; /* let this flex child shrink so its own overflow scrolls */
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+.nav-focus {
+  flex: 0 0 auto;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-border);
 }
 /* Main panel heading (FOCUS, SHIP DESIGNER, TRANSFER PLANNER, …). */
 .panel-title {
@@ -213,8 +235,8 @@ body {
   color: var(--text);
 }
 
-/* Sticky head (title + layer chips) so the controls stay put while you scroll. */
-.body-list .list-head {
+/* Sticky head (FOCUS title) so it stays put while the list scrolls. */
+.nav-list .list-head {
   position: sticky;
   top: 0;
   background: var(--panel-bg);
@@ -222,8 +244,8 @@ body {
   padding-bottom: 6px;
   z-index: 2;
 }
-.body-list .list-head .panel-title {
-  margin-bottom: 6px;
+.nav-list .list-head .panel-title {
+  margin-bottom: 0;
 }
 
 /* Cross-cutting overlay toggles (orbits, labels, stars, ships, comms). */
@@ -243,6 +265,122 @@ body {
 .layer-chip.active {
   color: var(--active);
   border-color: var(--active);
+}
+
+/* ── Popover (Layers menu) ──────────────────────────────────────────────────── */
+.popover-trigger {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+.popover-trigger.active {
+  color: var(--active);
+  border-color: var(--active);
+}
+.popover-flyout {
+  /* Positioned at runtime (top/right set in JS); a floating menu above the HUD. */
+  z-index: 30;
+  max-width: 240px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+.popover-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Collapsible disclosure section ─────────────────────────────────────────── */
+.section {
+  display: flex;
+  flex-direction: column;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 4px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  text-align: left;
+  color: var(--text);
+}
+.section-head:hover {
+  background: var(--btn-bg);
+}
+.section-chevron {
+  font-size: 9px;
+  color: var(--text-dim);
+  width: 10px;
+  flex: 0 0 auto;
+}
+.section-head-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  flex: 1 1 auto;
+}
+.section-badge:not(:empty) {
+  font-size: 10px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  padding: 0 5px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+.section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px 8px;
+}
+.section.collapsed > .section-body {
+  display: none;
+}
+
+/* ── Help overlay ───────────────────────────────────────────────────────────── */
+.help-overlay {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  flex-direction: column;
+  gap: 6px;
+  width: 320px;
+  z-index: 30;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+.help-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 0;
+}
+.help-key-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+.help-key-row .key {
+  flex: 0 0 96px;
+  text-align: center;
+}
+.help-key-row .lbl {
+  flex: 1 1 auto;
+}
+.help-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-border);
+  cursor: pointer;
 }
 
 .body-group {
@@ -317,11 +455,6 @@ body {
   box-shadow: 0 0 6px currentColor;
 }
 
-.focus {
-  bottom: 16px;
-  left: 16px;
-  min-width: 250px;
-}
 .focus-title {
   font-size: 16px;
   font-weight: 700;
@@ -344,42 +477,33 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.foot {
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  font-size: 11px;
+/* Tiny FPS readout, bottom-right; off by default (toggled in the Help overlay). */
+.fps-mini {
+  position: absolute;
+  bottom: 10px;
+  right: 14px;
+  font-size: 10px;
   color: var(--text-dim);
-  max-width: min(880px, calc(100vw - 360px));
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
 }
-.hint {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  line-height: 1.5;
-}
-.hint .key {
+
+/* Keycap chips — reused by the Help overlay's shortcut list. */
+.key {
   display: inline-block;
-  padding: 1px 5px;
+  padding: 1px 6px;
   border: 1px solid var(--panel-border);
   border-radius: 4px;
   background: var(--btn-bg);
   color: var(--text);
   font-size: 10px;
   line-height: 1.4;
-}
-.hint .lbl {
-  color: var(--text-dim);
-}
-.fps {
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-  flex: 0 0 auto;
   white-space: nowrap;
+}
+.lbl {
+  color: var(--text-dim);
 }
 
 button {
@@ -397,10 +521,11 @@ button:hover {
   background: var(--btn-bg-hover);
 }
 .icon-btn {
-  font-size: 16px;
-  width: 34px;
-  height: 34px;
+  font-size: 15px;
+  width: 30px;
+  height: 30px;
   line-height: 1;
+  flex: 0 0 auto;
 }
 
 /* Floating body labels */
@@ -432,12 +557,13 @@ button:hover {
   top: 96px;
   left: 16px;
   width: 286px;
-  /* Fit content, but never grow past the focus readout (bottom-left) or off-screen. */
-  max-height: calc(100vh - 300px);
+  /* The whole left edge is free now (the focus readout moved to the right dock),
+     so the Mission dock can run the full height and scroll only if it overflows. */
+  max-height: calc(100vh - 112px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
 }
 .ship-panel hr {
   width: 100%;
@@ -775,21 +901,18 @@ button:disabled {
   color: #8fe6ff;
 }
 
-/* Two-state map switch (in-system orrery ⇄ interstellar neighbourhood). */
+/* Two-state map switch (in-system orrery ⇄ interstellar neighbourhood), nested
+   in the top-right cluster. */
 .view-switch {
-  top: 84px;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 4px;
 }
 .view-switch button {
   pointer-events: auto;
   font-size: 11px;
   letter-spacing: 1px;
-  padding: 3px 10px;
+  padding: 3px 9px;
   text-transform: uppercase;
 }
 .view-switch button.active {
@@ -871,7 +994,7 @@ button:disabled {
 /* ── Scale bar ─────────────────────────────────────────────────────────────── */
 .scale-bar {
   position: absolute;
-  bottom: 88px;
+  bottom: 18px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -929,22 +1052,18 @@ button:disabled {
 @media (max-width: 900px) {
   .ship-panel {
     width: 240px;
-    max-height: calc(100vh - 260px);
   }
-  .body-list {
-    min-width: 112px;
-    max-height: calc(100vh - 96px);
+  .nav-dock {
+    min-width: 128px;
   }
-  .focus {
-    min-width: 0;
-    max-width: 46vw;
-  }
-  .foot {
-    max-width: calc(100vw - 24px);
-    font-size: 10px;
+  .top-cluster {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 60vw;
   }
   .transfer-panel,
-  .interstellar-panel {
+  .interstellar-panel,
+  .help-overlay {
     width: min(340px, 92vw);
   }
   .porkchop {
@@ -955,17 +1074,24 @@ button:disabled {
 
 @media (max-width: 600px) {
   .title {
-    font-size: 16px;
+    font-size: 14px;
     letter-spacing: 2px;
-  }
-  .header .subtitle {
-    display: none;
   }
   .date {
     font-size: 15px;
   }
   .clock {
     min-width: 0;
+  }
+  /* Tighten the top-right cluster so it clears the centred clock on a phone. */
+  .top-cluster {
+    gap: 5px;
+    padding: 5px 6px;
+    max-width: 52vw;
+  }
+  .view-switch button {
+    padding: 3px 6px;
+    letter-spacing: 0.5px;
   }
   .focus-title {
     font-size: 14px;
@@ -974,7 +1100,8 @@ button:disabled {
     width: min(220px, 60vw);
   }
   .transfer-panel,
-  .interstellar-panel {
+  .interstellar-panel,
+  .help-overlay {
     width: min(340px, 94vw);
     max-height: 92vh;
     overflow-y: auto;

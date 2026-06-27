@@ -17,6 +17,7 @@ import { INTERSTELLAR_CRAFT } from "../app/shipCatalog.ts";
 import { dispatchInterstellar } from "../app/commands.ts";
 import { shipWorldState } from "../core/ships.ts";
 import { C } from "../core/constants.ts";
+import { div, btn, kv, setDisabled } from "./dom.ts";
 
 export class InterstellarPanel {
   private panel!: HTMLElement;
@@ -136,25 +137,3 @@ export class InterstellarPanel {
   }
 }
 
-// ── helpers ─────────────────────────────────────────────────────────────────
-function div(className: string, text = ""): HTMLElement {
-  const e = document.createElement("div");
-  e.className = className;
-  if (text) e.textContent = text;
-  return e;
-}
-function btn(label: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.textContent = label;
-  b.onclick = onClick;
-  return b;
-}
-function kv(k: string, v: string): string {
-  return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
-}
-/** Disable a button and surface the reason as a native hover tooltip. */
-function setDisabled(btn: HTMLButtonElement, disabled: boolean, reason = ""): void {
-  btn.disabled = disabled;
-  if (disabled && reason) btn.title = reason;
-  else btn.removeAttribute("title");
-}

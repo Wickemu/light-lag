@@ -11,7 +11,7 @@ import "../styles.css";
 import { createWorld } from "../core/world.ts";
 import { Simulation } from "../core/sim.ts";
 import { SceneManager } from "../render/SceneManager.ts";
-import { Visibility } from "../render/visibility.ts";
+import { Visibility, LAYER_KEYS } from "../render/visibility.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { ShipViews } from "../render/shipViews.ts";
 import { TrajectoryViews } from "../render/trajectoryViews.ts";
@@ -25,6 +25,7 @@ import { ShipPanel } from "../ui/shipPanel.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
 import { InterstellarPanel } from "../ui/interstellarPanel.ts";
 import { KeyboardManager } from "../ui/keyboard.ts";
+import { getFlag, setFlag } from "../ui/uiState.ts";
 import * as commands from "./commands.ts";
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
@@ -39,6 +40,12 @@ const sm = new SceneManager(canvas);
 sm.setTheme(document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
 // Shared show/hide state, written by the HUD's layer controls and read by every view.
 const visibility = new Visibility();
+// Restore persisted scene-layer toggles before any view reads them, then persist
+// on every change so the user's overlay choices survive a reload.
+for (const k of LAYER_KEYS) visibility.setLayer(k, getFlag(`layer.${k}`, visibility.layer(k)));
+visibility.onChange(() => {
+  for (const k of LAYER_KEYS) setFlag(`layer.${k}`, visibility.layer(k));
+});
 const views = new BodyViews(sm, visibility);
 const shipViews = new ShipViews(sm, uiRoot, visibility);
 const trajectoryViews = new TrajectoryViews(sm, sim, visibility);
