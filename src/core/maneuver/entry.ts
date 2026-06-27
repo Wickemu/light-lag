@@ -64,6 +64,18 @@ const INTERFACE_SCALE_HEIGHTS = 11;
 /** Default hot-TPS surface emissivity for the radiative-equilibrium wall
  *  (carbon / ceramic ≈ 0.85). */
 const DEFAULT_ENTRY_EMISSIVITY = 0.85;
+/** Touchdown is a SURVIVABLE landing only if the vehicle reached the ground at
+ *  roughly its surface terminal velocity (drag ≈ gravity — the atmosphere did all
+ *  the braking it could); hitting much faster is a destructive lithobraking impact.
+ *  The terminal-velocity multiple draws the line — a controlled ballistic descent
+ *  touches down at v ≈ v_term (ratio ≈ 1), a steep dive that punches through to the
+ *  surface arrives at many times v_term. */
+const LANDING_TERMINAL_FACTOR = 2;
+/** Hard ceiling on a survivable touchdown speed (m/s). For an extremely thin
+ *  atmosphere the surface terminal velocity is enormous, so the terminal-relative
+ *  test alone would never flag a crash; nothing survives meeting a surface above
+ *  ~Mach 3 regardless. Caps `LANDING_TERMINAL_FACTOR·v_term`. */
+const LETHAL_TOUCHDOWN_SPEED = 1000;
 
 /** The Sutton-Graves coefficient appropriate to a body's atmosphere composition. */
 function defaultSuttonGravesK(body: BodyDef): number {
@@ -118,7 +130,12 @@ export interface EntryConditions {
   flightPathAngle: number;
 }
 
-export type EntryOutcome = "landed" | "captured" | "skip-out";
+/** `"landed"` is a survivable touchdown (the atmosphere braked the vehicle to ~its
+ *  surface terminal velocity); `"crashed"` is a destructive lithobraking impact — a
+ *  too-steep or too-thin-atmosphere descent that reaches the ground still moving far
+ *  faster than terminal (see `entryTrajectory`). `"captured"`/`"skip-out"` never reach
+ *  the surface. */
+export type EntryOutcome = "landed" | "captured" | "skip-out" | "crashed";
 
 export interface EntryResult {
   outcome: EntryOutcome;
@@ -208,8 +225,15 @@ export function entryTrajectory(
   const exitEnergy = 0.5 * v * v - mu / r;
 
   let outcome: EntryOutcome;
-  if (y[0]! <= 0) outcome = "landed";
-  else if (exitEnergy < 0) outcome = "captured";
+  if (y[0]! <= 0) {
+    // Reached the surface — survivable only if braked to ~terminal velocity. Surface
+    // terminal velocity solves drag = gravity: ½ρ₀v²/β = g₀ ⇒ v_term = √(2βg₀/ρ₀).
+    const rhoSurf = atmosphericDensity(body, 0);
+    const gSurf = mu / (R * R);
+    const vTerm = rhoSurf > 0 ? Math.sqrt((2 * beta * gSurf) / rhoSurf) : Infinity;
+    const vLand = Math.min(LETHAL_TOUCHDOWN_SPEED, LANDING_TERMINAL_FACTOR * vTerm);
+    outcome = v > vLand ? "crashed" : "landed";
+  } else if (exitEnergy < 0) outcome = "captured";
   else outcome = "skip-out";
 
   return {
@@ -448,7 +472,11 @@ export function aerocapture(
   // and a capture is the finite apoapsis in between. Bisecting this against the
   // target apoapsis lands on the capturing angle.
   const apoVal = (res: EntryResult): number =>
-    res.outcome === "skip-out" ? Infinity : res.outcome === "landed" ? -Infinity : exitApoapsis(body, res);
+    res.outcome === "skip-out"
+      ? Infinity
+      : res.outcome === "landed" || res.outcome === "crashed" // both reached the surface
+        ? -Infinity
+        : exitApoapsis(body, res);
 
   // Scan shallow→steep and bracket the first crossing of the target apoapsis.
   const N = 120;

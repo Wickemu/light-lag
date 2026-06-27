@@ -91,6 +91,24 @@ describe("ballistic entry trajectory", () => {
     expect(air.peakHeatFlux).toBeGreaterThan(r.peakHeatFlux);
   });
 
+  it("a slender steep entry that reaches the ground at lethal speed is a crash, not a landing", () => {
+    // A dense, low-drag dart (huge β) on a steep, fast trajectory punches through the
+    // atmosphere and meets the surface still moving — a destructive lithobraking impact.
+    const dart: EntryVehicle = { noseRadius: 0.3, ballisticCoef: 8000 };
+    const r = entryTrajectory(EARTH, dart, { entrySpeed: 11000, flightPathAngle: 45 * DEG })!;
+    expect(r.outcome).toBe("crashed");
+    expect(r.exitAlt).toBe(0); // reached the surface
+    expect(r.exitSpeed).toBeGreaterThan(1000); // far above any survivable touchdown
+  });
+
+  it("a blunt capsule braked to ~terminal velocity still counts as a landing", () => {
+    // The same steep, fast entry with a high-drag blunt body decelerates to a
+    // survivable touchdown — outcome stays "landed", never "crashed".
+    const r = entryTrajectory(EARTH, APOLLO, { entrySpeed: 11000, flightPathAngle: 45 * DEG })!;
+    expect(r.outcome).toBe("landed");
+    expect(r.exitSpeed).toBeLessThan(200); // near surface terminal velocity
+  });
+
   it("returns null for an airless body", () => {
     expect(entryTrajectory(MOON, APOLLO, { entrySpeed: 2000, flightPathAngle: 10 * DEG })).toBeNull();
   });

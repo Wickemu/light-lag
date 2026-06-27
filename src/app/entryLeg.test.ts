@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { createWorld } from "../core/world.ts";
 import { Simulation } from "../core/sim.ts";
 import { spawnShip, defaultDesign, flyEntry } from "./commands.ts";
-import { shipRelativeState, shipEntryReadout } from "../core/ships.ts";
+import { shipRelativeState, shipEntryReadout, buildEntryLeg } from "../core/ships.ts";
+import { entryInterfaceAlt } from "../core/maneuver/entry.ts";
 import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
 import { BODY_BY_ID } from "../core/constants.ts";
 import { length } from "../core/math/vec3.ts";
@@ -95,6 +96,32 @@ describe("in-sim flyable entry leg", () => {
     const ser = serializeWorld(sim.world);
     expect(serializeWorld(deserializeWorld(ser))).toBe(ser);
     expect(hashWorld(deserializeWorld(ser))).toBe(hashWorld(sim.world));
+  });
+
+  it("a lethal entry pass destroys the ship instead of parking it on the surface", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+    ship.primary = "earth";
+    // Build a real entry leg for a dense, low-drag dart on a steep, fast pass — it
+    // reaches the ground at lethal speed, so the pass classifies as "crashed".
+    const rIface = R + entryInterfaceAlt(EARTH);
+    const g = 50 * Math.PI / 180, v = 11000;
+    const r0 = { x: rIface, y: 0, z: 0 };
+    const v0 = { x: -v * Math.sin(g), y: v * Math.cos(g), z: 0 }; // steep, inbound
+    const leg = buildEntryLeg(EARTH, r0, v0, sim.world.t, { ballisticCoef: 8000, noseRadius: 0.3, emissivity: 0.85 })!;
+    expect(leg.outcome).toBe("crashed");
+
+    ship.entryLeg = leg;
+    ship.mode = "coast";
+    ship.elements = undefined;
+    ship.epoch = sim.world.t;
+    sim.events.push({ t: leg.tEnd, kind: "entry-end", entityId: id });
+
+    sim.step(leg.tEnd + 10 - sim.world.t);
+    expect(ship.entryLeg).toBeUndefined();
+    expect(ship.status).toBe("lost"); // destroyed, not a healthy landing
+    expect(ship.landed?.bodyId).toBe("earth"); // wreck on the surface
   });
 
   it("refuses to fly an entry from an orbit that clears the atmosphere", () => {

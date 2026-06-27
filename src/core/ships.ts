@@ -342,7 +342,7 @@ export interface EntryReadout {
   wallTempK: number;
   heatLoad: number;
   progress: number; // 0..1 through the pass
-  outcome: "landed" | "captured" | "skip-out";
+  outcome: "landed" | "captured" | "skip-out" | "crashed";
   peakDecelG: number;
   peakHeatFlux: number;
   peakWallTemp: number;
