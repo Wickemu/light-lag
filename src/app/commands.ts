@@ -12,7 +12,7 @@ import { type Ship, type BurnDir } from "../core/world.ts";
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
 import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
-import { entryInterfaceCrossing, entryTrajectory } from "../core/maneuver/entry.ts";
+import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "../core/maneuver/entry.ts";
 import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
 import { wrapPi } from "../core/math/kepler.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
@@ -106,6 +106,7 @@ export function planTransfer(
   targetId: string,
   tDepart: number,
   tArrive: number,
+  captureMode: "propulsive" | "aerocapture" = "propulsive",
 ): TransferPlan | null {
   const ship = sim.world.ships.get(shipId);
   if (!ship || tArrive <= tDepart) return null;
@@ -123,11 +124,52 @@ export function planTransfer(
   const el = shipOsculatingElements(ship, sim.world.t);
   const rParkFrom = periapsisRadius(el.a, el.e);
   const rParkTo = target.radius + DEFAULT_CAPTURE_ALT;
+  const vInfArrive = length(sub(sol.v2, arrState.v));
   const dvDepart = hyperbolicBurnDv(length(sub(sol.v1, depState.v)), depBody.mu, rParkFrom);
-  const dvArrive = hyperbolicBurnDv(length(sub(sol.v2, arrState.v)), target.mu, rParkTo);
+
+  // Aerocapture: solve the corridor that captures this arrival on a single drag pass.
+  // The injection aims the hyperbola's periapsis INTO the atmosphere (aeroPeriAlt) and
+  // only the post-pass periapsis-raise trim is charged at arrival.
+  if (captureMode === "aerocapture") {
+    if (!target.atmosphere) return null; // nothing to brake against
+    const ac = aerocapture(target, NOMINAL_ENTRY_VEHICLE, {
+      vInf: vInfArrive,
+      targetApoAlt: Math.max(2e6, target.radius), // a high capture ellipse; trimmed at apoapsis
+      targetPeriAlt: DEFAULT_CAPTURE_ALT,
+    });
+    if (!ac || !ac.feasible) return null; // arrival can't aerocapture (overheats / never captures)
+    ship.transfer = {
+      targetId, tDepart, tArrive, dvDepart, dvArrive: ac.trimDv,
+      departed: false, inSoi: false, arrived: false, aeroPeriAlt: ac.periapsisAlt,
+    };
+    sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
+    return { dvDepart, dvArrive: ac.trimDv, tof: tArrive - tDepart };
+  }
+
+  const dvArrive = hyperbolicBurnDv(vInfArrive, target.mu, rParkTo);
   ship.transfer = { targetId, tDepart, tArrive, dvDepart, dvArrive, departed: false, inSoi: false, arrived: false };
   sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
   return { dvDepart, dvArrive, tof: tArrive - tDepart };
+}
+
+/** Read-only preview of aerocapturing a transfer arrival (no mutation): the trim Δv it
+ *  would cost, the propulsive capture Δv it replaces, and whether the body's atmosphere can
+ *  actually shed the arrival's excess speed. null if the target has no atmosphere / no
+ *  Lambert solution. Used by the transfer planner to show the aerocapture option. */
+export function aerocapturePreview(
+  targetId: string, depBodyId: string, tDepart: number, tArrive: number,
+): { feasible: boolean; trimDv: number; propulsiveDv: number } | null {
+  const depBody = BODY_BY_ID.get(depBodyId);
+  const target = BODY_BY_ID.get(targetId);
+  if (!depBody || !target || !target.atmosphere || tArrive <= tDepart) return null;
+  const sol = lambert(bodyState(depBody, tDepart).r, bodyState(target, tArrive).r, tArrive - tDepart, MU_SUN, true);
+  if (!sol) return null;
+  const vInf = length(sub(sol.v2, bodyState(target, tArrive).v));
+  const propulsiveDv = hyperbolicBurnDv(vInf, target.mu, target.radius + DEFAULT_CAPTURE_ALT);
+  const ac = aerocapture(target, NOMINAL_ENTRY_VEHICLE, {
+    vInf, targetApoAlt: Math.max(2e6, target.radius), targetPeriAlt: DEFAULT_CAPTURE_ALT,
+  });
+  return { feasible: !!ac && ac.feasible, trimDv: ac?.trimDv ?? 0, propulsiveDv };
 }
 
 /** Forget a planned transfer (a stale scheduled departure is ignored later). */

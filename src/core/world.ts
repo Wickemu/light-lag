@@ -112,6 +112,10 @@ export interface ShipTransfer {
   /** Ordered gravity-assist flyby chain between departure and the target (one entry
    *  per intermediate body; a single-flyby mission is a 1-element array). */
   flybys?: FlybyLeg[];
+  /** When set, the arrival is an AEROCAPTURE: the injection aims the arrival hyperbola's
+   *  periapsis to this altitude (m, inside the atmosphere) so a drag pass — not a propulsive
+   *  burn — sheds the energy to capture. Only a small post-pass periapsis-raise trim is paid. */
+  aeroPeriAlt?: number;
 }
 
 /**

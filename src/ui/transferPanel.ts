@@ -15,7 +15,7 @@ import { type TrajectoryViews } from "../render/trajectoryViews.ts";
 import { computePorkchop, type Porkchop, type PorkCell } from "../core/maneuver/porkchop.ts";
 import { hohmann, synodicPeriod } from "../core/maneuver/hohmann.ts";
 import { searchAssist, searchChain, type AssistResult, type ChainAssistResult } from "../core/maneuver/assist.ts";
-import { planTransfer, planAssist, planChainAssist } from "../app/commands.ts";
+import { planTransfer, planAssist, planChainAssist, aerocapturePreview } from "../app/commands.ts";
 import { dvRemaining, shipWorldState, shipOsculatingElements } from "../core/ships.ts";
 import { periapsisRadius, orbitalPeriod } from "../core/orbit.ts";
 import { bodyElements } from "../core/ephemeris.ts";
@@ -41,6 +41,8 @@ export class TransferPanel {
 
   private viaSel!: HTMLSelectElement;
   private via2Sel!: HTMLSelectElement;
+  private captureSel!: HTMLSelectElement;
+  private captureMode: "propulsive" | "aerocapture" = "propulsive";
   private shipId: string | null = null;
   private targetId = "mars";
   private viaId = ""; // "" = direct; otherwise the first flyby body id
@@ -118,6 +120,21 @@ export class TransferPanel {
     this.via2Sel.onchange = () => { this.via2Id = this.via2Sel.value; this.recompute(); };
     via2Row.appendChild(this.via2Sel);
     this.panel.appendChild(via2Row);
+
+    // Capture mode for a DIRECT arrival: a propulsive burn, or an atmospheric drag pass
+    // (aerocapture) that captures for only a small periapsis-raise trim.
+    const capRow = div("transfer-head");
+    capRow.appendChild(div("section-label", "CAPTURE MODE"));
+    this.captureSel = document.createElement("select");
+    this.captureSel.className = "target-sel";
+    for (const [val, label] of [["propulsive", "Propulsive (burn)"], ["aerocapture", "Aerocapture (drag pass)"]] as const) {
+      const o = document.createElement("option");
+      o.value = val; o.textContent = label;
+      this.captureSel.appendChild(o);
+    }
+    this.captureSel.onchange = () => { this.captureMode = this.captureSel.value as "propulsive" | "aerocapture"; this.updateReadout(); this.updatePreview(); };
+    capRow.appendChild(this.captureSel);
+    this.panel.appendChild(capRow);
 
     this.canvas = document.createElement("canvas");
     this.canvas.width = CANVAS_W;
@@ -368,6 +385,14 @@ export class TransferPanel {
   private updateReadout(): void {
     const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
 
+    // Aerocapture is a direct-arrival option at a body with an atmosphere only.
+    const hasAtm = !!BODY_BY_ID.get(this.targetId)?.atmosphere;
+    this.captureSel.disabled = !hasAtm || !!this.viaId;
+    if (this.captureSel.disabled && this.captureMode === "aerocapture") {
+      this.captureMode = "propulsive";
+      this.captureSel.value = "propulsive";
+    }
+
     // Chain mode: show the multi-flyby ledger (per-leg Δv) and compare to direct.
     if (this.chain && ship) {
       const r = this.chain.result;
@@ -439,9 +464,35 @@ export class TransferPanel {
       return;
     }
     const haveDv = dvRemaining(ship);
+    const target = BODY_BY_ID.get(this.targetId);
+    const fromId = ship.primary === "sun" ? "earth" : ship.primary;
+    this.axisEl.innerHTML = `<span>↑ flight time &nbsp; → departure date</span>`;
+
+    // Aerocapture mode (direct arrival at a body with an atmosphere): the drag pass
+    // replaces the propulsive capture for a small trim, so only the injection must fit.
+    const aero = this.captureMode === "aerocapture" && target?.atmosphere
+      ? aerocapturePreview(this.targetId, fromId, cell.depT, cell.arrT) : null;
+    if (this.captureMode === "aerocapture" && target?.atmosphere) {
+      const feasible = aero != null && aero.feasible && cell.dvDepart <= haveDv;
+      this.readout.innerHTML =
+        kv("Depart", formatDate(cell.depT)) +
+        kv("Arrive", formatDate(cell.arrT)) +
+        kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) +
+        kv("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
+        kv("Capture", aero?.feasible ? "aerocapture — drag pass" : "aerocapture not possible") +
+        (aero?.feasible ? kv("Arrival trim Δv", `${(aero.trimDv / 1000).toFixed(3)} km/s`) : "") +
+        (aero ? kv("Saved vs propulsive", `${(aero.propulsiveDv / 1000).toFixed(3)} km/s`) : "") +
+        kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+        (feasible
+          ? `<div class="ok">✓ injection within budget — atmosphere does the braking</div>`
+          : aero && !aero.feasible
+            ? `<div class="warn">✗ arrival too fast to aerocapture here</div>`
+            : `<div class="warn">✗ injection exceeds Δv budget</div>`);
+      setDisabled(this.commitBtn, !feasible, "Aerocapture infeasible or injection exceeds budget.");
+      return;
+    }
+
     const feasible = cell.dvDepart <= haveDv;
-    this.axisEl.innerHTML =
-      `<span>↑ flight time &nbsp; → departure date</span>`;
     this.readout.innerHTML =
       kv("Depart", formatDate(cell.depT)) +
       kv("Arrive", formatDate(cell.arrT)) +
@@ -479,7 +530,9 @@ export class TransferPanel {
     }
     const cell = this.selectedCell();
     if (!cell) return;
-    const plan = planTransfer(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT);
+    const target = BODY_BY_ID.get(this.targetId);
+    const mode = this.captureMode === "aerocapture" && target?.atmosphere ? "aerocapture" : "propulsive";
+    const plan = planTransfer(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT, mode);
     if (!plan) return;
     // Focus the ship and let the player fast-forward to the window.
     this.sm.setFocusTarget(this.shipId, (t) => {

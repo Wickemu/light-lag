@@ -67,12 +67,19 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-1. **In-sim flyable aerocapture pass + B-plane executor** — a deorbit/landing entry and a
-   multi-flyby chain now fly in-sim; the remaining in-sim gaps are an aerocapture pass that
-   exits to a bound orbit from a hyperbolic SOI arrival, and a B-plane-targeted in-sim pass.
-   *(see "Landing / takeoff" and "Gravity assists".)*
+1. **B-plane-targeted in-sim pass + ISRU / depots (Phase 7)** — the in-sim flyby/aerocapture
+   passes use a patched-conic point + charged residual rather than a B-plane-targeted
+   trajectory; and Phase 7 (mass economy: propellant depots, ISRU, colony supply) is still
+   open. *(see "Gravity assists" and Phase 7.)*
 
-*(Done since last round: **in-sim chained multi-flyby executor** — a planned multi-flyby
+*(Done since last round: **in-sim aerocapture on arrival** — a transfer can capture at a
+body with an atmosphere by flying the drag pass instead of a propulsive burn. `planTransfer`
+takes a capture mode; aerocapture aims the arrival hyperbola's periapsis INTO the atmosphere
+(`aeroPeriAlt`, from the `aerocapture()` corridor solver), `enterSoi` flies the entry leg at
+the interface crossing instead of scheduling a propulsive `capture`, and `finishEntry` raises
+periapsis at the first apoapsis for a small trim Δv — a Mars arrival captures for ~80 m/s of
+trim instead of a ~2.5 km/s burn (the transfer planner's CAPTURE MODE toggle shows the
+saving). Earlier: **in-sim chained multi-flyby executor** — a planned multi-flyby
 tour (e.g. Earth→Mars→Jupiter→Saturn) now FLIES in-sim, not just costed: `ShipTransfer.flybys`
 is an ordered chain, the executor walks it (each pass bends the heliocentric velocity for free
 and aims the next leg at the following flyby body, or the target after the last), `planChainAssist`
@@ -243,10 +250,19 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   and chunked runs hash identically) and golden-hash-neutral (a new optional `EntryLeg`
   field, absent from the golden scenario). It ends in landed (co-rotating touchdown) /
   captured (settles onto the post-pass orbit) / skip-out, with a live altitude / speed / g /
-  heat-flux / wall-temp / heat-load readout in the ship panel. Still to do: radiative
-  (shock-layer) heating above ~11 km/s; an in-sim aerocapture exit from a hyperbolic SOI
-  arrival (the entry leg flies deorbit/landing today); atmospheric co-rotation / lift in the
-  in-sim pass (planar ballistic first cut); and an aerocapture planner UI.
+  heat-flux / wall-temp / heat-load readout in the ship panel. **In-sim aerocapture on
+  arrival — DONE** (`world.ts ShipTransfer.aeroPeriAlt`, `commands.ts planTransfer` capture
+  mode + `aerocapturePreview`, `sim.ts` enterSoi/finishEntry + the `aero-trim` event): an
+  interplanetary transfer can capture at an atmosphere-bearing body by flying the drag pass
+  instead of a propulsive burn. The injection aims the arrival hyperbola's periapsis INTO the
+  atmosphere (the `aerocapture()` corridor solver picks it); at SOI entry the entry leg flies
+  the pass instead of a propulsive `capture`; and a trim burn at the first apoapsis raises
+  periapsis clear of the atmosphere (`tr.arrived`). A Mars arrival captures for ~80 m/s of
+  trim instead of a ~2.5 km/s burn — the transfer planner's CAPTURE MODE toggle shows the
+  saving (disabled for airless targets). Impulsive + read-time-leg + impulsive-trim, so
+  chunk-invariant and golden-hash-neutral. Still to do: radiative (shock-layer) heating above
+  ~11 km/s; atmospheric co-rotation / lift in the in-sim pass (planar ballistic first cut);
+  and a B-plane-targeted aim (the arrival uses a patched-conic periapsis aim today).
 - **More bodies** — DONE: 43 bodies (dwarfs, asteroids, gas-giant & other moons,
   plus TNOs and comets) on the fixed-J2000-conic (`FixedHelioRow`) + `MoonRow`
   paths, Horizons-checked. Still to do: irregular-moon precession, more small

@@ -57,7 +57,10 @@ flyable, to-scale 3D Solar System.
   When a ship's orbit dips into the atmosphere you can **Fly entry** — ride the drag
   trajectory down in-sim, watching altitude, speed, g-load, and heat flux build at any
   time-warp, ending in a landing, a skip-out, or an aerocapture — a deterministic, save-safe
-  leg (no teleport).
+  leg (no teleport). And a transfer can **aerocapture on arrival**: pick CAPTURE MODE →
+  Aerocapture in the planner and the ship sheds its arrival speed in a single atmospheric
+  pass, capturing into orbit for a small periapsis-raise trim (a Mars arrival captures for
+  ~80 m/s instead of a ~2.5 km/s burn).
 - **Electric (low-thrust) propulsion**: power-limited ion/Hall drives whose real thrust is
   `min(F_rated, 2ηP/vₑ)` with solar power falling as 1/r² — fly a multi-month Edelbaum spiral
   from LEO to GEO (or any near-circular orbit), charged up front and exact at any time-warp.

@@ -79,6 +79,7 @@ function qTransfer(t: ShipTransfer) {
       bodyId: f.bodyId, tFlyby: q(f.tFlyby), dvBurn: q(f.dvBurn), done: f.done,
     }));
   }
+  if (t.aeroPeriAlt !== undefined) o.aeroPeriAlt = q(t.aeroPeriAlt);
   return o;
 }
 
