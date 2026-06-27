@@ -19,7 +19,7 @@ import { orbitPath } from "../core/math/kepler.ts";
 import { metersToUnits, SCENE_SCALE } from "./scale.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
-import { createBodyTextures, makeGlowTexture, type BodyTextureSet } from "./bodyTextures.ts";
+import { createBodyTextures, makeGlowTexture, type AtmoGlow, type BodyTextureSet } from "./bodyTextures.ts";
 
 // Sampled in eccentric anomaly and phased to the body (see kepler.orbitPath), so
 // the loop already passes dead through the marker; the segment budget only sets
@@ -91,6 +91,66 @@ function makeSunMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
   return mat;
 }
 
+/**
+ * A body's atmospheric limb glow: a thin shell just above the surface that scatters
+ * sunlight at the limb. The brightness is the product of two real effects —
+ *
+ *  - a **Fresnel/limb term** `(1 − N·V)^power`, bright where we look through the
+ *    most air (the grazing edge of the disk), faint looking straight down; and
+ *  - a **day-side term** `smoothstep(N·sunDir)`, so the arc glows on the sunlit
+ *    hemisphere and fades through the terminator to nothing on the night side —
+ *    exactly how Earth's blue arc only hangs over the daylit limb.
+ *
+ * Additive, depth-tested but not depth-writing, and carrying the log-depth chunks
+ * so it sits correctly in the solar-system-scale depth buffer. `uColor` folds in
+ * intensity and may exceed 1.0 so the brightest arc blooms.
+ */
+function makeAtmosphereMaterial(glow: AtmoGlow): THREE.ShaderMaterial {
+  const c = new THREE.Color(glow.color);
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Vector3(c.r * glow.intensity, c.g * glow.intensity, c.b * glow.intensity) },
+      uSunDir: { value: new THREE.Vector3(1, 0, 0) },
+      uPower: { value: glow.power },
+    },
+    vertexShader: `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      varying vec3 vWorldN;
+      varying vec3 vWorldPos;
+      void main() {
+        vWorldN = normalize(mat3(modelMatrix) * normal);
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+        #include <logdepthbuf_vertex>
+      }
+    `,
+    fragmentShader: `
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      uniform vec3 uColor;
+      uniform vec3 uSunDir;
+      uniform float uPower;
+      varying vec3 vWorldN;
+      varying vec3 vWorldPos;
+      void main() {
+        #include <logdepthbuf_fragment>
+        vec3 N = normalize(vWorldN);
+        vec3 V = normalize(cameraPosition - vWorldPos);
+        float rim = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), uPower);
+        float sun = smoothstep(-0.25, 0.35, dot(N, uSunDir));
+        float a = rim * sun;
+        gl_FragColor = vec4(uColor, a);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.FrontSide,
+  });
+}
+
 function makeDotTexture(): THREE.Texture {
   const size = 64;
   const canvas = document.createElement("canvas");
@@ -118,6 +178,8 @@ interface BodyVisual {
   node: THREE.Object3D;
   sphere: THREE.Mesh;
   clouds?: THREE.Mesh;
+  /** Atmospheric limb-glow shell material (its sun-direction uniform is set per frame). */
+  atmoMat?: THREE.ShaderMaterial;
   /** Angular speed of the texture spin (rad/s of sim time); 0 if non-rotating. */
   spinRate: number;
   cloudSpinRate: number;
@@ -201,6 +263,14 @@ export class BodyViews {
       node.add(clouds);
     }
 
+    // Atmospheric limb-scattering glow (Earth, Venus, Mars, Titan, Pluto).
+    let atmoMat: THREE.ShaderMaterial | undefined;
+    if (tex.atmoGlow) {
+      atmoMat = makeAtmosphereMaterial(tex.atmoGlow);
+      const shell = new THREE.Mesh(new THREE.SphereGeometry(radius * tex.atmoGlow.scale, segW, segH), atmoMat);
+      node.add(shell);
+    }
+
     // Ring system (Saturn): a flat annulus in the equatorial plane.
     if (tex.ring) this.addRing(node, radius, tex);
 
@@ -235,7 +305,7 @@ export class BodyViews {
     const focusColor = color.clone().lerp(new THREE.Color(0xffffff), 0.5);
     const spinRate = def.rotationPeriod ? (2 * Math.PI) / def.rotationPeriod : 0;
     const visual: BodyVisual = {
-      def, marker, node, sphere, clouds,
+      def, marker, node, sphere, clouds, atmoMat,
       spinRate,
       cloudSpinRate: spinRate * 0.92, // a touch of cloud drift relative to the surface
       baseColor, focusColor,
@@ -320,6 +390,14 @@ export class BodyViews {
       this.sm.toRender(state.r, tmp);
       vis.marker.position.copy(tmp);
       vis.node.position.copy(tmp);
+
+      // Point the atmosphere's day-side term at the true Sun (render space), so the
+      // glowing arc tracks the terminator as the body and Sun move.
+      if (vis.atmoMat) {
+        const sun = this.sm.sunRenderPosition;
+        const dir = vis.atmoMat.uniforms.uSunDir!.value as THREE.Vector3;
+        dir.set(sun.x - tmp.x, sun.y - tmp.y, sun.z - tmp.z).normalize();
+      }
 
       // Axial rotation at the real sidereal rate (retrograde from a negative rate).
       if (vis.spinRate !== 0) {

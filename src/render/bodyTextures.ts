@@ -204,9 +204,42 @@ export interface BodyTextureSet {
   cloudScale?: number; // shell radius as a multiple of the body radius
   /** Optional ring system (Saturn), radii as multiples of the body radius. */
   ring?: { texture: THREE.Texture; inner: number; outer: number };
+  /** Optional atmospheric limb-scattering glow (a sun-lit Fresnel rim). */
+  atmoGlow?: AtmoGlow;
   /** Axial tilt in radians (render-only, see OBLIQUITY_DEG). */
   obliquityRad: number;
 }
+
+/** Parameters for a body's atmospheric limb glow. `color` is the body's real
+ *  observed sky/limb tint; `intensity` scales it (and may push the brightest arc
+ *  over 1.0 so it blooms); `power` sets how tightly the glow hugs the limb (thick
+ *  hazes spread, thin ones cling); `scale` is the shell radius as a multiple of
+ *  the body radius. */
+export interface AtmoGlow {
+  color: number;
+  intensity: number;
+  power: number;
+  scale: number;
+}
+
+/**
+ * Atmospheric-glow tints, keyed to each world's *real* observed colour and gated
+ * by the presence (and, via intensity, the thickness) of a real atmosphere:
+ *   - Earth  — Rayleigh-scattered blue, the thin bright arc seen from orbit.
+ *   - Venus  — a deep, bright sulphuric-acid haze, pale gold.
+ *   - Mars   — a faint, dusty butterscotch-pink limb (the real Martian sky tint).
+ *   - Titan  — a thick orange organic-haze shell (Huygens/Cassini colours).
+ *   - Pluto  — the surprising blue haze layers New Horizons photographed.
+ * `power` is lower (broader glow) for the thick hazes, higher (tighter) for thin
+ * atmospheres, tracking how far up the visible scattering actually extends.
+ */
+const ATMO_GLOW: Record<string, AtmoGlow> = {
+  earth: { color: 0x5aa0ff, intensity: 1.5, power: 3.2, scale: 1.03 },
+  venus: { color: 0xf3e2ac, intensity: 1.7, power: 2.4, scale: 1.05 },
+  mars: { color: 0xe7a886, intensity: 0.65, power: 4.3, scale: 1.02 },
+  titan: { color: 0xe79a3c, intensity: 1.45, power: 2.6, scale: 1.05 },
+  pluto: { color: 0x9bbbe6, intensity: 0.5, power: 4.5, scale: 1.03 },
+};
 
 // ── Painters ─────────────────────────────────────────────────────────────────
 
@@ -591,6 +624,8 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
         def.id === "mars" ? 0xd8b89a : 0xffffff;
       set.cloudScale = 1.025;
     }
+    // Sun-lit limb-scattering glow, where we have a real tint for the body.
+    if (ATMO_GLOW[def.id]) set.atmoGlow = ATMO_GLOW[def.id];
   }
 
   // Saturn's rings (the one body where their absence reads as a bug).
