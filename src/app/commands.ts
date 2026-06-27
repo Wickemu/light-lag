@@ -76,6 +76,25 @@ export function spawnShip(sim: Simulation, design: ShipDesign): string {
 }
 
 /**
+ * Remove a ship from the world entirely (the player scraps or abandons it),
+ * cleaning up every reference: any command messages still crawling out to it,
+ * its scheduled events (departures, captures, SOI crossings…), and any maneuver
+ * records. The renderer and ship panel drop their per-ship visuals on their own
+ * (they sync to `world.ships` each frame). Telemetry already in flight FROM the
+ * ship is harmless — it just arrives and is discarded. Returns true if a ship was
+ * removed, false if the id was unknown. The caller redirects camera focus if it
+ * was watching this ship.
+ */
+export function deleteShip(sim: Simulation, shipId: string): boolean {
+  if (!sim.world.ships.has(shipId)) return false;
+  sim.world.ships.delete(shipId);
+  sim.world.messages = sim.world.messages.filter((m) => m.targetId !== shipId);
+  for (const [id, m] of sim.world.maneuvers) if (m.shipId === shipId) sim.world.maneuvers.delete(id);
+  sim.events.removeByEntity(shipId);
+  return true;
+}
+
+/**
  * Command a finite-thrust burn delivering `dvTarget` of ENGINE Δv in the given
  * orbit direction. The command is NOT applied now: it is transmitted from the
  * control node and propagates at c, so a distant ship only begins the burn after

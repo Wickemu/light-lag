@@ -168,6 +168,7 @@ const TEX_W: Record<BodyKind, number> = {
   moon: 384,
   asteroid: 256,
   comet: 256,
+  satellite: 128, // tiny man-made craft; sphere is sub-pixel
 };
 
 /** Per-body resolution bumps for the worlds players zoom into most closely. */
@@ -415,7 +416,7 @@ function paintRocky(def: BodyDef, w: number, h: number, rng: () => number, fbm: 
   // Impact craters: airless bodies are heavily cratered; bodies with thick air
   // (Venus, Titan) are not — but those are hidden by their cloud shell anyway.
   const craterDensity: Record<BodyKind, number> = {
-    star: 0, planet: 18, dwarf: 40, moon: 55, asteroid: 70, comet: 30,
+    star: 0, planet: 18, dwarf: 40, moon: 55, asteroid: 70, comet: 30, satellite: 0,
   };
   let nCraters = craterDensity[def.kind];
   if (def.atmosphere) nCraters = Math.round(nCraters * 0.2);

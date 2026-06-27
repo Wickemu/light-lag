@@ -805,6 +805,17 @@ button:disabled {
   opacity: 0.5;
   cursor: default;
 }
+button.danger {
+  border-color: color-mix(in srgb, #e06464 60%, var(--btn-border, #444));
+  color: #e88;
+}
+button.danger:hover {
+  background: color-mix(in srgb, #e06464 22%, var(--btn-bg));
+}
+.flight-readout .warn {
+  color: #e88;
+  margin-top: 4px;
+}
 
 .ship-list {
   display: flex;

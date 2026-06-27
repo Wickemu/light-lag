@@ -33,6 +33,7 @@ const GROUPS: { kind: BodyKind; label: string }[] = [
   { kind: "dwarf", label: "Dwarf planets" },
   { kind: "asteroid", label: "Asteroids" },
   { kind: "moon", label: "Moons" },
+  { kind: "satellite", label: "Satellites" },
   { kind: "comet", label: "Comets" },
 ];
 

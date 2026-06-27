@@ -15,12 +15,14 @@ windows), patched-conic SOI capture, light-lag command (the thesis), and
 thermal / power / detection ("no stealth in space"). Plus parallel-session
 add-ons: a 30-craft preset catalog and keyboard controls.
 
-**Core-mechanics expansion (latest):** the full Solar System — 43 bodies total:
+**Core-mechanics expansion (latest):** the full Solar System — 50 bodies total:
 the 8 planets, the dwarf planets (Ceres, Pluto, Eris, Haumea, Makemake), major
-asteroids (Vesta, Pallas), gas-giant & other moons (Galileans, Titan + six
-Saturnians, five Uranians, Triton, Phobos/Deimos, Charon), and TNOs + comets
-(Sedna, Quaoar, Gonggong, Orcus, 1P/Halley, 2P/Encke), each on a JPL-validated
-ephemeris;
+asteroids (Vesta, Pallas, plus 433 Eros, 10 Hygiea, 3 Juno), the Kuiper-belt
+flyby target Arrokoth, gas-giant & other moons (Galileans, Titan + six
+Saturnians, five Uranians, Triton, Phobos/Deimos, Charon), TNOs + comets
+(Sedna, Quaoar, Gonggong, Orcus, 1P/Halley, 2P/Encke), and major man-made
+satellites (ISS, Hubble, Tiangong — a new `satellite` body class), each on a
+JPL-validated ephemeris;
 **landing & takeoff** Δv/propellant budgeting (a calibrated gravity-turn ascent
 through real atmospheres, with aerobraking on descent — now extended with a full
 **atmospheric-entry heating** trajectory and single-pass **aerocapture**); and the first
@@ -87,10 +89,49 @@ read-time analytic, suite green, golden hash documented if it moves.
    circularize; give moon transfers a proper porkchop plot (like the heliocentric one) and thread
    the existing optional `captureApoAlt` through `searchMoonWindow` / `maybeChainMoonLeg` so a
    moon capture can also choose the cheap loose ellipse. *(see "Transfer toolkit".)*
-4. **ISRU / depots (Phase 7)** — mass economy: propellant depots + refueling, ISRU from
+4. **Animated launch / landing trajectories (no more snapping)** — `launchShip` / `landShip`
+   currently teleport the ship from the surface straight onto its parking orbit (or vice-versa).
+   Show the (temporally minor) ascent/descent arc instead: add a `LaunchLeg` / `DescentLeg` to
+   `world.ts` (parallel to `EntryLeg`), have `launchShip`/`landShip` create the leg + schedule a
+   `launch-arrive` / `land-arrive` event at `tStart + burnTime` (the burn time is already computed
+   by `ascentBudget`/`descentBudget`), add `shipRelativeState` dispatch branches that evaluate a
+   **precomputed spline** of `[t, altitude, speed]` sampled from the budget integrator at commit
+   (O(1) read, deterministic, exact at any warp), and finalize in `sim.ts`. `trajectoryViews`
+   picks up the arc for free via `shipForecastPath`. Pairs with the in-sim entry pass already
+   flown for descents through an atmosphere. *(Observation #5.)*
+5. **Follow ships (and other objects) in the interstellar view** — entering the interstellar map
+   hard-locks the camera target to Sol (`SceneManager.frameInterstellar` sets `controls.target` to
+   the origin). Let it follow an interstellar-leg ship instead: add an optional focus id to
+   `setViewMode` / a per-frame `updateFocus()` hook the interstellar view calls, have
+   `interstellarView.update` drive `setFocusTarget` from the scaled ship position when one is
+   selected, and surface ship selection in the HUD. Respect the view-mode isolation invariant
+   (the interstellar view computes its own positions about Sol). *(Observation #2.)*
+6. **ISRU / depots (Phase 7)** — mass economy: propellant depots + refueling, ISRU from
    moon/comet/regolith volatiles, and a colony supplied within a transfer window. *(see Phase 7.)*
 
-*(Done since last round: **capture geometry for gravity-assist & chain arrivals** — the
+*(Done since last round: **playtest-feedback round (lifecycle, hazards, content, camera)** —
+seven observations from real play, landed additively (suite green: +21 tests to 549; golden hash
+unmoved — all new state is optional and serializes only when present). **(1) Ships now crash and
+are lost** on flying their orbit into a body: `sim.step` analytically finds the surface-crossing time
+of any coasting conic (J2-consistent mean motion, so it is chunk-invariant — a new
+`shipLifecycle.test.ts` checks one-step ≡ chunked) and freezes the ship as a wreck at the impact
+site with `Ship.status="lost"`; the flight console shows CONTACT LOST and offers only deletion.
+**(2) Delete a ship** (`deleteShip`) removes it and purges its in-flight orders, scheduled events
+(`EventQueue.removeByEntity`), and maneuver records — the renderer drops its visuals on its own.
+**(3) Warp-to-departure** (`Simulation.jumpToTime`, thrust-safe) + a flight-console button leaps the
+clock to ~5 min before a planned transfer's departure instead of hand-cranking the warp. **(4) The
+LEO-launch strobe is gone**: focus now frames the PARENT body (not the ship) whenever chasing it
+would strobe — measured as revolutions-per-real-second at the current warp, so a ship is watched
+circling Earth rather than flickering around it. **(5) Interstellar ships in the system view** sit on
+the same unzoomable celestial-sphere backdrop as the stars (true Sun→ship direction) instead of a
+wrong, parallaxing finite range. **(6) Content:** 433 Eros, 10 Hygiea, 3 Juno, and the Kuiper flyby
+target Arrokoth (JPL J2000 osculating elements); the ISS, Hubble, and Tiangong as a new `satellite`
+body class; and the Project Hail Mary astrophage **spin drive** (a near-photon torch) in the
+interstellar craft catalog. **Deferred from this round:** animated launch/landing arcs and the
+interstellar follow-cam (candidates 4 & 5 above — they need new world state + spline/camera
+plumbing and deserve their own rounds); plus the smaller hazard follow-ups in the backlog.)*
+
+*(Earlier — Done since prior round: **capture geometry for gravity-assist & chain arrivals** — the
 Oberth-cheap elliptical insertion (and aerocapture, where there's an atmosphere) was wired to direct
 transfers but NOT to the gravity-assist/chain solvers, so an assist arrival at a giant could only
 force a ~17 km/s low-circular capture — which a realistically-fuelled orbiter can't afford, stranding
@@ -179,6 +220,18 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
 
 ## Backlog — known engine gaps (future layers)
 
+- **Spacecraft hazards & lifecycle** — surface-impact loss is DONE for coasting conics
+  (`sim.impactTime`/`crashShip`: a ship whose orbit dips below the primary's radius is
+  destroyed at the analytic surface crossing and frozen as a wreck). Follow-ups:
+  (a) **intra-burn collision** — a ship thrusting *into* the surface is only caught when the
+  burn ends and it next coasts; detect `|r| ≤ R` inside `advanceThrustShip` for a powered
+  crash too. (b) **entry-leg terrain collision** — `integrateEntryPlanar` could gain an
+  `outcome:"crashed"` when a too-steep/too-shallow descent reaches altitude ≤ 0 at lethal
+  speed, distinct from a controlled landing. (c) **render frame-skip at extreme warp** — the
+  parent-body focus default removes the LEO chase-strobe, but a fast object still visibly
+  jumps frame-to-frame; skip the redraw (or motion-blur) when the focused entity moved < ~1px
+  since last frame. (d) collision with *other ships*/stations (rendezvous gone wrong) is a
+  larger, separate feature.
 - **Relativistic propulsion** — DONE (first cut): rapidity rocket equation,
   constant-proper-accel brachistochrone, time dilation / proper-time divergence,
   and an in-sim flyable interstellar leg; `PENDING_RELATIVISTIC` is now the flyable

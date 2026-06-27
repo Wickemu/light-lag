@@ -12,14 +12,15 @@
 import * as THREE from "three";
 import { type WorldState } from "../core/world.ts";
 import { shipWorldState } from "../core/ships.ts";
-import { STAR_BY_ID, starPosition } from "../core/stars.ts";
-import { distance } from "../core/math/vec3.ts";
-import { starShellRadius, starDirection } from "./starViews.ts";
+import { STAR_BY_ID } from "../core/stars.ts";
+import { length } from "../core/math/vec3.ts";
+import { SKY_RADIUS, starDirection } from "./starViews.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
 
 const COAST_COLOR = 0x6fe0ff;
 const THRUST_COLOR = 0xff8a30;
+const LOST_COLOR = 0x9a6b6b; // a dim, dead red for a destroyed wreck
 
 function makeDotTexture(): THREE.Texture {
   const size = 64;
@@ -104,7 +105,8 @@ export class ShipViews {
       const vis = this.visuals.get(ship.id) ?? this.build(ship.id);
       vis.marker.visible = true; // may have been parked while the layer was off
       const thrusting = ship.mode === "thrust";
-      const color = thrusting ? THRUST_COLOR : COAST_COLOR;
+      const lost = ship.status === "lost";
+      const color = lost ? LOST_COLOR : thrusting ? THRUST_COLOR : COAST_COLOR;
       (vis.marker.material as THREE.SpriteMaterial).color.setHex(color);
       // Enlarge the focused ship's marker so it stands out among the bodies.
       vis.marker.scale.setScalar(this.sm.focusId === ship.id ? 0.018 * 1.6 : 0.018);
@@ -112,18 +114,18 @@ export class ShipViews {
       const leg = ship.interstellarLeg;
       const star = leg ? STAR_BY_ID.get(leg.targetStar) : undefined;
       if (leg && star) {
-        // Interstellar: the true position is ~1e17 m away — render it on the same
-        // compressed star shell, streaking from the Sun out to the star marker by
-        // the fraction of the crossing covered.
+        // Interstellar: the ship is light-years out — far beyond the orrery. Paint it
+        // on the same UNZOOMABLE sky as the stars (anchored to the camera at
+        // SKY_RADIUS) in the true Sun→ship direction, so it reads as a point on the
+        // celestial sphere departing toward its target star rather than floating at a
+        // wrong finite range that parallaxes against the planets.
         const ws = shipWorldState(ship, t);
-        // Streak toward the same aim point the engine flies (the star at arrival).
-        const aim = starPosition(star, leg.tArrive);
-        const D = distance(aim, leg.startPos);
-        const f = D > 0 ? Math.min(1, distance(ws.r, leg.startPos) / D) : 0;
-        const dir = starDirection(star, leg.tArrive);
-        const r = f * starShellRadius(star.distanceLy);
-        this.sm.toRender({ x: 0, y: 0, z: 0 }, tmp); // Sun anchor
-        vis.marker.position.set(tmp.x + dir.x * r, tmp.y + dir.y * r, tmp.z + dir.z * r);
+        const rmag = length(ws.r);
+        const dir = rmag > 1
+          ? { x: ws.r.x / rmag, y: ws.r.y / rmag, z: ws.r.z / rmag }
+          : starDirection(star, leg.tArrive); // degenerate (at the Sun) → aim at the star
+        const cam = this.sm.camera.position;
+        vis.marker.position.set(cam.x + dir.x * SKY_RADIUS, cam.y + dir.y * SKY_RADIUS, cam.z + dir.z * SKY_RADIUS);
         this.placeLabel(vis, ship.name, thrusting, ship.id, w, h);
         continue;
       }

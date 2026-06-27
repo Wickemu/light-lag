@@ -124,6 +124,17 @@ export class EventQueue {
     this.heap.length = 0;
   }
 
+  /** Drop every pending event for an entity (a deleted or destroyed ship), then
+   *  re-establish the heap invariant. Filtering preserves the surviving events'
+   *  (t, seq) order, so determinism is unaffected. */
+  removeByEntity(entityId: string): void {
+    const kept = this.heap.filter((e) => e.entityId !== entityId);
+    if (kept.length === this.heap.length) return; // nothing removed
+    this.heap = kept;
+    // Floyd build-heap: sift down from the last internal node up to the root.
+    for (let i = (this.heap.length >> 1) - 1; i >= 0; i--) this.siftDown(i);
+  }
+
   toArray(): SimEvent[] {
     return [...this.heap].sort((a, b) => a.t - b.t);
   }

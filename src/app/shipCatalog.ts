@@ -740,6 +740,11 @@ export const INTERSTELLAR_CRAFT: InterstellarCraft[] = [
     note: "Fusion torch sustaining ~1g (and far more in-universe). A high exhaust velocity, but well below c — interstellar trips imply a steep mass ratio.",
   },
   {
+    name: "Hail Mary spin drive (1.5g)",
+    exhaustVelocity: C, properAccel: 1.5 * 9.80665,
+    note: "Project Hail Mary's astrophage drive: a microbe banks energy as mass and re-emits it as coherent ~26 µm (Petrova-line) light, so the exhaust IS light — a photon rocket at c. That absurd energy density sustains the book's 1.5 g cruise to Tau Ceti, where any chemical mass ratio would be hopeless.",
+  },
+  {
     name: "Project Daedalus boost (½g)",
     exhaustVelocity: 0.036 * C, properAccel: 4.9,
     note: "Inertial-confinement fusion, ~10,000 km/s exhaust. The real Daedalus was a one-way 0.12c flyby; sustaining even ½g to brake at the target needs a mass ratio it never carried — the planner shows why.",

@@ -35,6 +35,7 @@ const MARKER_SCALE: Record<BodyKind, number> = {
   asteroid: 0.012,
   moon: 0.013,
   comet: 0.011,
+  satellite: 0.009, // man-made craft: the smallest marker
 };
 
 /** Sphere tessellation by class: smoother silhouettes for the bodies you study
@@ -46,6 +47,7 @@ const SPHERE_SEGMENTS: Record<BodyKind, [number, number]> = {
   moon: [32, 24],
   asteroid: [24, 18],
   comet: [24, 18],
+  satellite: [16, 12], // sub-pixel anyway — the marker carries it
 };
 
 function makeDotTexture(): THREE.Texture {

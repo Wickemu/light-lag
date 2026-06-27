@@ -24,7 +24,7 @@ import { type Visibility } from "./visibility.ts";
  *  whole orrery (Neptune ≈ 4488 units, camera pull-out ≤ 5e6) always sits in
  *  front and occludes it, yet well inside the camera's far plane (1e9). At this
  *  distance float32 angular jitter is sub-pixel. */
-const SKY_RADIUS = 2e7;
+export const SKY_RADIUS = 2e7;
 
 /** Legacy compressed-shell radius from the Sun, retained for the interstellar
  *  in-transit streak in `shipViews` until that moves to the interstellar view.
