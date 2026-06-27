@@ -48,6 +48,49 @@ const SPHERE_SEGMENTS: Record<BodyKind, [number, number]> = {
   comet: [24, 18],
 };
 
+/**
+ * The Sun's photosphere material. Starts from MeshBasicMaterial (unlit — the Sun
+ * emits, it isn't lit) and patches the shader to add two real solar effects:
+ *
+ *  - **Limb darkening**: the disk is brightest at centre and dims toward the edge
+ *    because near the limb we see higher, cooler layers of the photosphere. The
+ *    classic visible-band law is I(μ)/I(0) ≈ 0.3 + 0.93μ − 0.23μ² (μ = cos of the
+ *    angle between the line of sight and the local normal); we use a close fit.
+ *  - **Limb reddening**: those cooler edge layers are also redder, so the rim
+ *    shifts warm.
+ *
+ * Finally an HDR gain lifts the disk well above 1.0 so it reads as a genuine
+ * light source and blooms through the post chain. onBeforeCompile means the
+ * material keeps the logarithmic depth buffer and all other engine plumbing.
+ */
+function makeSunMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
+  const mat = new THREE.MeshBasicMaterial({ map });
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uSunGain = { value: 3.6 };
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vSunN;\nvarying vec3 vSunV;")
+      .replace(
+        "#include <project_vertex>",
+        "#include <project_vertex>\n  vSunN = normalize(normalMatrix * normal);\n  vSunV = -mvPosition.xyz;",
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nuniform float uSunGain;\nvarying vec3 vSunN;\nvarying vec3 vSunV;",
+      )
+      .replace(
+        "#include <map_fragment>",
+        `#include <map_fragment>
+        float mu = clamp(dot(normalize(vSunN), normalize(vSunV)), 0.0, 1.0);
+        float limb = 0.32 + 0.93 * mu - 0.25 * mu * mu;
+        diffuseColor.rgb *= clamp(limb, 0.0, 1.2);
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.12, 0.92, 0.70), (1.0 - mu) * 0.6);
+        diffuseColor.rgb *= uSunGain;`,
+      );
+  };
+  return mat;
+}
+
 function makeDotTexture(): THREE.Texture {
   const size = 64;
   const canvas = document.createElement("canvas");
@@ -123,7 +166,7 @@ export class BodyViews {
     const sphereGeo = new THREE.SphereGeometry(radius, segW, segH);
     let sphereMat: THREE.Material;
     if (def.kind === "star") {
-      sphereMat = new THREE.MeshBasicMaterial({ map: tex.surface });
+      sphereMat = makeSunMaterial(tex.surface);
     } else {
       const params: THREE.MeshStandardMaterialParameters = {
         map: tex.surface,
@@ -161,19 +204,31 @@ export class BodyViews {
     // Ring system (Saturn): a flat annulus in the equatorial plane.
     if (tex.ring) this.addRing(node, radius, tex);
 
-    // The Sun is a light source, not a lit ball — give it a soft corona that
-    // grows as you approach (sprite size-attenuates with distance).
+    // The Sun is a light source, not a lit ball — wrap the limb-darkened disk in
+    // a layered corona: a tight, hot inner glow over a wide, faint outer halo.
+    // Both size-attenuate (they grow as you approach) and carry HDR colour
+    // (components > 1) so they bloom convincingly through the post chain.
     if (def.kind === "star") {
-      const coronaMat = new THREE.SpriteMaterial({
+      const inner = new THREE.Sprite(new THREE.SpriteMaterial({
         map: this.glow,
-        color: 0xfff0cf,
+        color: new THREE.Color().setRGB(2.2, 1.85, 1.35), // HDR warm-white core
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
-      });
-      const corona = new THREE.Sprite(coronaMat);
-      corona.scale.setScalar(radius * 7);
-      node.add(corona);
+      }));
+      inner.scale.setScalar(radius * 6);
+      node.add(inner);
+
+      const outer = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: this.glow,
+        color: new THREE.Color().setRGB(1.0, 0.72, 0.42), // cooler extended corona
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }));
+      outer.scale.setScalar(radius * 18);
+      node.add(outer);
     }
 
     const baseColor = color.clone();
