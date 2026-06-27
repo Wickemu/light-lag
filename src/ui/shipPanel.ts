@@ -52,6 +52,8 @@ import { STAR_BY_ID } from "../core/stars.ts";
 import { BODY_BY_ID, AU, DAY, RAD, JULIAN_YEAR } from "../core/constants.ts";
 import { formatDate } from "../core/time.ts";
 import { length } from "../core/math/vec3.ts";
+import { el, button, kv, setDisabled, numberField, compactField, formatDur } from "./dom.ts";
+import { collapsible, type Collapsible } from "./collapsible.ts";
 
 const DIRS: BurnDir[] = ["prograde", "retrograde", "radial-out", "radial-in", "normal", "antinormal"];
 const DIR_LABEL: Record<BurnDir, string> = {
@@ -93,6 +95,11 @@ export class ShipPanel {
   private electricEl!: HTMLElement;
   private spiralAltInput!: HTMLInputElement;
   private spiralBtn!: HTMLButtonElement;
+  private designerSection!: Collapsible;
+  private fleetSection!: Collapsible;
+  /** Collapse the designer once, the first time a ship is selected, to surface
+   *  the flight controls — without permanently overriding the user's choice. */
+  private autoCollapsedDesigner = false;
 
   constructor(
     private root: HTMLElement,
@@ -118,18 +125,23 @@ export class ShipPanel {
 
     // Title row with a ✕ close button (mirrors the planners' Close affordance).
     const head = el("div", "panel-head");
-    head.appendChild(el("div", "panel-title", "SHIP DESIGNER"));
+    head.appendChild(el("div", "panel-title", "MISSION"));
     const close = button("✕", () => this.toggle());
     close.className = "panel-close";
     close.title = "Close (F or Esc)";
     head.appendChild(close);
     panel.appendChild(head);
 
+    // ── Designer section ──────────────────────────────────────────────────────
+    this.designerSection = collapsible("Designer", { id: "designer", open: true });
+    const dsn = this.designerSection.body;
+    panel.appendChild(this.designerSection.root);
+
     // Preset fleet picker — load a real or inferred design, then tweak freely.
     this.presetSelect = this.buildPresetSelect();
-    panel.appendChild(this.presetSelect);
+    dsn.appendChild(this.presetSelect);
     this.presetCaption = el("div", "preset-caption");
-    panel.appendChild(this.presetCaption);
+    dsn.appendChild(this.presetCaption);
 
     // Editable name (mirrors the loaded preset; the launched ship takes it).
     const nameField = el("label", "field name-field");
@@ -139,10 +151,10 @@ export class ShipPanel {
     this.nameInput.value = this.design.name;
     this.nameInput.oninput = () => { this.design.name = this.nameInput.value; };
     nameField.appendChild(this.nameInput);
-    panel.appendChild(nameField);
+    dsn.appendChild(nameField);
 
     this.stagesEl = el("div", "stages");
-    panel.appendChild(this.stagesEl);
+    dsn.appendChild(this.stagesEl);
     const addBtn = button("+ add stage", () => {
       this.design.stages.push({ name: `Stage ${this.design.stages.length + 1}`, dryMass: 1000, propMass: 8000, isp: 320, thrust: 1e5 });
       this.markCustom();
@@ -151,7 +163,7 @@ export class ShipPanel {
     });
     addBtn.className = "wide-btn";
     addBtn.title = "Add another stage to the stack.";
-    panel.appendChild(addBtn);
+    dsn.appendChild(addBtn);
 
     const params = el("div", "design-params");
     this.payloadInput = numberField(params, "Payload (t)", this.design.payloadMass / 1000, (v) => {
@@ -163,36 +175,41 @@ export class ShipPanel {
       this.design.altitudeKm = v;
       this.markCustom();
     });
-    panel.appendChild(params);
+    dsn.appendChild(params);
 
     this.budgetEl = el("div", "budget");
-    panel.appendChild(this.budgetEl);
+    dsn.appendChild(this.budgetEl);
 
     const launch = button("▶ Launch to LEO", () => this.launch());
     launch.className = "wide-btn primary";
     launch.title = "Place this design in a circular low orbit and start flying it.";
-    panel.appendChild(launch);
+    dsn.appendChild(launch);
 
-    panel.appendChild(el("hr"));
-    panel.appendChild(el("div", "section-label", "SHIPS"));
+    // ── Fleet section (launched ships) ────────────────────────────────────────
+    this.fleetSection = collapsible("Fleet", { id: "fleet", open: true });
     this.shipListEl = el("div", "ship-list");
-    panel.appendChild(this.shipListEl);
+    this.fleetSection.body.appendChild(this.shipListEl);
+    panel.appendChild(this.fleetSection.root);
 
+    // ── Flight + Maneuver sections (only shown once a ship is selected) ────────
     this.flightEl = el("div", "flight");
+
+    const flightSection = collapsible("Flight", { id: "flight", open: true });
+    const flt = flightSection.body;
     this.readoutEl = el("div", "flight-readout");
-    this.flightEl.appendChild(this.readoutEl);
+    flt.appendChild(this.readoutEl);
 
     this.planBtn = button("Plan transfer ▸", () => {
       if (this.selectedId && this.onPlanTransfer) this.onPlanTransfer(this.selectedId);
     });
     this.planBtn.className = "wide-btn";
-    this.flightEl.appendChild(this.planBtn);
+    flt.appendChild(this.planBtn);
 
     this.interstellarBtn = button("Interstellar ▸", () => {
       if (this.selectedId && this.onPlanInterstellar) this.onPlanInterstellar(this.selectedId);
     });
     this.interstellarBtn.className = "wide-btn";
-    this.flightEl.appendChild(this.interstellarBtn);
+    flt.appendChild(this.interstellarBtn);
 
     // Surface ops — landing & takeoff Δv budgeting (shown only when the ship is
     // coasting in the SOI of a body with a surface, or already landed).
@@ -211,7 +228,7 @@ export class ShipPanel {
     this.launchBtn = button("⬆ Launch", () => this.doLaunch());
     surfRow.append(this.landBtn, this.launchBtn);
     this.surfaceEl.appendChild(surfRow);
-    this.flightEl.appendChild(this.surfaceEl);
+    flt.appendChild(this.surfaceEl);
 
     // Electric drive — commit a low-thrust spiral to a target orbit (shown only
     // when the active stage is electric and the ship is coasting about a body).
@@ -226,10 +243,13 @@ export class ShipPanel {
     this.spiralBtn = button("⟳ Spiral", () => this.doSpiral());
     elRow.append(el("span", "dv-label", "to (km)"), this.spiralAltInput, this.spiralBtn);
     this.electricEl.appendChild(elRow);
-    this.flightEl.appendChild(this.electricEl);
+    flt.appendChild(this.electricEl);
 
-    const burnControls = el("div", "burn-controls");
-    burnControls.appendChild(el("div", "section-label", "MANEUVER"));
+    this.flightEl.appendChild(flightSection.root);
+
+    // Maneuver section — burn direction + Δv.
+    const maneuverSection = collapsible("Maneuver", { id: "maneuver", open: true });
+    const mnv = maneuverSection.body;
     this.dirRow = el("div", "dir-row");
     for (const d of DIRS) {
       const b = button(DIR_LABEL[d], () => {
@@ -240,7 +260,7 @@ export class ShipPanel {
       b.dataset.dir = d;
       this.dirRow.appendChild(b);
     }
-    burnControls.appendChild(this.dirRow);
+    mnv.appendChild(this.dirRow);
 
     const dvRow = el("div", "dv-row");
     this.dvInput = document.createElement("input");
@@ -252,9 +272,9 @@ export class ShipPanel {
     this.executeBtn = button("Execute burn", () => this.execute());
     this.executeBtn.className = "primary";
     dvRow.append(dvLabel, this.dvInput, this.executeBtn);
-    burnControls.appendChild(dvRow);
+    mnv.appendChild(dvRow);
 
-    this.flightEl.appendChild(burnControls);
+    this.flightEl.appendChild(maneuverSection.root);
     panel.appendChild(this.flightEl);
 
     this.root.appendChild(panel);
@@ -420,6 +440,12 @@ export class ShipPanel {
       }, distUnits);
     }
     this.flightEl.style.display = "block";
+    // First time a ship is selected this session, fold the designer to surface
+    // the flight controls — a convenience nudge, not a persisted override.
+    if (!this.autoCollapsedDesigner) {
+      this.autoCollapsedDesigner = true;
+      this.designerSection.setOpen(false);
+    }
     this.refreshShipList();
   }
 
@@ -439,7 +465,9 @@ export class ShipPanel {
 
   private refreshShipList(): void {
     this.shipListEl.innerHTML = "";
-    if (this.sim.world.ships.size === 0) {
+    const count = this.sim.world.ships.size;
+    this.fleetSection.badge.textContent = count ? String(count) : "";
+    if (count === 0) {
       this.shipListEl.appendChild(el("div", "ship-empty", "No ships yet — launch one above."));
     }
     for (const ship of this.sim.world.ships.values()) {
@@ -644,62 +672,7 @@ export class ShipPanel {
   }
 }
 
-// ── tiny DOM helpers ────────────────────────────────────────────────────────
-function el(tag: string, className = "", text = ""): HTMLElement {
-  const e = document.createElement(tag);
-  if (className) e.className = className;
-  if (text) e.textContent = text;
-  return e;
-}
-
-function button(label: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.textContent = label;
-  b.onclick = onClick;
-  return b;
-}
-
-function kv(k: string, v: string): string {
-  return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
-}
-
-/** Toggle a button's disabled state and surface the reason as a native tooltip,
- *  so a greyed-out control explains itself on hover instead of failing silently. */
-function setDisabled(btn: HTMLButtonElement, disabled: boolean, reason = ""): void {
-  btn.disabled = disabled;
-  if (disabled && reason) btn.title = reason;
-  else btn.removeAttribute("title");
-}
-
-function numberField(parent: HTMLElement, label: string, value: number, onChange: (v: number) => void): HTMLInputElement {
-  const wrap = el("label", "field");
-  wrap.appendChild(el("span", "field-label", label));
-  const input = document.createElement("input");
-  input.type = "number";
-  input.value = String(value);
-  input.oninput = () => { const v = parseFloat(input.value); if (isFinite(v)) onChange(v); };
-  wrap.appendChild(input);
-  parent.appendChild(wrap);
-  return input;
-}
-
-function compactField(parent: HTMLElement, label: string, value: number, onChange: (v: number) => void): void {
-  const wrap = el("label", "cfield");
-  const input = document.createElement("input");
-  input.type = "number";
-  input.value = String(value);
-  input.oninput = () => { const v = parseFloat(input.value); if (isFinite(v)) onChange(v); };
-  wrap.append(input, el("span", "cfield-label", label));
-  parent.appendChild(wrap);
-}
-
-function formatDur(s: number): string {
-  if (!isFinite(s)) return "—";
-  if (s < 5400) return `${(s / 60).toFixed(1)} min`;
-  if (s < 172800) return `${(s / 3600).toFixed(2)} hr`;
-  return `${(s / 86400).toFixed(2)} d`;
-}
-
+// ── ship-specific formatters ─────────────────────────────────────────────────
 /** Light-delay readout: live for the local case, then seconds → minutes → hours. */
 function fmtDelay(s: number): string {
   if (s < 1) return "live";

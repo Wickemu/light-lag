@@ -15,7 +15,8 @@
  *   V            — cycle view presets (isometric → top-down → edge-on)
  *   M            — toggle in-system orrery ⇄ interstellar map
  *   F            — toggle ship / flight panel
- *   Escape       — close transfer planner (then ship panel if already closed)
+ *   ?            — toggle the help overlay
+ *   Escape       — close planner / help (then ship panel if already closed)
  */
 
 import * as THREE from "three";
@@ -115,12 +116,17 @@ export class KeyboardManager {
     // ── Panel toggles ────────────────────────────────────────────────────────
     if (k === "f" || k === "F") { this.shipPanel.toggle(); return; }
 
+    if (k === "?") { this.hud.toggleHelp(); return; }
+
     if (k === "Escape") {
-      // Close planners first (interstellar, then transfer); then the ship panel.
+      // Close, in order: interstellar planner, transfer planner, help overlay,
+      // then the ship panel.
       if (this.interstellarPanel.isOpen()) {
         this.interstellarPanel.close();
       } else if (this.transferPanel.isOpen()) {
         this.transferPanel.close();
+      } else if (this.hud.isHelpOpen()) {
+        this.hud.closeHelp();
       } else {
         if (this.shipPanel.isOpen()) this.shipPanel.toggle();
       }
