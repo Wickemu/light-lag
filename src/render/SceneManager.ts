@@ -57,6 +57,10 @@ export class SceneManager {
    *  genuinely brighter than white and bloom the way a real camera responds. */
   private composer!: EffectComposer;
   private bloom!: UnrealBloomPass;
+  /** When false, the whole post chain is bypassed and the scene renders straight
+   *  to the canvas (tone mapping still applied by the renderer) — much cheaper, a
+   *  user toggle for frame rate. */
+  private bloomOn = true;
 
   /** Active map. The in-system views and the interstellar view each draw only in
    *  their own mode (they self-park in the other), and the frame loop updates the
@@ -158,6 +162,18 @@ export class SceneManager {
    *  cast the planet's shadow with the true Sun direction. */
   get sunRenderPosition(): THREE.Vector3 {
     return this.sunLight.position;
+  }
+
+  get bloomEnabled(): boolean {
+    return this.bloomOn;
+  }
+
+  /** Enable/disable bloom. Off bypasses the entire post chain (no HDR target, no
+   *  blur passes) for a large frame-rate win; the scene keeps ACES tone mapping,
+   *  the lit Sun, atmospheres, ring shadow and accurate stars — it just loses the
+   *  soft glow. */
+  setBloomEnabled(on: boolean): void {
+    this.bloomOn = on;
   }
 
   setTheme(theme: Theme): void {
@@ -300,6 +316,7 @@ export class SceneManager {
 
   render(): void {
     this.controls.update();
-    this.composer.render();
+    if (this.bloomOn) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 }
