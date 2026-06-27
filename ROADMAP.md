@@ -67,10 +67,28 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-1. **B-plane-targeted in-sim pass + ISRU / depots (Phase 7)** — the in-sim flyby/aerocapture
-   passes use a patched-conic point + charged residual rather than a B-plane-targeted
-   trajectory; and Phase 7 (mass economy: propellant depots, ISRU, colony supply) is still
-   open. *(see "Gravity assists" and Phase 7.)*
+1. **Intra-system gravity-assist tours (moon-flyby orbit pump-down)** — the real way deep-well
+   orbiters reach a moon: capture into a loose ellipse (now done), then use repeated flybys of the
+   parent's moons to ratchet apoapsis down *for free* over many orbits — the Galileo / JUICE /
+   Europa Clipper technique. The building blocks all exist but are keyed to the heliocentric frame:
+   generalize `flyby.ts` / `assist.ts` / `searchChain` to a **parent-centric** tour (a planet's μ
+   and its moons as the assist bodies), and add an in-sim executor that walks moon `flyby-pass`
+   events inside the planet's SOI. Closes the loop on the elliptical capture: a Jupiter arrival
+   could then settle into low Europa orbit for a few hundred m/s of trim instead of a multi-km/s
+   burn. Impulsive + analytic-coast + scheduled-event, so it stays chunk-invariant and
+   golden-hash-neutral. *(see "Gravity assists".)*
+2. **B-plane-targeted in-sim pass + J2 on the planetary approach** — the in-sim flyby/aerocapture
+   passes use a patched-conic point + charged residual rather than a B-plane-targeted trajectory;
+   and the heliocentric→planet capture hyperbola (`aimArrival`) is still pure two-body even at an
+   oblate giant (the moon aim `aimMoonArrival` is now J2-aware — bring the planet aim to parity).
+   *(see "Gravity assists" and "J2 oblateness".)*
+3. **Parent-centric porkchop + eccentric capture everywhere** — moon legs (`searchMoonWindow`)
+   pick a single coarse-grid window and the auto-chained / same-parent moon captures still
+   circularize; give moon transfers a proper porkchop plot (like the heliocentric one) and thread
+   the existing optional `captureApoAlt` through `searchMoonWindow` / `maybeChainMoonLeg` so a
+   moon capture can also choose the cheap loose ellipse. *(see "Transfer toolkit".)*
+4. **ISRU / depots (Phase 7)** — mass economy: propellant depots + refueling, ISRU from
+   moon/comet/regolith volatiles, and a colony supplied within a transfer window. *(see Phase 7.)*
 
 *(Done since last round: **Oberth-cheap elliptical capture** — `captureAtPeriapsis` no longer
 always circularizes; a transfer can capture into a loose, eccentric ellipse (low periapsis,
@@ -212,15 +230,26 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   "VIA FLYBY 2" dropdown draws and commits a two-flyby chain. Impulsive + analytic-coast,
   so chunk-invariant (one-step ≡ chunked) and golden-hash-neutral (the absent `flybys`
   field doesn't touch the direct-transfer golden scenario). Still to do: a B-plane-targeted
-  in-sim pass (it uses a patched-conic point + charged residual), and a full chain porkchop
-  (the UI searches TOF multipliers around Hohmann timings, not an exhaustive window sweep).
+  in-sim pass (it uses a patched-conic point + charged residual); a full chain porkchop
+  (the UI searches TOF multipliers around Hohmann timings, not an exhaustive window sweep);
+  and — the big one — an **intra-system (parent-centric) flyby tour**: today the whole assist
+  stack is keyed to the heliocentric frame (Sun-centric Lambert legs, planets as assist bodies),
+  but the same geometry generalizes to a planet's μ with its **moons** as the assist bodies. That
+  unlocks the real deep-well orbiter playbook — capture into a loose ellipse (now supported, see
+  "elliptical capture") and pump apoapsis down for free with repeated Galilean / Saturnian flybys
+  (Galileo, JUICE, Europa Clipper) — settling into a low moon orbit for a few hundred m/s of trim
+  instead of a multi-km/s burn. Needs: a parent-frame `assist`/`chain` solver, a moon-flyby
+  schedule search, and an in-sim executor that walks `flyby-pass` events *inside* the planet's SOI.
 - **Transfer toolkit** — DONE: plane-change Δv, bi-elliptic transfers, and
   multi-revolution Lambert (wired into the porkchop).
 - **J2 oblateness** — DONE: secular nodal/apsidal precession of ship/station
   orbits about oblate bodies (orbit.ts j2Rates), applied analytically at read time
   (exact at any time-warp; golden-hash-neutral), with a sun-synchronous-inclination
-  helper. Still to do: full N-body perturbations, J3+ harmonics, and J2 on the
-  capture/aim geometry (the hyperbolic approach is still pure two-body).
+  helper. The **moon-arrival aim is now J2-aware** (`aimMoonArrival` propagates the
+  parent-centric cruise with the parent's J2, matching `coastElements` — a gas giant's
+  oblateness no longer drifts the short hop out of a moon's small SOI). Still to do: full N-body
+  perturbations, J3+ harmonics, and bringing the **heliocentric→planet** capture aim
+  (`aimArrival`) to the same J2 parity (its approach hyperbola is still pure two-body).
 - **Full B-plane targeting in the planner UI** — the analytic aim (`bPlaneAim`:
   free-bend hyperbola, impact parameter, B-vector) now exists; what remains is
   surfacing it in the planner UI and a B-plane-targeted in-sim pass (B-plane solved
