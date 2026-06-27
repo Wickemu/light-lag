@@ -27,7 +27,9 @@ import {
   ascentBudget,
   descentBudget,
   surfaceManeuverCost,
+  DEFAULT_ENTRY_BETA,
 } from "../core/surface.ts";
+import { entryTrajectory, type EntryVehicle } from "../core/maneuver/entry.ts";
 import {
   type ShipPreset,
   PRESETS_BY_ID,
@@ -49,7 +51,7 @@ import { summarizeOrbit, periapsisRadius, j2Rates } from "../core/orbit.ts";
 import { bodyPosition } from "../core/ephemeris.ts";
 import { retardedTime } from "../core/comms.ts";
 import { STAR_BY_ID } from "../core/stars.ts";
-import { BODY_BY_ID, AU, DAY, RAD, JULIAN_YEAR } from "../core/constants.ts";
+import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR } from "../core/constants.ts";
 import { formatDate } from "../core/time.ts";
 import { length } from "../core/math/vec3.ts";
 import { el, button, kv, setDisabled, numberField, compactField, formatDur } from "./dom.ts";
@@ -649,6 +651,7 @@ export class ShipPanel {
         kv("Body", `${body.name} (${body.atmosphere ? "atmosphere" : "airless"})`) +
         kv("Descent Δv", `${(desc.dvTotal / 1000).toFixed(2)} km/s`) +
         (body.atmosphere ? kv("Aerobraking", `${(desc.aerobrakeFraction * 100).toFixed(0)}% shed for free`) : "") +
+        (body.atmosphere ? entryHeatRows(body, desc.vOrbit) : "") +
         kv("Land propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
         (canLand ? `<div class="ok">✓ can land</div>` : `<div class="warn">✗ insufficient Δv to land</div>`);
       setDisabled(this.landBtn, !canLand, "Insufficient Δv to land.");
@@ -691,4 +694,20 @@ function fmtPower(w: number): string {
 function fmtRange(m: number): string {
   if (m < 1e9) return `${(m / 1e3).toLocaleString("en-US", { maximumFractionDigits: 0 })} km`;
   return `${(m / 1.495978707e11).toFixed(3)} AU`;
+}
+
+/** Heat/decel budget of a nominal blunt-body entry, for the descent readout: a
+ *  representative entry vehicle decelerating from orbital speed at a 6° corridor
+ *  angle. Display-only — the land/launch commands still budget aerobraking via
+ *  descentBudget. */
+function entryHeatRows(body: BodyDef, vOrbit: number): string {
+  const vehicle: EntryVehicle = { noseRadius: 2, ballisticCoef: DEFAULT_ENTRY_BETA, emissivity: 0.85 };
+  const e = entryTrajectory(body, vehicle, { entrySpeed: vOrbit, flightPathAngle: 6 * DEG });
+  if (!e) return "";
+  return (
+    kv("Peak decel", `${e.peakDecelG.toFixed(1)} g`) +
+    kv("Peak heat flux", `${(e.peakHeatFlux / 1e6).toFixed(1)} MW/m²`) +
+    kv("Wall temp", `${e.peakWallTemp.toFixed(0)} K`) +
+    kv("Heat load", `${(e.heatLoad / 1e6).toFixed(0)} MJ/m²`)
+  );
 }

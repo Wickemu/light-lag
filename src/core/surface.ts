@@ -73,8 +73,9 @@ const DEFAULT_EXHAUST_VELOCITY = 3334; // m/s (Isp ≈ 340 s, kerolox upper-stag
  *  is slender/dense (high β ⇒ little drag loss). Documented calibration. */
 const DEFAULT_ASCENT_BETA = 4000;
 /** Ballistic coefficient for an ENTRY vehicle (kg/m²) — blunt, high-drag, so the
- *  atmosphere sheds far more of the orbital energy than a slender ascent body. */
-const DEFAULT_ENTRY_BETA = 150;
+ *  atmosphere sheds far more of the orbital energy than a slender ascent body.
+ *  Shared with the entry-heating model (maneuver/entry.ts) so both use one number. */
+export const DEFAULT_ENTRY_BETA = 150;
 
 export interface AscentParams {
   /** Target circular parking-orbit altitude above the surface (m). */

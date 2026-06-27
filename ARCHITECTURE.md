@@ -63,6 +63,7 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 | `maneuver/flyby.ts` | Patched-conic gravity-flyby geometry (vₓ in/out rotation, turn angle, periapsis) + B-plane aim (`bPlaneAim`: free-bend hyperbola e/rp, impact parameter, B-vector/plane-normal). |
 | `maneuver/assist.ts` | Gravity-assist solver: a two-leg single-flyby plan (`assistTransfer`) with grid search for the cheapest window, and an N-body multi-flyby chain (`chainAssist`, e.g. V-E-E-G-A) over a fixed schedule. |
 | `maneuver/lowThrust.ts` | Edelbaum analytic spiral: exact Δv/time/propellant for a power-limited electric transfer between near-circular orbits (and coplanar inclination change), plus capture/escape spirals about a single body's well (the r→∞ limit, Δv = local circular speed). |
+| `maneuver/entry.ts` | Ballistic atmospheric-entry trajectory (RK4 through the exponential atmosphere): peak deceleration, Sutton-Graves convective stagnation heat flux, radiative-equilibrium wall temperature, integrated heat load, and land/capture/skip-out outcome; plus single-pass aerocapture (bisection on the entry corridor) with the Δv saved vs a propulsive capture burn. |
 | `maneuver/interstellar.ts` | Relativistic brachistochrone (flip-and-burn): rapidity rocket equation, coordinate/proper time, peak Lorentz factor, mass ratio, light-lag. |
 
 ### Engine contract
