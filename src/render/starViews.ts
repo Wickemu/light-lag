@@ -59,19 +59,66 @@ export function makeStarTexture(): THREE.Texture {
   return tex;
 }
 
-/** Rough display colour from spectral class (OBAFGKM → blue…red). */
-export function spectralColor(sp: string): number {
-  const c = sp.charAt(0).toUpperCase();
-  switch (c) {
-    case "O": case "B": return 0xaecbff;
-    case "A": return 0xdce6ff;
-    case "F": return 0xfff4e8;
-    case "G": return 0xfff2c2;
-    case "K": return 0xffd6a0;
-    case "M": return 0xff9d6e;
-    case "D": return 0xeaf2ff; // white dwarf
-    default: return 0xdfe6ff; // brown dwarf / unknown
+/**
+ * Effective temperature (K) from a spectral type string (e.g. "G2V", "M5.5Ve",
+ * "A1V", "DA2"). Read the leading class letter and its numeric subclass and
+ * interpolate within the class's main-sequence temperature range (subclass 0 =
+ * the hot end, 9 = the cool end). White dwarfs (class D) encode temperature as
+ * Teff ≈ 50400/n after the composition letters. A documented approximation —
+ * luminosity class is ignored — but far closer to real stellar colour than a
+ * seven-bucket switch.
+ */
+export function spectralTeff(sp: string): number {
+  const s = sp.toUpperCase();
+  // White dwarf: "D" + composition letters, then a temperature index n.
+  if (s.startsWith("D")) {
+    const m = s.match(/(\d+(?:\.\d+)?)/);
+    const n = m ? parseFloat(m[1]!) : 5;
+    return n > 0 ? Math.min(80000, Math.max(4000, 50400 / n)) : 10000;
   }
+  // [hot end, cool end] in K for each main-sequence class.
+  const RANGES: Record<string, [number, number]> = {
+    O: [50000, 30000], B: [30000, 10000], A: [10000, 7500], F: [7500, 6000],
+    G: [6000, 5200], K: [5200, 3700], M: [3700, 2400], L: [2400, 1300],
+    T: [1300, 600], Y: [600, 400],
+  };
+  const cls = s.charAt(0);
+  const range = RANGES[cls];
+  if (!range) return 5800; // unknown → sun-like
+  const sub = s.match(/^[A-Z]+(\d(?:\.\d)?)/);
+  const f = sub ? Math.min(9, parseFloat(sub[1]!)) / 9 : 0.5;
+  return range[0] + (range[1] - range[0]) * f;
+}
+
+/** Blackbody colour (linear-ish sRGB, 0..1) for a temperature in kelvin, via the
+ *  widely used piecewise approximation. Hot stars read blue-white, the Sun warm
+ *  white, cool dwarfs orange-red — the real colour of a thermal emitter. */
+export function blackbodyRGB(kelvin: number): { r: number; g: number; b: number } {
+  const t = Math.min(40000, Math.max(1000, kelvin)) / 100;
+  const cl = (x: number): number => Math.min(255, Math.max(0, x)) / 255;
+  let r: number, g: number, b: number;
+  r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592);
+  g = t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661
+              : 288.1221695283 * Math.pow(t - 60, -0.0755148492);
+  b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+  return { r: cl(r), g: cl(g), b: cl(b) };
+}
+
+/** Display colour (hex) from spectral type, via Teff → blackbody. Kept for the
+ *  interstellar map; the in-system sky uses the float RGB directly for HDR. */
+export function spectralColor(sp: string): number {
+  const { r, g, b } = blackbodyRGB(spectralTeff(sp));
+  return (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
+}
+
+/** Apparent (bolometric) magnitude from luminosity (L☉) and distance (ly). The
+ *  Sun's M_bol ≈ 4.74 sets the zero point; 1 pc = 3.2616 ly. Bolometric (not
+ *  visual) — a documented approximation that slightly over-brightens the very
+ *  red dwarfs, but gives correct relative ordering across the catalogue. */
+export function apparentMagnitude(luminositySun: number, distanceLy: number): number {
+  const dPc = Math.max(distanceLy, 1e-3) / 3.2616;
+  const absMag = 4.74 - 2.5 * Math.log10(Math.max(luminositySun, 1e-9));
+  return absMag + 5 * Math.log10(dPc) - 5;
 }
 
 interface StarVisual {
@@ -93,13 +140,28 @@ export class StarViews {
   }
 
   private build(def: StarDef): void {
+    // Size and brightness from the star's real apparent magnitude: brighter
+    // (more negative m) → a bigger, hotter sprite. Magnitude is already a log of
+    // flux, so we map it linearly between a bright and a faint reference and floor
+    // it so even the faint red/brown dwarfs stay visible as navigation targets.
+    const m = apparentMagnitude(def.luminosity, def.distanceLy);
+    const M_BRIGHT = -2, M_FAINT = 8;
+    const f = Math.min(1, Math.max(0, (M_FAINT - m) / (M_FAINT - M_BRIGHT)));
+    const SMIN = 0.007, SMAX = 0.03;
+    const scale = (SMIN + f * (SMAX - SMIN)) * (def.parentId ? 0.82 : 1);
+    // HDR colour: the blackbody tint lifted by an intensity that rises with
+    // brightness, so the luminous primaries (Sirius, α Cen) push over 1.0 and
+    // bloom while the dwarfs stay dim.
+    const c = blackbodyRGB(spectralTeff(def.spectralType));
+    const gain = 0.6 + f * 1.7;
     const mat = new THREE.SpriteMaterial({
-      map: this.tex, color: spectralColor(def.spectralType),
+      map: this.tex,
+      color: new THREE.Color().setRGB(c.r * gain, c.g * gain, c.b * gain),
       sizeAttenuation: false, depthWrite: false, transparent: true,
+      blending: THREE.AdditiveBlending,
     });
     const marker = new THREE.Sprite(mat);
-    // Brighter/bigger for luminous primaries; components share a position.
-    marker.scale.setScalar(def.parentId ? 0.012 : 0.02);
+    marker.scale.setScalar(scale);
     marker.frustumCulled = false;
     this.sm.scene.add(marker);
 
