@@ -46,7 +46,7 @@ Physics: electric thrusters are power-limited, F = 2ηP/v_e, and a solar array's
 
 `j2Rates` (orbit.ts:77-85) computes nodeDot = −1.5·f·cos i and periDot = 0.75·f·(5cos²i−1) where the prefactor f is strictly linear in J2, so a 0.27% error in J2 produces a 0.27% error in the secular nodal/apsidal precession of any Jovian moon orbit using this constant. By comparison Jupiter's μ relative error is ~8e-9, making J2 the least accurate of the audited constants (~5–6 orders of magnitude worse than μ). Both values are literature-attested, so physical impact is minor, but there is no code comment marking the legacy value as an intentional scope choice — this is genuine data-currency staleness.
 
-Secondary observation (not part of the finding): J2 is conventionally referenced to Jupiter's equatorial radius (~71492 km Juno), but `j2Rates` is fed the body's mean radius field 6.9911e7 m. That is a separate, smaller modeling inconsistency.
+Secondary observation (not part of the finding): J2 is conventionally referenced to Jupiter's equatorial radius (~71492 km Juno), but `j2Rates` is fed the body's mean radius field 6.9911e7 m. That is a separate, smaller modeling inconsistency. **(Resolved in a later pass — see §3.6.)**
 
 **Refined expected:** Jupiter J2 = 0.0146965 (14696.514e-6, Iess et al. 2018) rather than the Voyager-era 0.014736. The ~0.27% discrepancy propagates linearly into Jovian-moon nodal/apsidal precession via `j2Rates`. (Independently, J2 is referenced to Jupiter's equatorial radius ~71492 km, not the 69911 km mean radius the code passes in — a separate minor point.)
 
@@ -82,6 +82,19 @@ Severity downgraded from major. The finding's premise that a sign error "would p
 
 **Refined expected:** Add a hyperbolic round-trip block to kepler.test.ts mirroring the elliptic cases (e.g. {a:−1.2·AU, e:1.2}, {a:−0.5·AU, e:3.0}) asserting elementsToState→stateToElements recovers a,e,i,Ω,ω,M. The code is correct (machine-precision round-trip), so this is test-coverage hardening, not a bug fix — minor severity, since the branch is already indirectly validated by integration tests B2b and B3.
 
+### 3.6 j2-mean-vs-equatorial-radius (minor, imprecise) — RESOLVED
+
+Follow-up pass on the §3.2 "secondary observation". `j2Rates`/`sunSyncInclination` take a reference radius `R`, and the rate prefactor `f = n·J2·(R/p)²` is quadratic in `R`. By convention J2 is normalized to a body's **equatorial** radius, but every call site (`ships.ts` coastElements, `arrival.ts` parent-frame Lambert, `sim.ts` impactTime, `shipPanel.ts` readout) passed the body's **mean** `radius`. The resulting error in every secular rate (node/apsides/anomaly) is `(R_eq/R_mean)² − 1`: ~+0.22% Earth, +0.40% Mars, **+4.57% Jupiter, +7.12% Saturn**, +1.6% Uranus, +1.2% Neptune. The gas-giant errors directly biased the J2-aware parent-centric moon-transfer aim — a shipped feature.
+
+**Resolution:** added an optional `equatorialRadius?` to `BodyDef` (set on the 9 J2 bodies to IAU/JPL values) plus a `j2RefRadius(body) = body.equatorialRadius ?? body.radius` helper, and switched every J2 call site to it. Mean `radius` is unchanged for surface gravity, SOI, escape velocity, altitudes, and rendering. New `j2.test.ts` cases pin the equatorial-radius behaviour (Saturn ~7.1%, Jupiter ~4.6%) and enforce `equatorialRadius ≥ radius` for any J2 body. Golden hash unaffected (the golden scenario is impulsive; the change only alters precessing-orbit numbers, not its serialized state).
+
+### 3.7 Completeness additions (not defects) — Doppler & in-system burn proper time
+
+Two additive improvements raised by a later "completeness" pass, both consistent with the SR-only / one-inertial-frame design:
+
+- **Relativistic Doppler of signals (new).** The engine modelled signal *timing* (retarded position, propagation delay) but never signal *frequency* — a gap for a game named "light-lag". Added pure `dopplerFactor`/`redshiftZ`/`shiftedWavelength` to `comms.ts` (both-moving form `f_obs/f_emit = [γ_O(1−n̂·β_O)]/[γ_E(1−n̂·β_E)]`, exact in the heliocentric inertial frame, carrying transverse Doppler), a read-time `shipTelemetryDoppler` helper, and a flight-console readout. Display-only: no `WorldState`/golden-hash change.
+- **In-system relativistic burn proper time (was the out-of-scope item in §4).** The in-sim finite-thrust integrator is special-relativistic, but crew τ accrued *coordinate* time during a powered in-system burn. Now each thrust segment refunds the dilation deficit (`segTau − seg`) in `advanceThrustShip`/`advanceBoosteredSegment`, so τ dilates on a relativistic in-system burn. A no-op to f64 at the sub-relativistic speeds every preset flies (golden hash unchanged); it only matters for an exotic relativistic in-system torch burn.
+
 ## 4. Gaps & Scope
 
 Three of the five surviving findings are `gap`-category. Their omissions split cleanly between non-trivial undocumented assumptions and legitimate scope boundaries:
@@ -92,7 +105,7 @@ Three of the five surviving findings are `gap`-category. Their omissions split c
 
 - **hyperbolic-coe2rv-untested** — *coverage hardening of already-correct code.* The hyperbolic conversion is correct to machine precision and is indirectly exercised by capture/flyby integration tests at every interplanetary arrival. The gap is purely about failure localization and direct coverage of the M-reconstruction term, not about any latent incorrectness.
 
-Separately, the broader relativistic-domain omissions noted in the audit summary — GR/gravitational time dilation, relativistic Doppler/aberration, relativistic collision momentum/energy, in-system finite-thrust relativistic correction — are all explicitly documented as out-of-scope in `ROADMAP.md`, consistent with the stated SR-only, in-system-Newtonian design. These are legitimate scope boundaries, not defects, and were not raised as findings.
+Separately, the broader relativistic-domain omissions noted in the audit summary — GR/gravitational time dilation, light aberration, relativistic collision momentum/energy — remain legitimate scope boundaries, not defects. Two formerly-listed here have since been addressed (see §3.7): the **relativistic Doppler** of signals (added as a display-only layer) and the **in-system finite-thrust relativistic proper-time** correction (crew τ now dilates during a relativistic in-system burn). Light *aberration* of the apparent position (distinct from Doppler) is still unmodelled and remains a candidate completeness item.
 
 ## 5. Confirmed Correct (Appendix)
 

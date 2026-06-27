@@ -48,13 +48,15 @@ import {
   shipWorldState,
   shipThermalState,
   shipEntryReadout,
+  shipTelemetryDoppler,
+  type TelemetryDoppler,
   primaryMu,
 } from "../core/ships.ts";
 import { summarizeOrbit, periapsisRadius, orbitalPeriod, j2Rates } from "../core/orbit.ts";
 import { bodyPosition } from "../core/ephemeris.ts";
-import { retardedTime } from "../core/comms.ts";
+import { retardedTime, shiftedWavelength } from "../core/comms.ts";
 import { STAR_BY_ID } from "../core/stars.ts";
-import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR } from "../core/constants.ts";
+import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR, IR_BAND_WAVELENGTH, j2RefRadius } from "../core/constants.ts";
 import { formatDate } from "../core/time.ts";
 import { length } from "../core/math/vec3.ts";
 import { el, button, kv, setDisabled, numberField, compactField, formatDur } from "./dom.ts";
@@ -565,6 +567,8 @@ export class ShipPanel {
 
     const lines: string[] = [];
     lines.push(kv("Signal delay (1-way)", fmtDelay(age)));
+    const dop = shipTelemetryDoppler(ship, this.sim.world.controlNode, t);
+    if (dop) lines.push(kv("Telemetry Doppler", fmtDoppler(dop)));
     if (ship.primary === "sun") {
       // Heliocentric (in/after a transfer): show distance from the Sun, not an
       // altitude above the Sun's surface.
@@ -578,7 +582,7 @@ export class ShipPanel {
       lines.push(kv("Period", sum.bound ? formatDur(sum.period) : "—"));
       // J2 oblateness precession (the plane and apsides slowly rotate).
       if (sum.bound && primary.J2) {
-        const r = j2Rates(mu, primary.radius, primary.J2, el.a, el.e, el.i);
+        const r = j2Rates(mu, j2RefRadius(primary), primary.J2, el.a, el.e, el.i);
         lines.push(kv("Node precession", `${(r.nodeDot * RAD * DAY).toFixed(3)}°/day`));
         lines.push(kv("Apsidal precession", `${(r.periDot * RAD * DAY).toFixed(3)}°/day`));
       }
@@ -824,6 +828,17 @@ function fmtDelay(s: number): string {
   if (s < 90) return `${s.toFixed(0)} s`;
   if (s < 5400) return `${(s / 60).toFixed(1)} min`;
   return `${(s / 3600).toFixed(2)} hr`;
+}
+
+/** The telemetry Doppler shift: redshift z (scientific for the tiny in-system
+ *  values, decimal for a relativistic torchship) and where the 10 µm sensing band
+ *  lands when the signal arrives. z > 0 reddens (receding), z < 0 blues. */
+function fmtDoppler(d: TelemetryDoppler): string {
+  const word = d.z > 0 ? "redshift" : d.z < 0 ? "blueshift" : "none";
+  const zStr = Math.abs(d.z) >= 1e-3 ? d.z.toFixed(3) : d.z.toExponential(1);
+  const sign = d.z >= 0 ? "+" : "";
+  const lamObs = (shiftedWavelength(IR_BAND_WAVELENGTH, d.factor) * 1e6).toFixed(2); // µm
+  return `z ${sign}${zStr} (${word}) · 10 → ${lamObs} µm`;
 }
 
 function fmtPower(w: number): string {

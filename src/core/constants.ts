@@ -143,6 +143,14 @@ export interface BodyDef {
    *  drives the secular nodal/apsidal precession of orbits about this body
    *  (orbit.ts j2Rates). Absent ⇒ the body is treated as a point/sphere. */
   J2?: number;
+  /** Equatorial radius (m) — the reference radius J2 is conventionally normalized
+   *  to (j2Rates / sunSyncInclination, via j2RefRadius). DISTINCT from `radius`
+   *  (the mean radius). Only meaningful for, and only set on, bodies that carry a
+   *  J2; falls back to mean `radius` when absent. Do NOT use it for surface
+   *  gravity, SOI, escape velocity, altitudes, or rendering — those use mean
+   *  `radius`. For an oblate giant (Jupiter/Saturn) equatorial exceeds mean by
+   *  several %, and the J2 rate (∝ R²) is wrong by ~5–7% if fed the mean radius. */
+  equatorialRadius?: number;
 }
 
 // JPL Standish elements, valid 1800 AD – 2050 AD (no extra correction terms).
@@ -154,7 +162,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "mercury", name: "Mercury", parent: "sun", mu: 2.2032e13, radius: 2.4397e6,
     kind: "planet", color: 0xa6855a,
-    rotationPeriod: 5067360, hasSurface: true, J2: 5.03e-5, // 58.646 d; trace exosphere ⇒ airless
+    rotationPeriod: 5067360, hasSurface: true, J2: 5.03e-5, equatorialRadius: 2440500, // 58.646 d; trace exosphere ⇒ airless
     standish: {
       a: 0.38709927, aDot: 0.00000037, e: 0.20563593, eDot: 0.00001906,
       i: 7.00497902, iDot: -0.00594749, L: 252.25032350, LDot: 149472.67411175,
@@ -164,7 +172,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "venus", name: "Venus", parent: "sun", mu: 3.24859e14, radius: 6.0518e6,
     kind: "planet", color: 0xd9b38c,
-    rotationPeriod: -20996760, hasSurface: true, J2: 4.458e-6, // retrograde, 243.025 d
+    rotationPeriod: -20996760, hasSurface: true, J2: 4.458e-6, equatorialRadius: 6051800, // retrograde, 243.025 d (Venus is near-spherical: eq ≈ mean)
     atmosphere: { surfacePressure: 9.2e6, surfaceDensity: 65, scaleHeight: 15900 },
     standish: {
       a: 0.72333566, aDot: 0.00000390, e: 0.00677672, eDot: -0.00004107,
@@ -175,7 +183,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "earth", name: "Earth", parent: "sun", mu: 3.986004418e14, radius: 6.371e6,
     kind: "planet", color: 0x4a90d9,
-    rotationPeriod: 86164.0905, hasSurface: true, J2: 1.08263e-3, // sidereal day
+    rotationPeriod: 86164.0905, hasSurface: true, J2: 1.08263e-3, equatorialRadius: 6378137, // sidereal day; eq radius WGS84
     atmosphere: { surfacePressure: 101325, surfaceDensity: 1.225, scaleHeight: 8500 },
     // Standish "EM Bary" row; we treat it as Earth (the Earth–barycentre offset
     // of ~4670 km is far below visual relevance at 1 AU).
@@ -188,7 +196,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "moon", name: "Moon", parent: "earth", mu: 4.9028e12, radius: 1.7374e6,
     kind: "moon", color: 0x9a9a9a,
-    rotationPeriod: 2360591.5, hasSurface: true, J2: 2.034e-4, // synchronous, 27.321661 d
+    rotationPeriod: 2360591.5, hasSurface: true, J2: 2.034e-4, equatorialRadius: 1738100, // synchronous, 27.321661 d
     // Mean precessing elements; a physically valid two-body Moon (perturbations
     // neglected — it will drift over years but is correct in character).
     moon: {
@@ -201,7 +209,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "mars", name: "Mars", parent: "sun", mu: 4.282837e13, radius: 3.3895e6,
     kind: "planet", color: 0xc1440e,
-    rotationPeriod: 88642.66, hasSurface: true, J2: 1.96045e-3, // 24.6229 h
+    rotationPeriod: 88642.66, hasSurface: true, J2: 1.96045e-3, equatorialRadius: 3396200, // 24.6229 h
     atmosphere: { surfacePressure: 610, surfaceDensity: 0.020, scaleHeight: 11100 },
     standish: {
       a: 1.52371034, aDot: 0.00001847, e: 0.09339410, eDot: 0.00007882,
@@ -212,7 +220,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "jupiter", name: "Jupiter", parent: "sun", mu: 1.26686534e17, radius: 6.9911e7,
     kind: "planet", color: 0xd8a878,
-    rotationPeriod: 35730, hasSurface: false, J2: 0.0146965, // 9.925 h; no solid surface. J2 from Juno (Iess et al. 2018)
+    rotationPeriod: 35730, hasSurface: false, J2: 0.0146965, equatorialRadius: 71492000, // 9.925 h; no solid surface. J2 from Juno (Iess et al. 2018), referenced to eq radius 71492 km
     standish: {
       a: 5.20288700, aDot: -0.00011607, e: 0.04838624, eDot: -0.00013253,
       i: 1.30439695, iDot: -0.00183714, L: 34.39644051, LDot: 3034.74612775,
@@ -222,7 +230,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "saturn", name: "Saturn", parent: "sun", mu: 3.7931187e16, radius: 5.8232e7,
     kind: "planet", color: 0xead6a8,
-    rotationPeriod: 38362, hasSurface: false, J2: 0.016298, // 10.656 h; no solid surface
+    rotationPeriod: 38362, hasSurface: false, J2: 0.016298, equatorialRadius: 60268000, // 10.656 h; no solid surface; J2 ref eq radius 60268 km
     standish: {
       a: 9.53667594, aDot: -0.00125060, e: 0.05386179, eDot: -0.00050991,
       i: 2.48599187, iDot: 0.00193609, L: 49.95424423, LDot: 1222.49362201,
@@ -232,7 +240,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "uranus", name: "Uranus", parent: "sun", mu: 5.793939e15, radius: 2.5362e7,
     kind: "planet", color: 0x9fd8e0,
-    rotationPeriod: -62064, hasSurface: false, J2: 0.003343, // retrograde, 17.24 h; no solid surface
+    rotationPeriod: -62064, hasSurface: false, J2: 0.003343, equatorialRadius: 25559000, // retrograde, 17.24 h; no solid surface
     standish: {
       a: 19.18916464, aDot: -0.00196176, e: 0.04725744, eDot: -0.00004397,
       i: 0.77263783, iDot: -0.00242939, L: 313.23810451, LDot: 428.48202785,
@@ -242,7 +250,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "neptune", name: "Neptune", parent: "sun", mu: 6.836529e15, radius: 2.4622e7,
     kind: "planet", color: 0x4f7cdb,
-    rotationPeriod: 57996, hasSurface: false, J2: 0.003411, // 16.11 h; no solid surface
+    rotationPeriod: 57996, hasSurface: false, J2: 0.003411, equatorialRadius: 24764000, // 16.11 h; no solid surface
     standish: {
       a: 30.06992276, aDot: 0.00026291, e: 0.00859048, eDot: 0.00005105,
       i: 1.77004347, iDot: 0.00035372, L: -55.12002969, LDot: 218.45945325,
@@ -494,5 +502,14 @@ export const BODIES: BodyDef[] = [
     moon: { a: 6.771e6, e: 0.0005, i: 41.47, node: 200.0, nodeDot: -6.043164, peri: 130.0, periDot: 7.287870, M0: 300.0, MDot: 5609.524408 },
   },
 ];
+
+/** The reference radius the J2 secular rates are normalized to: a body's
+ *  EQUATORIAL radius by convention, falling back to the mean `radius` when none is
+ *  recorded. Use ONLY for J2 (orbit.ts j2Rates / sunSyncInclination); the mean
+ *  `radius` remains correct for surface gravity, SOI, escape velocity, altitudes,
+ *  and rendering. Structurally typed (not BodyDef) so callers can pass any body. */
+export function j2RefRadius(body: { radius: number; equatorialRadius?: number }): number {
+  return body.equatorialRadius ?? body.radius;
+}
 
 export const BODY_BY_ID: Map<string, BodyDef> = new Map(BODIES.map((b) => [b.id, b]));

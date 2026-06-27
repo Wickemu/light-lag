@@ -36,6 +36,49 @@ export function lightTime(a: Vec3, b: Vec3): number {
 }
 
 /**
+ * The Doppler factor f_obs/f_emit of a signal sent from `fromPos` (emitter moving
+ * at `vEmit`) to `toPos` (observer moving at `vObs`), all in the SAME inertial
+ * frame — which is exactly what the whole sim is (heliocentric ecliptic-J2000). So
+ * the fully relativistic both-moving form is just the ratio of each body's
+ * frequency measured against the global photon, with n̂ the propagation direction
+ * (emitter → observer) and β = v/c:
+ *
+ *   f_obs / f_emit = [γ_obs (1 − n̂·β_obs)] / [γ_emit (1 − n̂·β_emit)],  γ = 1/√(1−β²)
+ *
+ * < 1 ⇒ redshift (receding), > 1 ⇒ blueshift (approaching). The γ factors carry
+ * the TRANSVERSE Doppler, so a torchship crossing the line of sight still reddens
+ * by 1/γ even with zero radial speed. Reduces to the classical 1 − v_rel·n̂/c at
+ * v ≪ c. Pure SI; |v| is clamped just below c so γ stays finite for a torchship.
+ */
+export function dopplerFactor(vEmit: Vec3, vObs: Vec3, fromPos: Vec3, toPos: Vec3): number {
+  const dx = toPos.x - fromPos.x, dy = toPos.y - fromPos.y, dz = toPos.z - fromPos.z;
+  const d = Math.hypot(dx, dy, dz);
+  if (d === 0) return 1; // coincident: no line of sight to project onto
+  const nx = dx / d, ny = dy / d, nz = dz / d;
+  const c2 = C * C;
+  // Each body's frequency relative to the global photon: γ(1 − n̂·β).
+  const term = (v: Vec3): number => {
+    const v2 = v.x * v.x + v.y * v.y + v.z * v.z;
+    const gamma = 1 / Math.sqrt(1 - Math.min(v2, c2 * (1 - 1e-12)) / c2);
+    const nDotBeta = (nx * v.x + ny * v.y + nz * v.z) / C;
+    return gamma * (1 - nDotBeta);
+  };
+  return term(vObs) / term(vEmit);
+}
+
+/** Redshift z = Δλ/λ from a Doppler factor (f_obs/f_emit): z = 1/factor − 1.
+ *  z > 0 is a redshift (receding), z < 0 a blueshift (approaching). */
+export function redshiftZ(factor: number): number {
+  return factor > 0 ? 1 / factor - 1 : Infinity;
+}
+
+/** Observed wavelength (m) of an emitted-rest wavelength `lambda` under a Doppler
+ *  factor: λ_obs = λ_emit / factor (frequency and wavelength shift inversely). */
+export function shiftedWavelength(lambda: number, factor: number): number {
+  return factor > 0 ? lambda / factor : Infinity;
+}
+
+/**
  * Close a bracket [a, b] with f(a) ≤ 0 ≤ f(b) on the strictly-increasing residual
  * `f` to within TOL in time. Illinois-modified regula falsi: a secant step guarded
  * by the bracket, halving the stale endpoint's value so the bracket always shrinks

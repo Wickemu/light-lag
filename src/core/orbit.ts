@@ -91,6 +91,9 @@ export interface J2Rates {
   anomalyDot: number; // secular Ṁ from J2 (rad/s)
 }
 
+/** `R` is the body's EQUATORIAL radius — the reference J2 is conventionally
+ *  normalized to (the rate prefactor is ∝ R², so a mean radius is wrong by several
+ *  % for an oblate giant). Callers pass `j2RefRadius(body)` (constants.ts). */
 export function j2Rates(mu: number, R: number, J2: number, a: number, e: number, i: number): J2Rates {
   if (!J2 || a <= 0 || e >= 1) return { nodeDot: 0, periDot: 0, anomalyDot: 0 };
   const n = Math.sqrt(mu / (a * a * a)); // mean motion
