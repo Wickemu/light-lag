@@ -11,6 +11,7 @@
  */
 
 import { type Simulation } from "../core/sim.ts";
+import { type Ship } from "../core/world.ts";
 import { type SceneManager } from "../render/SceneManager.ts";
 import { type TrajectoryViews } from "../render/trajectoryViews.ts";
 import { computePorkchop, type Porkchop, type PorkCell } from "../core/maneuver/porkchop.ts";
@@ -19,8 +20,10 @@ import { type Criterion } from "../core/maneuver/criteria.ts";
 import {
   suggestRoutes, transferWindow, bestAssist, bestChain, bestPorkCell, type SuggestedRoute,
 } from "../core/maneuver/suggest.ts";
-import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, searchMoonWindow, aerocapturePreview, captureDvPreview, assistCapturePreview, looseCaptureApoAlt, type MoonWindow } from "../app/commands.ts";
+import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, planMoonTour, searchMoonWindow, searchMoonTour, aerocapturePreview, captureDvPreview, assistCapturePreview, looseCaptureApoAlt, type MoonWindow, type MoonTourResult } from "../app/commands.ts";
 import { dvRemaining, shipWorldState, shipOsculatingElements, shipRelativeState } from "../core/ships.ts";
+import { bodyStateRelative } from "../core/ephemeris.ts";
+import { length } from "../core/math/vec3.ts";
 import { periapsisRadius } from "../core/orbit.ts";
 import { formatDate } from "../core/time.ts";
 import { type BodyDef, type BodyKind, BODIES, BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
@@ -47,6 +50,8 @@ const GROUPS: { kind: BodyKind; label: string }[] = [
 ];
 
 type RouteMode = "direct" | "suggest" | "via1" | "via2";
+/** Same-parent moon arrival: a single Direct hop, or a Flyby tour past sibling moons (pump-down). */
+type MoonMode = "direct" | "tour";
 /** Propulsive low-circular capture · propulsive loose-ellipse capture (Oberth-cheap) · aerocapture. */
 type CaptureMode = "propulsive" | "elliptical" | "aerocapture";
 
@@ -83,6 +88,13 @@ export class TransferPanel {
   private modeRow!: HTMLElement;
   private moonPlan: MoonWindow | null = null;
   private modeBtns: Partial<Record<RouteMode, HTMLButtonElement>> = {};
+  // Moon-target sub-mode: a single Direct hop, or a gravity-assist Flyby tour past sibling moons.
+  private moonModeRow!: HTMLElement;
+  private moonModeBtns: Partial<Record<MoonMode, HTMLButtonElement>> = {};
+  private moonTourEl!: HTMLElement;
+  private moonMode: MoonMode = "direct";
+  private moonTours: { flybyMoonIds: string[]; result: MoonTourResult }[] = [];
+  private selectedTour: { flybyMoonIds: string[]; result: MoonTourResult } | null = null;
 
   private captureMode: CaptureMode = "propulsive";
   private routeMode: RouteMode = "direct";
@@ -128,6 +140,24 @@ export class TransferPanel {
   private isMoonTarget(): boolean {
     const b = BODY_BY_ID.get(this.targetId);
     return !!b && b.kind === "moon" && b.parent === this.originId();
+  }
+
+  /** The OTHER moons of the ship's current parent (potential gravity-assist bodies for a tour to
+   *  `targetId`), outer-first so the natural pump-down order is offered first. */
+  private siblingMoons(): BodyDef[] {
+    const parent = this.originId();
+    const t0 = this.sim.world.t;
+    return BODIES
+      .filter((b) => b.kind === "moon" && b.parent === parent && b.id !== this.targetId)
+      .map((b) => ({ b, r: length(bodyStateRelative(b, t0).r) }))
+      .sort((a, z) => z.r - a.r)
+      .map((x) => x.b);
+  }
+
+  /** A flyby tour is offered only when the target is a same-parent moon and the parent has ≥2
+   *  other moons to slingshot past. */
+  private canMoonTour(): boolean {
+    return this.isMoonTarget() && this.siblingMoons().length >= 2;
   }
 
   /** A cross-system two-stage mission: the moon's parent is a heliocentric planet we're not at
@@ -282,6 +312,17 @@ export class TransferPanel {
     }
     this.panel.appendChild(this.modeRow);
 
+    // Moon sub-mode — Direct hop / Flyby tour (shown only when the ship is at the moon's parent
+    // AND that parent has ≥2 other moons to slingshot past).
+    this.moonModeRow = div("transfer-modes");
+    for (const [m, label] of [["direct", "Direct hop"], ["tour", "Flyby tour"]] as const) {
+      const b = btn(label, () => this.setMoonMode(m));
+      markTerm(b, label, { decorate: false });
+      this.moonModeBtns[m] = b;
+      this.moonModeRow.appendChild(b);
+    }
+    this.panel.appendChild(this.moonModeRow);
+
     // Flyby pickers (shown only in via1/via2).
     this.viaRow = div("transfer-head");
     this.viaRow.appendChild(sectionLabel("VIA FLYBY"));
@@ -328,7 +369,12 @@ export class TransferPanel {
       o.value = val; o.textContent = label;
       this.captureSel.appendChild(o);
     }
-    this.captureSel.onchange = () => { this.captureMode = this.captureSel.value as CaptureMode; this.updateReadout(); this.updatePreview(); };
+    this.captureSel.onchange = () => {
+      this.captureMode = this.captureSel.value as CaptureMode;
+      // A moon tour's search ranks by the chosen capture (the loose ellipse is cheaper), so re-search.
+      if (this.isMoonTarget() && this.moonMode === "tour") this.recomputeMoon();
+      else { this.updateReadout(); this.updatePreview(); }
+    };
     this.capRow.appendChild(this.captureSel);
     this.panel.appendChild(this.capRow);
 
@@ -344,6 +390,9 @@ export class TransferPanel {
 
     this.suggestEl = div("transfer-suggest");
     this.panel.appendChild(this.suggestEl);
+
+    this.moonTourEl = div("transfer-suggest");
+    this.panel.appendChild(this.moonTourEl);
 
     this.readout = div("transfer-readout");
     this.panel.appendChild(this.readout);
@@ -385,6 +434,12 @@ export class TransferPanel {
     }
     this.refreshSelects();
     this.recompute(); // recompute → layoutForTarget sets the per-mode control visibility
+  }
+
+  private setMoonMode(m: MoonMode): void {
+    this.moonMode = m;
+    for (const k of ["direct", "tour"] as MoonMode[]) this.moonModeBtns[k]?.classList.toggle("active", k === m);
+    this.recompute();
   }
 
   // ── Preview ──────────────────────────────────────────────────────────────────
@@ -437,29 +492,82 @@ export class TransferPanel {
   private layoutForTarget(): void {
     const moon = this.isMoonTarget();       // same-parent parent-centric hop
     const mission = this.isMoonMission();   // cross-system two-stage (heliocentric Stage 1)
+    const canTour = this.canMoonTour();     // the parent has ≥2 other moons to slingshot past
+    if (!canTour && this.moonMode !== "direct") this.moonMode = "direct";
+    const tour = moon && canTour && this.moonMode === "tour";
     // A same-parent hop hides every heliocentric control. A mission flies a Direct heliocentric
     // Stage-1 to the parent planet, so it keeps the porkchop + criterion + capture, but offers no
     // flyby/suggest variants (planMoonMission plans a direct Stage 1).
     this.modeRow.style.display = moon || mission ? "none" : "flex";
+    this.moonModeRow.style.display = moon && canTour ? "flex" : "none";
+    for (const k of ["direct", "tour"] as MoonMode[]) this.moonModeBtns[k]?.classList.toggle("active", k === this.moonMode);
     this.critRow.style.display = moon ? "none" : "flex";
     this.viaRow.style.display = !moon && !mission && (this.routeMode === "via1" || this.routeMode === "via2") ? "flex" : "none";
     this.via2Row.style.display = !moon && !mission && this.routeMode === "via2" ? "flex" : "none";
     // Capture mode applies to any heliocentric arrival — a direct transfer, a cross-system
-    // Stage-1, OR a gravity-assist/chain arrival (an assist into a giant captures the cheap
-    // elliptical way, like the real deep-well orbiters do).
-    this.capRow.style.display = !moon && (mission || this.routeMode !== "suggest") ? "flex" : "none";
+    // Stage-1, OR a gravity-assist/chain arrival — and to a moon flyby TOUR (circular vs the
+    // Oberth-cheap loose ellipse). A single direct moon hop keeps the simple v1 capture.
+    this.capRow.style.display = (!moon && (mission || this.routeMode !== "suggest")) || tour ? "flex" : "none";
     this.canvas.style.display = moon || (!mission && this.routeMode === "suggest") ? "none" : "block";
     this.suggestEl.style.display = !moon && !mission && this.routeMode === "suggest" ? "block" : "none";
+    this.moonTourEl.style.display = tour ? "block" : "none";
   }
 
   private recomputeMoon(): void {
     const ship = this.sim.world.ships.get(this.shipId!)!;
     const t0 = this.sim.world.t;
-    const aPark = shipOsculatingElements(ship, t0).a;
-    this.moonPlan = searchMoonWindow(ship.primary, this.targetId, t0, (t) => shipRelativeState(ship, t), aPark);
     this.pork = null; this.assist = null; this.chain = null;
-    this.traj.setPreviewRoute(null); // the parent-centric hop isn't drawn by the heliocentric overlay
+    this.traj.setPreviewRoute(null); // the parent-centric hop/tour isn't drawn by the heliocentric overlay
+    if (this.moonMode === "tour" && this.canMoonTour()) {
+      this.moonPlan = null;
+      this.computeMoonTours(ship, t0);
+    } else {
+      this.moonTours = []; this.selectedTour = null;
+      const aPark = shipOsculatingElements(ship, t0).a;
+      this.moonPlan = searchMoonWindow(ship.primary, this.targetId, t0, (t) => shipRelativeState(ship, t), aPark);
+    }
     this.updateReadout();
+  }
+
+  /** Search a curated set of sibling-moon flyby sequences (each outer moon alone, plus the two
+   *  outermost together — outer-first pumps the apoapsis down), rank by total Δv, keep the best few. */
+  private computeMoonTours(ship: Ship, t0: number): void {
+    const siblings = this.siblingMoons(); // outer-first
+    const seqs: string[][] = siblings.map((m) => [m.id]);
+    if (siblings.length >= 2) seqs.push([siblings[0]!.id, siblings[1]!.id]);
+    const apoAlt = this.captureApoAlt();
+    const shipState = (t: number) => shipRelativeState(ship, t);
+    const found: { flybyMoonIds: string[]; result: MoonTourResult }[] = [];
+    for (const seq of seqs) {
+      const r = searchMoonTour(ship.primary, seq, this.targetId, {
+        tDepart: t0, shipState, steps: 4, phaseSteps: 20, captureApoAlt: apoAlt,
+      });
+      if (r) found.push({ flybyMoonIds: seq, result: r });
+    }
+    found.sort((a, z) => a.result.dvTotal - z.result.dvTotal);
+    this.moonTours = found.slice(0, 4);
+    this.selectedTour = this.moonTours[0] ?? null;
+    this.renderMoonTours();
+  }
+
+  private renderMoonTours(): void {
+    this.moonTourEl.innerHTML = "";
+    if (this.moonTours.length === 0) {
+      this.moonTourEl.appendChild(div("transfer-readout", "No flyby tour found — try the Direct hop."));
+      return;
+    }
+    const cheapest = Math.min(...this.moonTours.map((t) => t.result.dvTotal));
+    this.moonTourEl.appendChild(div("section-label", "FLYBY TOURS — least Δv"));
+    for (const t of this.moonTours) {
+      const names = t.result.flybys.map((f) => BODY_BY_ID.get(f.moonId)!.name).join(" → ");
+      const row = btn(
+        `${names}  ·  ${(t.result.dvTotal / 1000).toFixed(2)} km/s  ·  ${((t.result.tArrive - t.result.tDepart) / DAY).toFixed(0)} d${t.result.dvTotal === cheapest ? "  (cheapest)" : ""}`,
+        () => { this.selectedTour = t; this.renderMoonTours(); this.updateReadout(); },
+      );
+      row.className = "suggest-row";
+      if (this.selectedTour === t) row.classList.add("active");
+      this.moonTourEl.appendChild(row);
+    }
   }
 
   private recompute(): void {
@@ -650,8 +758,50 @@ export class TransferPanel {
 
   // ── Readout + commit ─────────────────────────────────────────────────────────
 
+  /** Readout for the selected moon flyby tour: the per-flyby ledger + a whole-tour budget gate. */
+  private updateMoonTourReadout(ship: Ship): void {
+    const moon = BODY_BY_ID.get(this.targetId)!;
+    this.axisEl.innerHTML = `<span>${BODY_BY_ID.get(this.originId())?.name} orbit → ${moon.name} (flyby tour)</span>`;
+    // A moon has no atmosphere, so a tour captures propulsively — circular or a loose ellipse.
+    const aeroOpt = this.captureSel.querySelector('option[value="aerocapture"]') as HTMLOptionElement | null;
+    if (aeroOpt) aeroOpt.disabled = true;
+    if (this.captureMode === "aerocapture") { this.captureMode = "propulsive"; this.captureSel.value = "propulsive"; }
+    this.captureSel.disabled = false;
+
+    const sel = this.selectedTour;
+    if (!sel) {
+      this.readout.innerHTML = `No flyby tour to ${moon.name} found — try the Direct hop.`;
+      setDisabled(this.commitBtn, true, "No flyby tour found.");
+      return;
+    }
+    const r = sel.result;
+    const haveDv = dvRemaining(ship);
+    const loose = this.captureApoAlt() !== undefined;
+    const feasible = r.dvTotal <= haveDv;
+    this.readout.innerHTML =
+      kv("Tour", `via ${r.flybys.map((f) => BODY_BY_ID.get(f.moonId)!.name).join(" → ")}`) +
+      kv("Depart", formatDate(r.tDepart)) +
+      r.flybys.map((f) => kv(`Flyby ${BODY_BY_ID.get(f.moonId)!.name}`,
+        `${formatDate(f.t)} · ${(f.dvFlyby / 1000).toFixed(3)} km/s${f.unpowered ? " (free)" : ""}`)).join("") +
+      kv("Arrive", formatDate(r.tArrive)) +
+      kv("Flight time", `${((r.tArrive - r.tDepart) / DAY).toFixed(1)} days`) +
+      kv("Injection Δv", `${(r.dvDepart / 1000).toFixed(3)} km/s`) +
+      kv("Flyby Δv (total)", `${(r.dvFlybyTotal / 1000).toFixed(3)} km/s${r.unpowered ? " (all free)" : ""}`) +
+      kv("Capture Δv", `${(r.dvArrive / 1000).toFixed(3)} km/s${loose ? " (loose ellipse)" : " (circular)"}`) +
+      kv("Total Δv", `${(r.dvTotal / 1000).toFixed(3)} km/s`) +
+      kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+      (feasible ? `<div class="ok">✓ within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
+    setDisabled(this.commitBtn, !feasible, "Tour Δv exceeds the ship's budget.");
+  }
+
   private updateReadout(): void {
     const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
+
+    // Moon flyby tour: a parent-centric gravity-assist chain, costed by searchMoonTour.
+    if (this.isMoonTarget() && ship && this.moonMode === "tour" && this.canMoonTour()) {
+      this.updateMoonTourReadout(ship);
+      return;
+    }
 
     // Moon transfer: a single parent-centric hop, costed by searchMoonWindow.
     if (this.isMoonTarget() && ship) {
@@ -834,6 +984,12 @@ export class TransferPanel {
 
   private commit(): void {
     if (!this.shipId) return;
+    if (this.isMoonTarget() && this.moonMode === "tour" && this.selectedTour) {
+      const sel = this.selectedTour;
+      if (!planMoonTour(this.sim, this.shipId, sel.flybyMoonIds, this.targetId, sel.result.times, this.captureApoAlt())) return;
+      this.focusAndClose();
+      return;
+    }
     if (this.isMoonTarget() && this.moonPlan) {
       if (!planMoonTransfer(this.sim, this.shipId, this.targetId, this.moonPlan.tDepart, this.moonPlan.tArrive)) return;
       this.focusAndClose();

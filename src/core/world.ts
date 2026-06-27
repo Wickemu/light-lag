@@ -48,8 +48,10 @@ export interface InterstellarLeg {
 }
 
 /** One gravity-assist flyby in a (possibly multi-body) chain. The ship is seeded
- *  toward `bodyId`, swings past it (the heliocentric bend is free), pays any powered
- *  residual, then continues to the next flyby — or, for the last one, to the target. */
+ *  toward `bodyId`, swings past it (the bend is free), pays any powered residual, then
+ *  continues to the next flyby — or, for the last one, to the target. Frame-agnostic:
+ *  heliocentric (planets as assist bodies) when the transfer's `central` is unset, or
+ *  parent-centric (a planet's moons as assist bodies — an intra-system tour) when set. */
 export interface FlybyLeg {
   bodyId: string;
   tFlyby: number; // s since J2000 — the patched-conic flyby instant
