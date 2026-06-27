@@ -80,6 +80,7 @@ function qTransfer(t: ShipTransfer) {
     }));
   }
   if (t.aeroPeriAlt !== undefined) o.aeroPeriAlt = q(t.aeroPeriAlt);
+  if (t.central) o.central = t.central;
   return o;
 }
 

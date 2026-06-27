@@ -11,8 +11,10 @@ import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir } from "../core/world.ts";
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
+import { hohmann } from "../core/maneuver/hohmann.ts";
 import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "../core/maneuver/entry.ts";
+import { aimMoonArrival } from "../core/maneuver/arrival.ts";
 import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
 import { wrapPi } from "../core/math/kepler.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
@@ -21,9 +23,9 @@ import { STAR_BY_ID, starPosition } from "../core/stars.ts";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
 } from "../core/surface.ts";
-import { bodyState } from "../core/ephemeris.ts";
+import { bodyState, bodyStateRelative } from "../core/ephemeris.ts";
 import { lambert } from "../core/maneuver/lambert.ts";
-import { length, sub, normalize, distance } from "../core/math/vec3.ts";
+import { type Vec3, length, sub, normalize, distance } from "../core/math/vec3.ts";
 import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 
 export interface ShipDesign {
@@ -170,6 +172,89 @@ export function aerocapturePreview(
     vInf, targetApoAlt: Math.max(2e6, target.radius), targetPeriAlt: DEFAULT_CAPTURE_ALT,
   });
   return { feasible: !!ac && ac.feasible, trimDv: ac?.trimDv ?? 0, propulsiveDv };
+}
+
+/**
+ * Plan a transfer from the ship's current planet-orbit to one of that planet's MOONS — a
+ * transfer flown about the PARENT planet (not the Sun), so the ship stays in the planet's
+ * SOI and patches into the moon's. Eligible only when `moon.parent === ship.primary` (ship
+ * at Earth → Moon, at Jupiter → a Galilean, …). Parent-centric Lambert + a direct injection
+ * from the parking orbit; capture into a low orbit about the moon. Returns the cost or null.
+ */
+export function planMoonTransfer(
+  sim: Simulation, shipId: string, moonId: string, tDepart: number, tArrive: number,
+): TransferPlan | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || tArrive <= tDepart || ship.mode !== "coast" || ship.landed) return null;
+  if (ship.transfer || ship.interstellarLeg || ship.spiral || ship.entryLeg) return null;
+  const parent = BODY_BY_ID.get(ship.primary);
+  const moon = BODY_BY_ID.get(moonId);
+  if (!parent || !moon || moon.parent !== ship.primary) return null;
+
+  // Parent-centric aim: from the ship's parking-orbit position to a moon-relative periapsis
+  // above the surface (a B-plane offset, so the capture circularizes into a real orbit). The
+  // injection is the direct impulse from the parking velocity; the arrival is an Oberth
+  // capture about the moon.
+  const shipDep = shipRelativeState(ship, tDepart);
+  const moonArr = bodyStateRelative(moon, tArrive);
+  const rParkTo = moon.radius + DEFAULT_CAPTURE_ALT;
+  const aim = aimMoonArrival(parent, moon, shipDep.r, tDepart, tArrive, rParkTo);
+  if (!aim) return null;
+  const dvDepart = length(sub(aim.v1, shipDep.v));
+  // Capture about the moon: the approach v∞ from the (centre) Lambert vs the moon's velocity.
+  const approach = lambert(shipDep.r, moonArr.r, tArrive - tDepart, parent.mu, true);
+  const dvArrive = approach ? hyperbolicBurnDv(length(sub(approach.v2, moonArr.v)), moon.mu, rParkTo) : 0;
+
+  ship.transfer = {
+    targetId: moonId, tDepart, tArrive, dvDepart, dvArrive,
+    departed: false, inSoi: false, arrived: false, central: ship.primary,
+  };
+  sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
+  return { dvDepart, dvArrive, tof: tArrive - tDepart };
+}
+
+/** A planned moon-transfer window: the cheapest departure/arrival found, with its costs. */
+export interface MoonWindow {
+  tDepart: number;
+  tArrive: number;
+  dvDepart: number; // injection from the parking orbit (m/s)
+  dvArrive: number; // capture about the moon (m/s)
+}
+
+/**
+ * Find a cheap parent-centric transfer window from a parking orbit about `parentId` to one
+ * of its moons, searching departure phase over one moon period × a time-of-flight band around
+ * the Hohmann estimate. Deterministic, bounded. `shipR0`/`shipV0` and `aPark` describe the
+ * parking orbit (parent-relative position/velocity at t0 and its radius). null if none.
+ */
+export function searchMoonWindow(parentId: string, moonId: string, t0: number, shipState: (t: number) => { r: Vec3; v: Vec3 }, aPark: number): MoonWindow | null {
+  const parent = BODY_BY_ID.get(parentId);
+  const moon = BODY_BY_ID.get(moonId);
+  if (!parent || !moon || moon.parent !== parentId) return null;
+  const aMoon = bodyStateRelative(moon, t0);
+  const rMoon = length(aMoon.r);
+  const moonPeriod = 2 * Math.PI * Math.sqrt((rMoon * rMoon * rMoon) / parent.mu);
+  const hTof = hohmann(parent.mu, aPark, rMoon).tof;
+  const rParkTo = moon.radius + DEFAULT_CAPTURE_ALT;
+
+  let best: MoonWindow | null = null;
+  let bestTotal = Infinity;
+  for (let i = 0; i < 24; i++) {
+    const tDep = t0 + (moonPeriod * i) / 24;
+    const dep = shipState(tDep);
+    for (let j = 0; j < 7; j++) {
+      const tof = hTof * (0.7 + (0.7 * j) / 6);
+      const tArr = tDep + tof;
+      const moonArr = bodyStateRelative(moon, tArr);
+      const sol = lambert(dep.r, moonArr.r, tof, parent.mu, true);
+      if (!sol) continue;
+      const dvDepart = length(sub(sol.v1, dep.v));
+      const dvArrive = hyperbolicBurnDv(length(sub(sol.v2, moonArr.v)), moon.mu, rParkTo);
+      const total = dvDepart + dvArrive;
+      if (total < bestTotal) { bestTotal = total; best = { tDepart: tDep, tArrive: tArr, dvDepart, dvArrive }; }
+    }
+  }
+  return best;
 }
 
 /** Forget a planned transfer (a stale scheduled departure is ignored later). */

@@ -31,9 +31,9 @@ import {
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
 import { stateToElements, meanMotion } from "./math/kepler.ts";
-import { bodyState, bodyElements } from "./ephemeris.ts";
+import { bodyState, bodyElements, bodyStateRelative } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
-import { aimArrival } from "./maneuver/arrival.ts";
+import { aimArrival, aimMoonArrival } from "./maneuver/arrival.ts";
 import { lambert } from "./maneuver/lambert.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
 import { entryInterfaceAlt, entryInterfaceCrossing } from "./maneuver/entry.ts";
@@ -650,6 +650,14 @@ export class Simulation {
 
     const t = this.world.t; // == tr.tDepart
 
+    // Moon transfer: cruise about the PARENT (tr.central), not the Sun. The ship stays in
+    // the parent's SOI, so it is seeded at its CURRENT parking-orbit position (not the
+    // parent's centre) onto a parent-centric transfer conic toward the moon.
+    if (tr.central && tr.central !== "sun") {
+      this.executeMoonDeparture(ship, tr, t);
+      return;
+    }
+
     // Gravity-assist mission: leg 1 aims at the FIRST flyby body (a patched-conic
     // point), and a chain of flyby-pass events handles each bend + the leg toward the
     // next flyby (or, after the last, the final target).
@@ -691,6 +699,37 @@ export class Simulation {
     ship.elements = stateToElements(depState.r, aim.v1, MU_SUN);
     ship.epoch = t;
 
+    this.events.push({ t: aim.tSoi, kind: "soi-crossing", entityId: ship.id });
+  }
+
+  /**
+   * Departure of a MOON transfer (cruise frame = the parent planet `tr.central`): re-solve
+   * the parent-centric Lambert from the ship's current parking-orbit position to the moon,
+   * pay the direct injection, seed the parent-centric transfer conic (the ship stays in the
+   * parent's SOI), and schedule the moon SOI crossing.
+   */
+  private executeMoonDeparture(ship: Ship, tr: NonNullable<Ship["transfer"]>, t: number): void {
+    const central = BODY_BY_ID.get(tr.central!);
+    const moon = BODY_BY_ID.get(tr.targetId);
+    if (!central || !moon) return;
+    const shipDep = shipRelativeState(ship, t); // parent-relative (primary == central)
+    // Aim the parent-centric transfer at a moon-relative periapsis above the surface (a
+    // B-plane offset), so the capture circularizes into a real parking orbit. The aim also
+    // gives the moon SOI-entry time.
+    const rParkTo = moon.radius + DEFAULT_CAPTURE_ALT;
+    const aim = aimMoonArrival(central, moon, shipDep.r, t, tr.tArrive, rParkTo);
+    if (!aim) return; // degenerate; leave un-departed for re-planning
+    const dv = length(sub(aim.v1, shipDep.v));
+    if (!applyImpulsiveDv(ship, dv)) return; // can't afford the injection — stay parked
+
+    tr.departed = true;
+    tr.dvDepart = dv;
+    ship.primary = central.id;
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = stateToElements(shipDep.r, aim.v1, central.mu);
+    ship.epoch = t;
     this.events.push({ t: aim.tSoi, kind: "soi-crossing", entityId: ship.id });
   }
 
@@ -810,10 +849,13 @@ export class Simulation {
     if (!target) return;
 
     const t = this.world.t;
-    const shipHelio = shipRelativeState(ship, t);
-    const tgt = bodyState(target, t);
-    const rRel = sub(shipHelio.r, tgt.r);
-    const vRel = sub(shipHelio.v, tgt.v);
+    const shipState = shipRelativeState(ship, t);
+    // A moon transfer cruises about the parent, so the hand-off is parent-relative; an
+    // interplanetary transfer hands off in the heliocentric frame.
+    const moonCruise = tr.central !== undefined && tr.central !== "sun";
+    const tgt = moonCruise ? bodyStateRelative(target, t) : bodyState(target, t);
+    const rRel = sub(shipState.r, tgt.r);
+    const vRel = sub(shipState.v, tgt.v);
 
     ship.primary = tr.targetId;
     ship.mode = "coast";

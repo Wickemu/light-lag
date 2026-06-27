@@ -16,7 +16,7 @@
 import { type Vec3, add, sub, scale, cross, normalize, length, distance } from "../math/vec3.ts";
 import { lambert, type LambertSolution } from "./lambert.ts";
 import { stateToElements, elementsToState, propagate } from "../math/kepler.ts";
-import { bodyState, bodyElements } from "../ephemeris.ts";
+import { bodyState, bodyStateRelative, bodyElements } from "../ephemeris.ts";
 import { soiRadius } from "../orbit.ts";
 import { type BodyDef, BODY_BY_ID, MU_SUN } from "../constants.ts";
 
@@ -84,6 +84,74 @@ export function aimArrival(
   };
 
   // Bisection on the offset: periapsis grows with d.
+  let lo = rPeri * 0.05;
+  let hi = rPeri * 8;
+  let best = probe(hi);
+  let guard = 0;
+  while ((!best || !isFinite(best.peri) || best.peri < rPeri) && guard++ < 40) {
+    hi *= 1.5;
+    best = probe(hi);
+  }
+  if (!best) return null;
+
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    const r = probe(mid);
+    if (!r || !isFinite(r.peri)) { lo = mid; continue; }
+    if (r.peri > rPeri) { hi = mid; best = r; } else { lo = mid; }
+    if (Math.abs(r.peri - rPeri) < 1) { best = r; break; }
+  }
+
+  return { v1: best.sol.v1, tSoi: best.tSoi, periapsis: best.peri };
+}
+
+/**
+ * The parent-frame twin of aimArrival for a MOON transfer: find the PARENT-centric transfer
+ * from a fixed parking-orbit position `depPos` that arrives at `moon` with a moon-relative
+ * periapsis ≈ rPeri, so the capture circularizes ABOVE the surface (not on a collision
+ * course through the moon's centre). Everything is in the parent's frame (parent.mu and
+ * parent-relative moon positions); otherwise identical bisection to aimArrival.
+ */
+export function aimMoonArrival(
+  parent: BodyDef,
+  moon: BodyDef,
+  depPos: Vec3,
+  tDepart: number,
+  tArrive: number,
+  rPeri: number,
+): AimResult | null {
+  const tof = tArrive - tDepart;
+  const moonArr = bodyStateRelative(moon, tArrive);
+  const center = lambert(depPos, moonArr.r, tof, parent.mu, true);
+  if (!center) return null;
+
+  const vInfVec = sub(center.v2, moonArr.v);
+  let offDir = cross(vInfVec, { x: 0, y: 0, z: 1 });
+  if (length(offDir) < 1e-9) offDir = cross(vInfVec, { x: 1, y: 0, z: 0 });
+  offDir = normalize(offDir);
+
+  const rSoi = soiRadius(bodyElements(moon, tArrive)!.a, moon.mu, parent.mu);
+
+  const probe = (d: number): Probe | null => {
+    const aim = add(moonArr.r, scale(offDir, d));
+    const sol = lambert(depPos, aim, tof, parent.mu, true);
+    if (!sol) return null;
+    const shipEl = stateToElements(depPos, sol.v1, parent.mu);
+    const shipAt = (t: number): Vec3 => elementsToState(propagate(shipEl, parent.mu, t - tDepart), parent.mu).r;
+    const dist = (t: number): number => distance(shipAt(t), bodyStateRelative(moon, t).r);
+    if (dist(tArrive) > rSoi) return null;
+    let lo = tDepart, hi = tArrive;
+    for (let i = 0; i < 64; i++) {
+      const mid = (lo + hi) / 2;
+      if (dist(mid) > rSoi) lo = mid; else hi = mid;
+    }
+    const tSoi = hi;
+    const sh = elementsToState(propagate(shipEl, parent.mu, tSoi - tDepart), parent.mu);
+    const tg = bodyStateRelative(moon, tSoi);
+    const el = stateToElements(sub(sh.r, tg.r), sub(sh.v, tg.v), moon.mu);
+    return { peri: el.a * (1 - el.e), sol, tSoi };
+  };
+
   let lo = rPeri * 0.05;
   let hi = rPeri * 8;
   let best = probe(hi);

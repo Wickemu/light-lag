@@ -19,8 +19,8 @@ import { type Criterion } from "../core/maneuver/criteria.ts";
 import {
   suggestRoutes, transferWindow, bestAssist, bestChain, bestPorkCell, type SuggestedRoute,
 } from "../core/maneuver/suggest.ts";
-import { planTransfer, planAssist, planChainAssist, aerocapturePreview } from "../app/commands.ts";
-import { dvRemaining, shipWorldState, shipOsculatingElements } from "../core/ships.ts";
+import { planTransfer, planAssist, planChainAssist, planMoonTransfer, searchMoonWindow, aerocapturePreview, type MoonWindow } from "../app/commands.ts";
+import { dvRemaining, shipWorldState, shipOsculatingElements, shipRelativeState } from "../core/ships.ts";
 import { periapsisRadius } from "../core/orbit.ts";
 import { formatDate } from "../core/time.ts";
 import { type BodyDef, type BodyKind, BODIES, BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
@@ -69,6 +69,9 @@ export class TransferPanel {
   private captureSel!: HTMLSelectElement;
   private capRow!: HTMLElement;
   private critSel!: HTMLSelectElement;
+  private critRow!: HTMLElement;
+  private modeRow!: HTMLElement;
+  private moonPlan: MoonWindow | null = null;
   private modeBtns: Partial<Record<RouteMode, HTMLButtonElement>> = {};
 
   private captureMode: "propulsive" | "aerocapture" = "propulsive";
@@ -102,10 +105,16 @@ export class TransferPanel {
     return ship && ship.primary !== "sun" ? ship.primary : "earth";
   }
 
-  /** Can the ship reach this moon? Same-parent moons fly in Phase B; cross-parent moons
-   *  need a two-stage mission (Phase C). Until those land, moons are shown but disabled. */
-  private moonEligible(_moon: BodyDef): Eligible {
-    return { show: true, enabled: false, note: "(transfer to its planet first)" };
+  /** Can the ship reach this moon? Same-parent moons fly directly about the parent; a moon
+   *  of a different planet needs a two-stage mission (Phase C — shown disabled for now). */
+  private moonEligible(moon: BodyDef): Eligible {
+    if (moon.parent === this.originId()) return { show: true, enabled: true };
+    return { show: true, enabled: false, note: `(via ${BODY_BY_ID.get(moon.parent ?? "")?.name ?? "its planet"})` };
+  }
+
+  private isMoonTarget(): boolean {
+    const b = BODY_BY_ID.get(this.targetId);
+    return !!b && b.kind === "moon" && b.parent === this.originId();
   }
 
   private destEligible = (b: BodyDef): Eligible => {
@@ -183,13 +192,13 @@ export class TransferPanel {
     this.panel.appendChild(this.originEl);
 
     // Route mode — Direct / Suggest / Via 1 / Via 2 (mutually exclusive).
-    const modeRow = div("transfer-modes");
+    this.modeRow = div("transfer-modes");
     for (const [m, label] of [["direct", "Direct"], ["suggest", "Suggest"], ["via1", "1 flyby"], ["via2", "2 flybys"]] as const) {
       const b = btn(label, () => this.setRouteMode(m));
       this.modeBtns[m] = b;
-      modeRow.appendChild(b);
+      this.modeRow.appendChild(b);
     }
-    this.panel.appendChild(modeRow);
+    this.panel.appendChild(this.modeRow);
 
     // Flyby pickers (shown only in via1/via2).
     this.viaRow = div("transfer-head");
@@ -209,7 +218,8 @@ export class TransferPanel {
     this.panel.appendChild(this.via2Row);
 
     // Optimize for — drives the porkchop crosshair and the assist/suggest ranking.
-    const critRow = div("transfer-head");
+    this.critRow = div("transfer-head");
+    const critRow = this.critRow;
     critRow.appendChild(div("section-label", "OPTIMIZE FOR"));
     this.critSel = document.createElement("select");
     this.critSel.className = "target-sel";
@@ -287,12 +297,8 @@ export class TransferPanel {
     for (const k of ["direct", "suggest", "via1", "via2"] as RouteMode[]) {
       this.modeBtns[k]?.classList.toggle("active", k === m);
     }
-    this.viaRow.style.display = m === "via1" || m === "via2" ? "flex" : "none";
-    this.via2Row.style.display = m === "via2" ? "flex" : "none";
-    this.suggestEl.style.display = m === "suggest" ? "block" : "none";
-    this.canvas.style.display = m === "suggest" ? "none" : "block";
     this.refreshSelects();
-    this.recompute();
+    this.recompute(); // recompute → layoutForTarget sets the per-mode control visibility
   }
 
   // ── Preview ──────────────────────────────────────────────────────────────────
@@ -340,8 +346,33 @@ export class TransferPanel {
     return { rParkFrom, rParkTo };
   }
 
+  /** Heliocentric controls (route mode, criterion, capture, porkchop) apply to interplanetary
+   *  transfers; a moon transfer is a single parent-centric hop, so they're hidden. */
+  private layoutForTarget(): void {
+    const moon = this.isMoonTarget();
+    this.modeRow.style.display = moon ? "none" : "flex";
+    this.critRow.style.display = moon ? "none" : "flex";
+    this.viaRow.style.display = !moon && (this.routeMode === "via1" || this.routeMode === "via2") ? "flex" : "none";
+    this.via2Row.style.display = !moon && this.routeMode === "via2" ? "flex" : "none";
+    this.capRow.style.display = !moon && this.routeMode === "direct" ? "flex" : "none";
+    this.canvas.style.display = moon || this.routeMode === "suggest" ? "none" : "block";
+    this.suggestEl.style.display = !moon && this.routeMode === "suggest" ? "block" : "none";
+  }
+
+  private recomputeMoon(): void {
+    const ship = this.sim.world.ships.get(this.shipId!)!;
+    const t0 = this.sim.world.t;
+    const aPark = shipOsculatingElements(ship, t0).a;
+    this.moonPlan = searchMoonWindow(ship.primary, this.targetId, t0, (t) => shipRelativeState(ship, t), aPark);
+    this.pork = null; this.assist = null; this.chain = null;
+    this.traj.setPreviewRoute(null); // the parent-centric hop isn't drawn by the heliocentric overlay
+    this.updateReadout();
+  }
+
   private recompute(): void {
     if (!this.shipId || !this.sim.world.ships.get(this.shipId)) return;
+    this.layoutForTarget();
+    if (this.isMoonTarget()) { this.recomputeMoon(); return; }
     const t0 = this.sim.world.t;
     const fromId = this.originId();
     const { rParkFrom, rParkTo } = this.parkRadii();
@@ -524,6 +555,29 @@ export class TransferPanel {
   private updateReadout(): void {
     const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
 
+    // Moon transfer: a single parent-centric hop, costed by searchMoonWindow.
+    if (this.isMoonTarget() && ship) {
+      const moon = BODY_BY_ID.get(this.targetId)!;
+      const m = this.moonPlan;
+      this.axisEl.innerHTML = `<span>${BODY_BY_ID.get(this.originId())?.name} orbit → ${moon.name}</span>`;
+      if (!m) {
+        this.readout.innerHTML = `No transfer window to ${moon.name} found.`;
+        setDisabled(this.commitBtn, true, "No window found."); return;
+      }
+      const haveDv = dvRemaining(ship);
+      const feasible = m.dvDepart + m.dvArrive <= haveDv;
+      this.readout.innerHTML =
+        kv("Depart", formatDate(m.tDepart)) + kv("Arrive", formatDate(m.tArrive)) +
+        kv("Flight time", `${((m.tArrive - m.tDepart) / DAY).toFixed(1)} days`) +
+        kv("Injection Δv", `${(m.dvDepart / 1000).toFixed(3)} km/s`) +
+        kv("Capture Δv", `${(m.dvArrive / 1000).toFixed(3)} km/s`) +
+        kv("Total Δv", `${((m.dvDepart + m.dvArrive) / 1000).toFixed(3)} km/s`) +
+        kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+        (feasible ? `<div class="ok">✓ within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
+      setDisabled(this.commitBtn, !feasible, "Transfer Δv exceeds the ship's budget.");
+      return;
+    }
+
     // Capture mode is a direct-arrival option at a body with an atmosphere only.
     const hasAtm = !!BODY_BY_ID.get(this.targetId)?.atmosphere;
     this.captureSel.disabled = !hasAtm || this.routeMode !== "direct";
@@ -641,6 +695,11 @@ export class TransferPanel {
 
   private commit(): void {
     if (!this.shipId) return;
+    if (this.isMoonTarget() && this.moonPlan) {
+      if (!planMoonTransfer(this.sim, this.shipId, this.targetId, this.moonPlan.tDepart, this.moonPlan.tArrive)) return;
+      this.focusAndClose();
+      return;
+    }
     if (this.chain) {
       if (!planChainAssist(this.sim, this.shipId, this.chain.bodyIds, this.chain.times)) return;
       this.focusAndClose();
