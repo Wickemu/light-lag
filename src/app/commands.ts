@@ -11,8 +11,11 @@ import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir } from "../core/world.ts";
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, periapsisRadius } from "../core/orbit.ts";
+import { hohmann } from "../core/maneuver/hohmann.ts";
 import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "../core/maneuver/entry.ts";
+import { aimMoonArrival } from "../core/maneuver/arrival.ts";
+export { searchMoonWindow, type MoonWindow } from "../core/maneuver/moon.ts";
 import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
 import { wrapPi } from "../core/math/kepler.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
@@ -21,10 +24,10 @@ import { STAR_BY_ID, starPosition } from "../core/stars.ts";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
 } from "../core/surface.ts";
-import { bodyState } from "../core/ephemeris.ts";
+import { bodyState, bodyStateRelative } from "../core/ephemeris.ts";
 import { lambert } from "../core/maneuver/lambert.ts";
 import { length, sub, normalize, distance } from "../core/math/vec3.ts";
-import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
+import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT, type BodyDef } from "../core/constants.ts";
 
 export interface ShipDesign {
   name: string;
@@ -170,6 +173,93 @@ export function aerocapturePreview(
     vInf, targetApoAlt: Math.max(2e6, target.radius), targetPeriAlt: DEFAULT_CAPTURE_ALT,
   });
   return { feasible: !!ac && ac.feasible, trimDv: ac?.trimDv ?? 0, propulsiveDv };
+}
+
+/**
+ * Plan a transfer from the ship's current planet-orbit to one of that planet's MOONS — a
+ * transfer flown about the PARENT planet (not the Sun), so the ship stays in the planet's
+ * SOI and patches into the moon's. Eligible only when `moon.parent === ship.primary` (ship
+ * at Earth → Moon, at Jupiter → a Galilean, …). Parent-centric Lambert + a direct injection
+ * from the parking orbit; capture into a low orbit about the moon. Returns the cost or null.
+ */
+export function planMoonTransfer(
+  sim: Simulation, shipId: string, moonId: string, tDepart: number, tArrive: number,
+): TransferPlan | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || tArrive <= tDepart || ship.mode !== "coast" || ship.landed) return null;
+  if (ship.transfer || ship.interstellarLeg || ship.spiral || ship.entryLeg) return null;
+  const parent = BODY_BY_ID.get(ship.primary);
+  const moon = BODY_BY_ID.get(moonId);
+  if (!parent || !moon || moon.parent !== ship.primary) return null;
+
+  // Parent-centric aim: from the ship's parking-orbit position to a moon-relative periapsis
+  // above the surface (a B-plane offset, so the capture circularizes into a real orbit). The
+  // injection is the direct impulse from the parking velocity; the arrival is an Oberth
+  // capture about the moon.
+  const shipDep = shipRelativeState(ship, tDepart);
+  const moonArr = bodyStateRelative(moon, tArrive);
+  const rParkTo = moon.radius + DEFAULT_CAPTURE_ALT;
+  const aim = aimMoonArrival(parent, moon, shipDep.r, tDepart, tArrive, rParkTo);
+  if (!aim) return null;
+  const dvDepart = length(sub(aim.v1, shipDep.v));
+  // Capture about the moon: the approach v∞ from the (centre) Lambert vs the moon's velocity.
+  const approach = lambert(shipDep.r, moonArr.r, tArrive - tDepart, parent.mu, true);
+  const dvArrive = approach ? hyperbolicBurnDv(length(sub(approach.v2, moonArr.v)), moon.mu, rParkTo) : 0;
+
+  ship.transfer = {
+    targetId: moonId, tDepart, tArrive, dvDepart, dvArrive,
+    departed: false, inSoi: false, arrived: false, central: ship.primary,
+  };
+  sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
+  return { dvDepart, dvArrive, tof: tArrive - tDepart };
+}
+
+/** A two-stage cross-system mission: the heliocentric Stage-1 cost plus an estimate of the
+ *  parent-centric Stage-2 (moon) leg that the sim auto-chains on arrival at the planet. */
+export interface MoonMissionPlan extends TransferPlan {
+  stage2Dv: number; // estimated Stage-2 injection + capture (m/s)
+  parentId: string; // the planet captured at first
+}
+
+/** Rough Stage-2 estimate: a Hohmann hop from a default parking orbit about `parent` out to the
+ *  moon, plus a hyperbolic capture about the moon. Used only for the planner readout — the real
+ *  Stage-2 is searched fresh (searchMoonWindow) when the ship actually captures at the planet. */
+function estimateMoonLeg(parent: BodyDef, moon: BodyDef, tArrive: number): number {
+  const rPark = parent.radius + DEFAULT_CAPTURE_ALT;
+  const rMoon = length(bodyStateRelative(moon, tArrive).r);
+  const hoh = hohmann(parent.mu, rPark, rMoon);
+  const rCap = moon.radius + DEFAULT_CAPTURE_ALT;
+  // Arrival relative speed ≈ the Hohmann arrival-leg velocity defect vs. the moon's circular speed.
+  const vMoon = Math.sqrt(parent.mu / rMoon);
+  const vArr = Math.sqrt(parent.mu * (2 / rMoon - 2 / (rPark + rMoon)));
+  const dvCapture = hyperbolicBurnDv(Math.abs(vMoon - vArr), moon.mu, rCap);
+  return hoh.dv1 + dvCapture;
+}
+
+/**
+ * Plan a CROSS-SYSTEM two-stage mission to a moon whose parent planet is heliocentric and not
+ * the ship's current primary (e.g. ship at Earth → Europa@Jupiter). Stage 1 is an ordinary
+ * heliocentric transfer to the moon's parent planet (captured into a parking orbit there);
+ * the transfer carries `thenMoonId`, so on capture the sim auto-chains a parent-centric Stage-2
+ * leg to the moon (see sim.ts). Returns the Stage-1 cost + a Stage-2 estimate, or null.
+ */
+export function planMoonMission(
+  sim: Simulation, shipId: string, moonId: string, tDepart: number, tArrive: number,
+  captureMode: "propulsive" | "aerocapture" = "propulsive",
+): MoonMissionPlan | null {
+  const ship = sim.world.ships.get(shipId);
+  const moon = BODY_BY_ID.get(moonId);
+  if (!ship || !moon || !moon.parent) return null;
+  const parent = BODY_BY_ID.get(moon.parent);
+  // Only a cross-system moon (parent is a heliocentric planet, and not where we already are).
+  if (!parent || parent.parent !== "sun" || parent.id === ship.primary) return null;
+
+  const stage1 = planTransfer(sim, shipId, parent.id, tDepart, tArrive, captureMode);
+  if (!stage1) return null;
+  // Tag the just-planned transfer so the sim flies the moon leg on arrival.
+  ship.transfer!.thenMoonId = moonId;
+  const stage2Dv = estimateMoonLeg(parent, moon, tArrive);
+  return { ...stage1, stage2Dv, parentId: parent.id };
 }
 
 /** Forget a planned transfer (a stale scheduled departure is ignored later). */

@@ -1,54 +1,89 @@
 /**
- * The transfer planner: a porkchop plot for choosing a real launch window.
+ * The mission planner: choose a destination, a route (direct, an auto-suggested
+ * gravity-assist, or hand-picked flybys), and what to optimize for — then read the
+ * real launch window off the porkchop and commit.
  *
- * The canvas sweeps departure date (x) against time-of-flight (y); each pixel is
- * a Lambert solution coloured by total Δv. The blue low-Δv island IS the launch
- * window — it isn't a rule we impose, it falls out of where the planets are.
- * Click a cell (or take the optimum), see the true injection and arrival Δv and
- * the months-long flight time, and commit — the departure is then scheduled and
- * fires when the clock reaches it.
+ * The canvas sweeps departure date (x) against time-of-flight (y); each pixel is a
+ * Lambert solution coloured by total Δv. The blue low-Δv island IS the launch window —
+ * it falls out of where the planets are. The crosshair marks the cell that wins under
+ * the chosen criterion (least Δv / shortest time / balanced); the white ring marks the
+ * absolute Δv floor. Commit schedules the departure; it fires when the clock reaches it.
  */
 
 import { type Simulation } from "../core/sim.ts";
 import { type SceneManager } from "../render/SceneManager.ts";
 import { type TrajectoryViews } from "../render/trajectoryViews.ts";
 import { computePorkchop, type Porkchop, type PorkCell } from "../core/maneuver/porkchop.ts";
-import { hohmann, synodicPeriod } from "../core/maneuver/hohmann.ts";
-import { searchAssist, searchChain, type AssistResult, type ChainAssistResult } from "../core/maneuver/assist.ts";
-import { planTransfer, planAssist, planChainAssist, aerocapturePreview } from "../app/commands.ts";
-import { dvRemaining, shipWorldState, shipOsculatingElements } from "../core/ships.ts";
-import { periapsisRadius, orbitalPeriod } from "../core/orbit.ts";
-import { bodyElements } from "../core/ephemeris.ts";
+import { type AssistResult, type ChainAssistResult } from "../core/maneuver/assist.ts";
+import { type Criterion } from "../core/maneuver/criteria.ts";
+import {
+  suggestRoutes, transferWindow, bestAssist, bestChain, bestPorkCell, type SuggestedRoute,
+} from "../core/maneuver/suggest.ts";
+import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, searchMoonWindow, aerocapturePreview, type MoonWindow } from "../app/commands.ts";
+import { dvRemaining, shipWorldState, shipOsculatingElements, shipRelativeState } from "../core/ships.ts";
+import { periapsisRadius } from "../core/orbit.ts";
 import { formatDate } from "../core/time.ts";
-import { BODIES, BODY_BY_ID, DAY, MU_SUN, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
+import { type BodyDef, type BodyKind, BODIES, BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 import { div, btn, kv, setDisabled } from "./dom.ts";
 
-/** Every heliocentric body (planets, dwarfs, asteroids) is a valid destination;
- *  the porkchop solves any of them. Ordered by distance from the Sun. */
-const TARGETS = BODIES.filter((b) => b.parent === "sun" && b.id !== "earth")
-  .sort((a, b) => (bodyElements(a, 0)?.a ?? 0) - (bodyElements(b, 0)?.a ?? 0))
-  .map((b) => b.id);
 const CANVAS_W = 300;
 const CANVAS_H = 210;
+
+/** Body groups for the destination/flyby dropdowns — the HUD's ordering, minus the Sun. */
+const GROUPS: { kind: BodyKind; label: string }[] = [
+  { kind: "planet", label: "Planets" },
+  { kind: "dwarf", label: "Dwarf planets" },
+  { kind: "asteroid", label: "Asteroids" },
+  { kind: "comet", label: "Comets" },
+  { kind: "moon", label: "Moons" },
+];
+
+type RouteMode = "direct" | "suggest" | "via1" | "via2";
+
+/** A body is a useful gravity-assist flyby only if it has real mass: a planet (or Ceres). */
+function isAssistBody(b: BodyDef): boolean {
+  return b.parent === "sun" && (b.kind === "planet" || b.id === "ceres");
+}
+
+/** Eligibility of an option: whether to show it, whether it's selectable, and an optional note. */
+interface Eligible {
+  show: boolean;
+  enabled: boolean;
+  note?: string;
+}
 
 export class TransferPanel {
   private panel!: HTMLElement;
   private canvas!: HTMLCanvasElement;
   private readout!: HTMLElement;
+  private suggestEl!: HTMLElement;
   private commitBtn!: HTMLButtonElement;
+  private optBtn!: HTMLButtonElement;
   private targetSel!: HTMLSelectElement;
   private axisEl!: HTMLElement;
-
+  private originEl!: HTMLElement;
   private viaSel!: HTMLSelectElement;
   private via2Sel!: HTMLSelectElement;
+  private viaRow!: HTMLElement;
+  private via2Row!: HTMLElement;
   private captureSel!: HTMLSelectElement;
+  private capRow!: HTMLElement;
+  private critSel!: HTMLSelectElement;
+  private critRow!: HTMLElement;
+  private modeRow!: HTMLElement;
+  private moonPlan: MoonWindow | null = null;
+  private modeBtns: Partial<Record<RouteMode, HTMLButtonElement>> = {};
+
   private captureMode: "propulsive" | "aerocapture" = "propulsive";
+  private routeMode: RouteMode = "direct";
+  private criterion: Criterion = "dv";
   private shipId: string | null = null;
   private targetId = "mars";
-  private viaId = ""; // "" = direct; otherwise the first flyby body id
-  private via2Id = ""; // "" = single flyby; otherwise a second flyby body id (a chain)
+  private viaId = ""; // first flyby body id (via1/via2 modes)
+  private via2Id = ""; // second flyby body id (via2 mode)
   private assist: AssistResult | null = null;
   private chain: { result: ChainAssistResult; times: number[]; bodyIds: string[] } | null = null;
+  private suggestions: SuggestedRoute[] = [];
   private pork: Porkchop | null = null;
   private selI = -1;
   private selJ = -1;
@@ -62,69 +97,163 @@ export class TransferPanel {
     this.build();
   }
 
+  // ── Origin / eligibility ─────────────────────────────────────────────────────
+
+  /** The body the ship departs from: its current primary (or Earth, heliocentrically). */
+  private originId(): string {
+    const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
+    return ship && ship.primary !== "sun" ? ship.primary : "earth";
+  }
+
+  /** Can the ship reach this moon? Same-parent moons fly directly about the parent; a moon of
+   *  a different (heliocentric) planet flies as a two-stage mission that auto-chains on arrival. */
+  private moonEligible(moon: BodyDef): Eligible {
+    if (moon.parent === this.originId()) return { show: true, enabled: true };
+    const parent = BODY_BY_ID.get(moon.parent ?? "");
+    if (parent && parent.parent === "sun") return { show: true, enabled: true, note: `(via ${parent.name})` };
+    return { show: true, enabled: false, note: "(unreachable)" };
+  }
+
+  /** A same-parent moon hop: a single parent-centric Lambert (ship at Earth → Moon, …). */
+  private isMoonTarget(): boolean {
+    const b = BODY_BY_ID.get(this.targetId);
+    return !!b && b.kind === "moon" && b.parent === this.originId();
+  }
+
+  /** A cross-system two-stage mission: the moon's parent is a heliocentric planet we're not at
+   *  (Earth → Jupiter → Europa). Stage 1 is a heliocentric leg to the parent; the sim chains the
+   *  parent-centric moon leg on capture. */
+  private isMoonMission(): boolean {
+    const b = BODY_BY_ID.get(this.targetId);
+    if (!b || b.kind !== "moon" || b.parent === this.originId()) return false;
+    const parent = BODY_BY_ID.get(b.parent ?? "");
+    return !!parent && parent.parent === "sun";
+  }
+
+  /** The body the heliocentric leg actually targets — the parent planet for a cross-system moon
+   *  mission, otherwise the chosen target. */
+  private effectiveTarget(): string {
+    return this.isMoonMission() ? BODY_BY_ID.get(this.targetId)!.parent! : this.targetId;
+  }
+
+  private destEligible = (b: BodyDef): Eligible => {
+    const origin = this.originId();
+    if (b.id === origin || b.id === "sun") return { show: false, enabled: false };
+    if (b.kind === "moon") return this.moonEligible(b);
+    return { show: true, enabled: true };
+  };
+
+  private flybyEligible = (exclude: string): ((b: BodyDef) => Eligible) => (b: BodyDef) => {
+    if (!isAssistBody(b)) return { show: false, enabled: false };
+    const origin = this.originId();
+    if (b.id === origin || b.id === this.targetId || b.id === exclude) return { show: false, enabled: false };
+    return { show: true, enabled: true };
+  };
+
+  /** (Re)populate a grouped select from the body catalog under an eligibility predicate. */
+  private fillSelect(sel: HTMLSelectElement, none: string | null, choose: (b: BodyDef) => Eligible, selected: string): void {
+    sel.innerHTML = "";
+    if (none !== null) {
+      const o = document.createElement("option");
+      o.value = ""; o.textContent = none;
+      sel.appendChild(o);
+    }
+    for (const g of GROUPS) {
+      const members = BODIES.filter((b) => b.kind === g.kind).map((b) => ({ b, e: choose(b) })).filter((x) => x.e.show);
+      if (members.length === 0) continue;
+      const og = document.createElement("optgroup");
+      og.label = g.label;
+      for (const { b, e } of members) {
+        const o = document.createElement("option");
+        o.value = b.id;
+        o.textContent = e.note ? `${b.name} ${e.note}` : b.name;
+        o.disabled = !e.enabled;
+        og.appendChild(o);
+      }
+      sel.appendChild(og);
+    }
+    sel.value = selected;
+  }
+
+  private refreshSelects(): void {
+    this.fillSelect(this.targetSel, null, this.destEligible, this.targetId);
+    // Snap the target to a valid enabled option if the origin made the old one invalid.
+    if (this.targetSel.value !== this.targetId) {
+      this.targetId = this.targetSel.value || this.firstEnabledDestination();
+      this.targetSel.value = this.targetId;
+    }
+    this.fillSelect(this.viaSel, "— pick a flyby —", this.flybyEligible(this.via2Id), this.viaId);
+    this.fillSelect(this.via2Sel, "— pick a flyby —", this.flybyEligible(this.viaId), this.via2Id);
+    this.originEl.textContent = `From: ${this.originId() === "earth" && (!this.shipId || this.sim.world.ships.get(this.shipId!)?.primary === "sun")
+      ? "Earth (heliocentric)" : BODY_BY_ID.get(this.originId())?.name ?? "—"}`;
+  }
+
+  private firstEnabledDestination(): string {
+    for (const g of GROUPS) for (const b of BODIES) if (b.kind === g.kind && this.destEligible(b).enabled) return b.id;
+    return "mars";
+  }
+
+  // ── Build ────────────────────────────────────────────────────────────────────
+
   private build(): void {
     this.panel = div("panel transfer-panel");
     this.panel.style.display = "none";
 
     const head = div("transfer-head");
-    head.appendChild(div("panel-title", "TRANSFER PLANNER"));
+    head.appendChild(div("panel-title", "MISSION PLANNER"));
     this.targetSel = document.createElement("select");
     this.targetSel.className = "target-sel";
-    for (const id of TARGETS) {
-      const o = document.createElement("option");
-      o.value = id;
-      o.textContent = BODY_BY_ID.get(id)!.name;
-      this.targetSel.appendChild(o);
-    }
-    this.targetSel.value = this.targetId;
-    this.targetSel.onchange = () => {
-      this.targetId = this.targetSel.value;
-      this.recompute();
-    };
+    this.targetSel.onchange = () => { this.targetId = this.targetSel.value; this.refreshSelects(); this.recompute(); };
     head.appendChild(this.targetSel);
     this.panel.appendChild(head);
 
-    // Optional gravity-assist flyby body. "Direct" = no assist.
-    const viaRow = div("transfer-head");
-    viaRow.appendChild(div("section-label", "VIA FLYBY"));
+    this.originEl = div("transfer-origin", "From: —");
+    this.panel.appendChild(this.originEl);
+
+    // Route mode — Direct / Suggest / Via 1 / Via 2 (mutually exclusive).
+    this.modeRow = div("transfer-modes");
+    for (const [m, label] of [["direct", "Direct"], ["suggest", "Suggest"], ["via1", "1 flyby"], ["via2", "2 flybys"]] as const) {
+      const b = btn(label, () => this.setRouteMode(m));
+      this.modeBtns[m] = b;
+      this.modeRow.appendChild(b);
+    }
+    this.panel.appendChild(this.modeRow);
+
+    // Flyby pickers (shown only in via1/via2).
+    this.viaRow = div("transfer-head");
+    this.viaRow.appendChild(div("section-label", "VIA FLYBY"));
     this.viaSel = document.createElement("select");
     this.viaSel.className = "target-sel";
-    const none = document.createElement("option");
-    none.value = ""; none.textContent = "— Direct (no assist) —";
-    this.viaSel.appendChild(none);
-    for (const id of TARGETS) {
-      const o = document.createElement("option");
-      o.value = id;
-      o.textContent = BODY_BY_ID.get(id)!.name;
-      this.viaSel.appendChild(o);
-    }
-    this.viaSel.onchange = () => { this.viaId = this.viaSel.value; this.recompute(); };
-    viaRow.appendChild(this.viaSel);
-    this.panel.appendChild(viaRow);
+    this.viaSel.onchange = () => { this.viaId = this.viaSel.value; this.refreshSelects(); this.recompute(); };
+    this.viaRow.appendChild(this.viaSel);
+    this.panel.appendChild(this.viaRow);
 
-    // Optional SECOND flyby body — turns the assist into a chain (origin → via → via2 →
-    // target). "—" = single flyby.
-    const via2Row = div("transfer-head");
-    via2Row.appendChild(div("section-label", "VIA FLYBY 2"));
+    this.via2Row = div("transfer-head");
+    this.via2Row.appendChild(div("section-label", "VIA FLYBY 2"));
     this.via2Sel = document.createElement("select");
     this.via2Sel.className = "target-sel";
-    const none2 = document.createElement("option");
-    none2.value = ""; none2.textContent = "— Single flyby —";
-    this.via2Sel.appendChild(none2);
-    for (const id of TARGETS) {
-      const o = document.createElement("option");
-      o.value = id;
-      o.textContent = BODY_BY_ID.get(id)!.name;
-      this.via2Sel.appendChild(o);
-    }
-    this.via2Sel.onchange = () => { this.via2Id = this.via2Sel.value; this.recompute(); };
-    via2Row.appendChild(this.via2Sel);
-    this.panel.appendChild(via2Row);
+    this.via2Sel.onchange = () => { this.via2Id = this.via2Sel.value; this.refreshSelects(); this.recompute(); };
+    this.via2Row.appendChild(this.via2Sel);
+    this.panel.appendChild(this.via2Row);
 
-    // Capture mode for a DIRECT arrival: a propulsive burn, or an atmospheric drag pass
-    // (aerocapture) that captures for only a small periapsis-raise trim.
-    const capRow = div("transfer-head");
-    capRow.appendChild(div("section-label", "CAPTURE MODE"));
+    // Optimize for — drives the porkchop crosshair and the assist/suggest ranking.
+    this.critRow = div("transfer-head");
+    const critRow = this.critRow;
+    critRow.appendChild(div("section-label", "OPTIMIZE FOR"));
+    this.critSel = document.createElement("select");
+    this.critSel.className = "target-sel";
+    for (const [val, label] of [["dv", "Least Δv (fuel)"], ["time", "Shortest flight"], ["balanced", "Balanced"]] as const) {
+      const o = document.createElement("option");
+      o.value = val; o.textContent = label;
+      this.critSel.appendChild(o);
+    }
+    this.critSel.onchange = () => { this.criterion = this.critSel.value as Criterion; this.recompute(); };
+    critRow.appendChild(this.critSel);
+    this.panel.appendChild(critRow);
+
+    // Capture mode (direct arrivals at a body with an atmosphere).
+    this.capRow = div("transfer-head");
+    this.capRow.appendChild(div("section-label", "CAPTURE MODE"));
     this.captureSel = document.createElement("select");
     this.captureSel.className = "target-sel";
     for (const [val, label] of [["propulsive", "Propulsive (burn)"], ["aerocapture", "Aerocapture (drag pass)"]] as const) {
@@ -133,8 +262,8 @@ export class TransferPanel {
       this.captureSel.appendChild(o);
     }
     this.captureSel.onchange = () => { this.captureMode = this.captureSel.value as "propulsive" | "aerocapture"; this.updateReadout(); this.updatePreview(); };
-    capRow.appendChild(this.captureSel);
-    this.panel.appendChild(capRow);
+    this.capRow.appendChild(this.captureSel);
+    this.panel.appendChild(this.capRow);
 
     this.canvas = document.createElement("canvas");
     this.canvas.width = CANVAS_W;
@@ -146,16 +275,19 @@ export class TransferPanel {
     this.axisEl = div("pork-axis");
     this.panel.appendChild(this.axisEl);
 
+    this.suggestEl = div("transfer-suggest");
+    this.panel.appendChild(this.suggestEl);
+
     this.readout = div("transfer-readout");
     this.panel.appendChild(this.readout);
 
     const btns = div("transfer-btns");
-    const opt = btn("Use optimum", () => this.selectBest());
-    opt.title = "Jump to the lowest-Δv departure/arrival in the porkchop.";
-    this.commitBtn = btn("Commit transfer", () => this.commit());
+    this.optBtn = btn("Use optimum", () => this.selectBest());
+    this.optBtn.title = "Jump to the window that wins under the chosen criterion.";
+    this.commitBtn = btn("Commit", () => this.commit());
     this.commitBtn.className = "primary";
     const close = btn("Close", () => this.close());
-    btns.append(opt, this.commitBtn, close);
+    btns.append(this.optBtn, this.commitBtn, close);
     this.panel.appendChild(btns);
 
     this.root.appendChild(this.panel);
@@ -164,7 +296,8 @@ export class TransferPanel {
   open(shipId: string): void {
     this.shipId = shipId;
     this.panel.style.display = "flex";
-    this.recompute();
+    this.refreshSelects();
+    this.setRouteMode(this.routeMode);
   }
 
   isOpen(): boolean {
@@ -173,18 +306,26 @@ export class TransferPanel {
 
   close(): void {
     this.panel.style.display = "none";
-    this.traj.setPreviewRoute(null); // tear down the preview ghost route
+    this.traj.setPreviewRoute(null);
   }
 
-  /** Feed the renderer a ghost preview of the currently selected window (the
-   *  whole planned path), or clear it. Recomputed on every selection change. */
+  private setRouteMode(m: RouteMode): void {
+    this.routeMode = m;
+    if (m === "direct" || m === "suggest") { this.viaId = ""; this.via2Id = ""; }
+    if (m === "via1") this.via2Id = "";
+    for (const k of ["direct", "suggest", "via1", "via2"] as RouteMode[]) {
+      this.modeBtns[k]?.classList.toggle("active", k === m);
+    }
+    this.refreshSelects();
+    this.recompute(); // recompute → layoutForTarget sets the per-mode control visibility
+  }
+
+  // ── Preview ──────────────────────────────────────────────────────────────────
+
   private updatePreview(): void {
     const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
-    if (!ship) {
-      this.traj.setPreviewRoute(null);
-      return;
-    }
-    const fromId = ship.primary === "sun" ? "earth" : ship.primary;
+    if (!ship) { this.traj.setPreviewRoute(null); return; }
+    const fromId = this.originId();
     const target = BODY_BY_ID.get(this.targetId);
     const rParkTo = target ? target.radius + DEFAULT_CAPTURE_ALT : undefined;
     const el = shipOsculatingElements(ship, this.sim.world.t);
@@ -206,105 +347,115 @@ export class TransferPanel {
       return;
     }
     const cell = this.selectedCell();
-    if (!cell || !isFinite(cell.total)) {
-      this.traj.setPreviewRoute(null);
-      return;
-    }
+    if (!cell || !isFinite(cell.total)) { this.traj.setPreviewRoute(null); return; }
     this.traj.setPreviewRoute({
       fromId, targetId: this.targetId, tDepart: cell.depT, tArrive: cell.arrT, rParkFrom, rParkTo,
     });
   }
 
-  private recompute(): void {
-    if (!this.shipId) return;
-    const ship = this.sim.world.ships.get(this.shipId);
-    if (!ship) return;
+  // ── Recompute ────────────────────────────────────────────────────────────────
+
+  /** The departure/arrival parking radii for the current ship + target. */
+  private parkRadii(): { rParkFrom: number; rParkTo: number } {
+    const ship = this.sim.world.ships.get(this.shipId!)!;
+    const rParkFrom = ship.primary === "sun"
+      ? BODY_BY_ID.get("earth")!.radius + DEFAULT_CAPTURE_ALT
+      : periapsisRadius(shipOsculatingElements(ship, this.sim.world.t).a, shipOsculatingElements(ship, this.sim.world.t).e);
+    const rParkTo = BODY_BY_ID.get(this.effectiveTarget())!.radius + DEFAULT_CAPTURE_ALT;
+    return { rParkFrom, rParkTo };
+  }
+
+  /** Heliocentric controls (route mode, criterion, capture, porkchop) apply to interplanetary
+   *  transfers; a moon transfer is a single parent-centric hop, so they're hidden. */
+  private layoutForTarget(): void {
+    const moon = this.isMoonTarget();       // same-parent parent-centric hop
+    const mission = this.isMoonMission();   // cross-system two-stage (heliocentric Stage 1)
+    // A same-parent hop hides every heliocentric control. A mission flies a Direct heliocentric
+    // Stage-1 to the parent planet, so it keeps the porkchop + criterion + capture, but offers no
+    // flyby/suggest variants (planMoonMission plans a direct Stage 1).
+    this.modeRow.style.display = moon || mission ? "none" : "flex";
+    this.critRow.style.display = moon ? "none" : "flex";
+    this.viaRow.style.display = !moon && !mission && (this.routeMode === "via1" || this.routeMode === "via2") ? "flex" : "none";
+    this.via2Row.style.display = !moon && !mission && this.routeMode === "via2" ? "flex" : "none";
+    this.capRow.style.display = !moon && (mission || this.routeMode === "direct") ? "flex" : "none";
+    this.canvas.style.display = moon || (!mission && this.routeMode === "suggest") ? "none" : "block";
+    this.suggestEl.style.display = !moon && !mission && this.routeMode === "suggest" ? "block" : "none";
+  }
+
+  private recomputeMoon(): void {
+    const ship = this.sim.world.ships.get(this.shipId!)!;
     const t0 = this.sim.world.t;
-    const fromId = ship.primary === "sun" ? "earth" : ship.primary;
-    const rParkFrom =
-      ship.primary === "sun"
-        ? BODY_BY_ID.get("earth")!.radius + DEFAULT_CAPTURE_ALT
-        : periapsisRadius(shipOsculatingElements(ship, t0).a, shipOsculatingElements(ship, t0).e);
-    const rParkTo = BODY_BY_ID.get(this.targetId)!.radius + DEFAULT_CAPTURE_ALT;
+    const aPark = shipOsculatingElements(ship, t0).a;
+    this.moonPlan = searchMoonWindow(ship.primary, this.targetId, t0, (t) => shipRelativeState(ship, t), aPark);
+    this.pork = null; this.assist = null; this.chain = null;
+    this.traj.setPreviewRoute(null); // the parent-centric hop isn't drawn by the heliocentric overlay
+    this.updateReadout();
+  }
 
-    // Scale the search grid to the target's transfer so distant bodies (the
-    // giants, the dwarf planets) get a usable window instead of the inner-planet
-    // 80–400 day box. The Hohmann time-of-flight sets the tof span; the synodic
-    // period sets how far ahead to look for the next departure window.
-    const aFrom = bodyElements(BODY_BY_ID.get(fromId)!, t0)?.a ?? BODY_BY_ID.get("earth")!.radius;
-    const aTo = bodyElements(BODY_BY_ID.get(this.targetId)!, t0)?.a ?? aFrom;
-    const hTof = hohmann(MU_SUN, aFrom, aTo).tof;
-    const synodic = synodicPeriod(orbitalPeriod(aFrom, MU_SUN), orbitalPeriod(aTo, MU_SUN));
-    const depSpan = Math.min(Math.max(1.3 * synodic, 500 * DAY), 8000 * DAY);
-    const tofMin = Math.max(20 * DAY, 0.3 * hTof);
-    const tofMax = 1.9 * hTof;
+  private recompute(): void {
+    if (!this.shipId || !this.sim.world.ships.get(this.shipId)) return;
+    this.layoutForTarget();
+    if (this.isMoonTarget()) { this.recomputeMoon(); return; }
+    const t0 = this.sim.world.t;
+    const fromId = this.originId();
+    const toId = this.effectiveTarget(); // the parent planet for a cross-system moon mission
+    const { rParkFrom, rParkTo } = this.parkRadii();
+    const win = transferWindow(fromId, toId, t0);
 
+    // The porkchop underpins Direct and Via modes (and the Suggest list's Direct option).
     this.pork = computePorkchop({
-      fromId,
-      toId: this.targetId,
-      depStart: t0,
-      depEnd: t0 + depSpan,
-      depN: 64,
-      tofMin,
-      tofMax,
-      tofN: 48,
-      rParkFrom,
-      rParkTo,
+      fromId, toId, depStart: t0, depEnd: t0 + win.depSpan, depN: 64,
+      tofMin: win.tofMin, tofMax: win.tofMax, tofN: 48, rParkFrom, rParkTo,
     });
-
-    // Two-flyby CHAIN search (when a second via body is chosen): scan a few
-    // departure dates, grid each leg's time-of-flight, keep the cheapest chain.
     this.assist = null;
     this.chain = null;
-    const distinct = new Set([fromId, this.viaId, this.via2Id, this.targetId]);
-    if (this.viaId && this.via2Id && distinct.size === 4) {
+    this.suggestions = [];
+
+    // A cross-system moon mission flies a Direct heliocentric Stage-1 to the parent planet
+    // (the sim auto-chains the moon leg on capture) — no flyby/suggest variants in this cut.
+    if (this.isMoonMission()) { this.selectBest(); return; }
+
+    if (this.routeMode === "suggest") {
+      this.suggestions = suggestRoutes(fromId, this.targetId, t0, { rParkFrom, rParkTo }, this.criterion);
+      this.renderSuggestions();
+      return;
+    }
+
+    if (this.routeMode === "via2" && this.viaId && this.via2Id) {
       const bodyIds = [fromId, this.viaId, this.via2Id, this.targetId];
-      let best: { result: ChainAssistResult; times: number[] } | null = null;
-      for (let k = 0; k < 8; k++) {
-        const tDep = t0 + (depSpan * k) / 7;
-        const r = searchChain(bodyIds, { tDepart: tDep, rParkFrom, rParkTo, steps: 7 });
-        if (r && (!best || r.result.dvTotal < best.result.dvTotal)) best = r;
+      if (new Set(bodyIds).size === 4) {
+        const refs = this.balancedRefs();
+        const best = bestChain(bodyIds, t0, { rParkFrom, rParkTo, depSpan: win.depSpan, criterion: this.criterion, refs });
+        this.chain = best ? { ...best, bodyIds } : null;
       }
-      this.chain = best ? { ...best, bodyIds } : null;
       this.selectBest();
       return;
     }
 
-    // Single gravity-assist search (when one flyby body is chosen): scan a few
-    // departure dates, and for each grid the flyby/arrival times, keeping the cheapest.
-    if (this.viaId && this.viaId !== this.targetId && this.viaId !== fromId) {
-      const aFly = bodyElements(BODY_BY_ID.get(this.viaId)!, t0)?.a ?? aFrom;
-      const tofToFly = hohmann(MU_SUN, aFrom, aFly).tof;
-      const tofFlyToTgt = hohmann(MU_SUN, aFly, aTo).tof;
-      let best: AssistResult | null = null;
-      for (let k = 0; k < 8; k++) {
-        const tDep = t0 + (depSpan * k) / 7;
-        const r = searchAssist(fromId, this.viaId, this.targetId, {
-          tDepart: tDep,
-          flybyWindow: [tDep + 0.6 * tofToFly, tDep + 1.6 * tofToFly],
-          arriveWindow: [tDep + 0.6 * tofToFly + 0.5 * tofFlyToTgt, tDep + 1.6 * tofToFly + 2.2 * tofFlyToTgt],
-          rParkFrom,
-          rParkTo,
-          steps: 16,
-        });
-        if (r && (!best || r.dvTotal < best.dvTotal)) best = r;
-      }
-      this.assist = best;
+    if (this.routeMode === "via1" && this.viaId && this.viaId !== this.targetId && this.viaId !== fromId) {
+      const refs = this.balancedRefs();
+      this.assist = bestAssist(fromId, this.viaId, this.targetId, t0, { rParkFrom, rParkTo, depSpan: win.depSpan, criterion: this.criterion, refs });
     }
     this.selectBest();
   }
 
+  /** Reference scales for the "balanced" criterion = the porkchop's min-Δv cell. */
+  private balancedRefs(): { dvRef: number; tofRef: number } {
+    const dvMin = this.pork ? bestPorkCell(this.pork, "dv") : null;
+    return dvMin ? { dvRef: dvMin.total, tofRef: dvMin.tof } : { dvRef: 1, tofRef: 1 };
+  }
+
   private selectBest(): void {
-    if (!this.pork || !this.pork.best) {
+    const cell = this.pork ? bestPorkCell(this.pork, this.criterion) : null;
+    if (!cell) {
       this.draw();
-      if (this.viaId) { this.updateReadout(); this.updatePreview(); return; } // assist mode draws its own readout
+      if (this.viaId) { this.updateReadout(); this.updatePreview(); return; }
       this.readout.textContent = "No transfer solution in range.";
       this.traj.setPreviewRoute(null);
       return;
     }
-    const b = this.pork.best;
-    this.selI = Math.round((b.depT - this.pork.depStart) / this.pork.depStep);
-    this.selJ = Math.round((b.tof - this.pork.tofStart) / this.pork.tofStep);
+    this.selI = Math.round((cell.depT - this.pork!.depStart) / this.pork!.depStep);
+    this.selJ = Math.round((cell.tof - this.pork!.tofStart) / this.pork!.tofStep);
     this.draw();
     this.updateReadout();
     this.updatePreview();
@@ -319,10 +470,9 @@ export class TransferPanel {
     const cellH = CANVAS_H / this.pork.tofN;
     const i = Math.floor(px / cellW);
     const jFromTop = Math.floor(py / cellH);
-    const j = this.pork.tofN - 1 - jFromTop; // tof increases upward
+    const j = this.pork.tofN - 1 - jFromTop;
     if (i < 0 || i >= this.pork.depN || j < 0 || j >= this.pork.tofN) return;
-    this.selI = i;
-    this.selJ = j;
+    this.selI = i; this.selJ = j;
     this.draw();
     this.updateReadout();
     this.updatePreview();
@@ -335,11 +485,8 @@ export class TransferPanel {
     const { cells, depN, tofN, best } = this.pork;
     const cellW = CANVAS_W / depN;
     const cellH = CANVAS_H / tofN;
-
-    // Colour scale: best..~2.2× best across the blue→red ramp.
     const lo = best ? best.total : 0;
     const hi = best ? best.total * 2.2 : 1;
-
     for (let i = 0; i < depN; i++) {
       for (let j = 0; j < tofN; j++) {
         const cell = cells[i]![j]!;
@@ -354,8 +501,6 @@ export class TransferPanel {
         ctx.fillRect(x, y, cellW + 0.6, cellH + 0.6);
       }
     }
-
-    // Best (white ring) and selection (crosshair).
     if (best) {
       const bi = Math.round((best.depT - this.pork.depStart) / this.pork.depStep);
       const bj = Math.round((best.tof - this.pork.tofStart) / this.pork.tofStep);
@@ -382,164 +527,252 @@ export class TransferPanel {
     return this.pork.cells[this.selI]?.[this.selJ] ?? null;
   }
 
+  // ── Suggest list ─────────────────────────────────────────────────────────────
+
+  private renderSuggestions(): void {
+    this.suggestEl.innerHTML = "";
+    if (this.suggestions.length === 0) {
+      this.suggestEl.appendChild(div("transfer-readout", "No route found to this destination."));
+      setDisabled(this.commitBtn, true, "No route found.");
+      return;
+    }
+    const cheapest = Math.min(...this.suggestions.map((r) => r.dvTotal));
+    this.suggestEl.appendChild(div("section-label", `BEST ROUTES — ${this.criterionLabel()}`));
+    for (const r of this.suggestions) {
+      const row = btn(
+        `${r.label}  ·  ${(r.dvTotal / 1000).toFixed(2)} km/s  ·  ${((r.tArrive - r.tDepart) / DAY).toFixed(0)} d${r.dvTotal === cheapest ? "  (cheapest)" : ""}`,
+        () => this.selectSuggestion(r),
+      );
+      row.className = "suggest-row";
+      this.suggestEl.appendChild(row);
+    }
+    this.updateReadout();
+    this.traj.setPreviewRoute(null);
+  }
+
+  /** Adopt a suggested route: switch to the matching concrete mode with its state preloaded. */
+  private selectSuggestion(r: SuggestedRoute): void {
+    if (r.kind === "direct") {
+      this.routeMode = "direct";
+      this.viaId = ""; this.via2Id = "";
+    } else if (r.kind === "assist" && r.assist) {
+      this.routeMode = "via1";
+      this.viaId = r.bodyIds[1]!; this.via2Id = "";
+      this.assist = r.assist;
+    } else if (r.kind === "chain" && r.chain) {
+      this.routeMode = "via2";
+      this.viaId = r.bodyIds[1]!; this.via2Id = r.bodyIds[2]!;
+      this.chain = { ...r.chain, bodyIds: r.bodyIds };
+    }
+    for (const k of ["direct", "suggest", "via1", "via2"] as RouteMode[]) this.modeBtns[k]?.classList.toggle("active", k === this.routeMode);
+    this.viaRow.style.display = this.routeMode === "via1" || this.routeMode === "via2" ? "flex" : "none";
+    this.via2Row.style.display = this.routeMode === "via2" ? "flex" : "none";
+    this.suggestEl.style.display = "none";
+    this.canvas.style.display = "block";
+    this.refreshSelects();
+    // For direct, recompute the porkchop selection; for assist/chain the result is preloaded.
+    if (r.kind === "direct") { this.recompute(); } else { this.selectBest(); }
+  }
+
+  private criterionLabel(): string {
+    return { dv: "least Δv", time: "shortest flight", balanced: "balanced" }[this.criterion];
+  }
+
+  // ── Readout + commit ─────────────────────────────────────────────────────────
+
   private updateReadout(): void {
     const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
 
-    // Aerocapture is a direct-arrival option at a body with an atmosphere only.
-    const hasAtm = !!BODY_BY_ID.get(this.targetId)?.atmosphere;
-    this.captureSel.disabled = !hasAtm || !!this.viaId;
-    if (this.captureSel.disabled && this.captureMode === "aerocapture") {
-      this.captureMode = "propulsive";
-      this.captureSel.value = "propulsive";
+    // Moon transfer: a single parent-centric hop, costed by searchMoonWindow.
+    if (this.isMoonTarget() && ship) {
+      const moon = BODY_BY_ID.get(this.targetId)!;
+      const m = this.moonPlan;
+      this.axisEl.innerHTML = `<span>${BODY_BY_ID.get(this.originId())?.name} orbit → ${moon.name}</span>`;
+      if (!m) {
+        this.readout.innerHTML = `No transfer window to ${moon.name} found.`;
+        setDisabled(this.commitBtn, true, "No window found."); return;
+      }
+      const haveDv = dvRemaining(ship);
+      const feasible = m.dvDepart + m.dvArrive <= haveDv;
+      this.readout.innerHTML =
+        kv("Depart", formatDate(m.tDepart)) + kv("Arrive", formatDate(m.tArrive)) +
+        kv("Flight time", `${((m.tArrive - m.tDepart) / DAY).toFixed(1)} days`) +
+        kv("Injection Δv", `${(m.dvDepart / 1000).toFixed(3)} km/s`) +
+        kv("Capture Δv", `${(m.dvArrive / 1000).toFixed(3)} km/s`) +
+        kv("Total Δv", `${((m.dvDepart + m.dvArrive) / 1000).toFixed(3)} km/s`) +
+        kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+        (feasible ? `<div class="ok">✓ within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
+      setDisabled(this.commitBtn, !feasible, "Transfer Δv exceeds the ship's budget.");
+      return;
     }
 
-    // Chain mode: show the multi-flyby ledger (per-leg Δv) and compare to direct.
+    // A cross-system mission flies a Direct heliocentric Stage-1 to the parent planet — its
+    // capture options and porkchop cell are read against that planet, not the moon.
+    const mission = this.isMoonMission();
+    const directLike = mission || this.routeMode === "direct";
+
+    // Capture mode is a direct-arrival option at a body with an atmosphere only.
+    const hasAtm = !!BODY_BY_ID.get(this.effectiveTarget())?.atmosphere;
+    this.captureSel.disabled = !hasAtm || !directLike;
+    this.capRow.style.display = directLike ? "flex" : "none";
+    if (this.captureSel.disabled && this.captureMode === "aerocapture") {
+      this.captureMode = "propulsive"; this.captureSel.value = "propulsive";
+    }
+
+    if (!mission && this.routeMode === "suggest") return; // the list is the readout
+
+    const optLine = kv("Optimizing", this.criterionLabel());
+
     if (this.chain && ship) {
       const r = this.chain.result;
       const haveDv = dvRemaining(ship);
-      const need = r.dvDepart + r.dvFlybyTotal; // injection + every flyby residual
+      const need = r.dvDepart + r.dvFlybyTotal;
       const feasible = need <= haveDv;
-      const directBest = this.pork?.best?.total;
       const names = r.flybys.map((f) => BODY_BY_ID.get(f.bodyId)!.name).join(" → ");
       this.axisEl.innerHTML = `<span>gravity-assist chain via ${names}</span>`;
       this.readout.innerHTML =
+        optLine +
         kv("Depart", formatDate(r.tDepart)) +
-        r.flybys.map((f) =>
-          kv(`Flyby ${BODY_BY_ID.get(f.bodyId)!.name}`,
-            `${formatDate(f.t)} · turn ${((f.turnRequired * 180) / Math.PI).toFixed(0)}° · ${(f.dvFlyby / 1000).toFixed(3)} km/s${f.unpowered ? " (free)" : ""}`),
-        ).join("") +
+        r.flybys.map((f) => kv(`Flyby ${BODY_BY_ID.get(f.bodyId)!.name}`,
+          `${formatDate(f.t)} · ${(f.dvFlyby / 1000).toFixed(3)} km/s${f.unpowered ? " (free)" : ""}`)).join("") +
         kv("Arrive", formatDate(r.tArrive)) +
+        kv("Flight time", `${((r.tArrive - r.tDepart) / DAY).toFixed(0)} days`) +
         kv("Injection Δv", `${(r.dvDepart / 1000).toFixed(3)} km/s`) +
         kv("Flyby Δv (total)", `${(r.dvFlybyTotal / 1000).toFixed(3)} km/s${r.unpowered ? " (all free)" : ""}`) +
         kv("Capture Δv", `${(r.dvArrive / 1000).toFixed(3)} km/s`) +
         kv("Total Δv", `${(r.dvTotal / 1000).toFixed(3)} km/s`) +
-        (directBest ? kv("Direct best Δv", `${(directBest / 1000).toFixed(3)} km/s`) : "") +
-        (feasible
-          ? `<div class="ok">✓ injection + flybys within budget</div>`
-          : `<div class="warn">✗ exceeds Δv budget</div>`);
+        (feasible ? `<div class="ok">✓ injection + flybys within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
       setDisabled(this.commitBtn, !feasible, "Injection + flyby Δv exceeds the ship's budget.");
       return;
     }
 
-    // Chain requested but no feasible schedule found.
-    if (this.via2Id && ship && !this.chain) {
-      this.readout.innerHTML = "No usable two-flyby chain in range — try different via bodies.";
+    if (!mission && this.routeMode === "via2" && ship && !this.chain) {
+      this.readout.innerHTML = optLine + "No usable two-flyby chain in range — try different via bodies.";
       setDisabled(this.commitBtn, true, "No usable gravity-assist chain in range.");
       return;
     }
 
-    // Gravity-assist mode: show the assisted plan and compare to the direct best.
-    if (this.viaId && ship) {
+    if (!mission && this.viaId && ship) {
       const a = this.assist;
       if (!a) {
-        this.readout.innerHTML = `No usable ${BODY_BY_ID.get(this.viaId)?.name ?? this.viaId} assist in range.`;
+        this.readout.innerHTML = optLine + `No usable ${BODY_BY_ID.get(this.viaId)?.name ?? this.viaId} assist in range.`;
         setDisabled(this.commitBtn, true, "No usable gravity-assist solution in range.");
         return;
       }
       const haveDv = dvRemaining(ship);
-      const need = a.dvDepart + a.dvFlyby; // the ship must afford injection + flyby burn
+      const need = a.dvDepart + a.dvFlyby;
       const feasible = need <= haveDv;
-      const directBest = this.pork?.best?.total;
+      const directBest = this.pork ? bestPorkCell(this.pork, "dv")?.total : undefined;
       this.axisEl.innerHTML = `<span>gravity assist via ${BODY_BY_ID.get(this.viaId)!.name}</span>`;
       this.readout.innerHTML =
+        optLine +
         kv("Depart", formatDate(a.tDepart)) +
         kv(`Flyby ${BODY_BY_ID.get(this.viaId)!.name}`, `${formatDate(a.tFlyby)} · ${(a.flybyRadius / 1000).toFixed(0)} km, turn ${((a.turnRequired * 180) / Math.PI).toFixed(0)}°`) +
         kv("Arrive", formatDate(a.tArrive)) +
+        kv("Flight time", `${((a.tArrive - a.tDepart) / DAY).toFixed(0)} days`) +
         kv("Injection Δv", `${(a.dvDepart / 1000).toFixed(3)} km/s`) +
         kv("Flyby Δv", `${(a.dvFlyby / 1000).toFixed(3)} km/s${a.unpowered ? " (free)" : ""}`) +
         kv("Capture Δv", `${(a.dvArrive / 1000).toFixed(3)} km/s`) +
         kv("Total Δv", `${(a.dvTotal / 1000).toFixed(3)} km/s`) +
         (directBest ? kv("Direct best Δv", `${(directBest / 1000).toFixed(3)} km/s`) : "") +
-        (feasible
-          ? `<div class="ok">✓ injection + flyby within budget</div>`
-          : `<div class="warn">✗ exceeds Δv budget</div>`);
+        (feasible ? `<div class="ok">✓ injection + flyby within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
       setDisabled(this.commitBtn, !feasible, "Injection + flyby Δv exceeds the ship's budget.");
       return;
     }
 
     const cell = this.selectedCell();
     if (!cell || !ship || !isFinite(cell.total)) {
-      this.readout.textContent = "No solution for this cell.";
+      this.readout.innerHTML = optLine + "No solution for this cell.";
       setDisabled(this.commitBtn, true, "No transfer solution for this cell — pick another or use the optimum.");
       return;
     }
     const haveDv = dvRemaining(ship);
-    const target = BODY_BY_ID.get(this.targetId);
-    const fromId = ship.primary === "sun" ? "earth" : ship.primary;
-    this.axisEl.innerHTML = `<span>↑ flight time &nbsp; → departure date</span>`;
+    const effId = this.effectiveTarget();
+    const target = BODY_BY_ID.get(effId);
+    const fromId = this.originId();
+    // For a cross-system mission the porkchop targets the parent planet (Stage 1); name both legs.
+    const moonName = mission ? BODY_BY_ID.get(this.targetId)!.name : "";
+    const stage2 = mission
+      ? kv("Stage 2", `${target!.name} → ${moonName} (auto on arrival)`) : "";
+    this.axisEl.innerHTML = mission
+      ? `<span>Stage 1: ${BODY_BY_ID.get(fromId)?.name} → ${target!.name} &nbsp;·&nbsp; → departure date</span>`
+      : `<span>↑ flight time &nbsp; → departure date</span>`;
+    const dvMin = this.pork ? bestPorkCell(this.pork, "dv") : null;
+    const trade = this.criterion !== "dv" && dvMin
+      ? kv("Min-Δv flight time", `${(dvMin.tof / DAY).toFixed(0)} days @ ${(dvMin.total / 1000).toFixed(2)} km/s`) : "";
 
-    // Aerocapture mode (direct arrival at a body with an atmosphere): the drag pass
-    // replaces the propulsive capture for a small trim, so only the injection must fit.
     const aero = this.captureMode === "aerocapture" && target?.atmosphere
-      ? aerocapturePreview(this.targetId, fromId, cell.depT, cell.arrT) : null;
+      ? aerocapturePreview(effId, fromId, cell.depT, cell.arrT) : null;
     if (this.captureMode === "aerocapture" && target?.atmosphere) {
       const feasible = aero != null && aero.feasible && cell.dvDepart <= haveDv;
       this.readout.innerHTML =
-        kv("Depart", formatDate(cell.depT)) +
-        kv("Arrive", formatDate(cell.arrT)) +
-        kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) +
+        optLine +
+        kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
+        kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) + trade +
         kv("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
         kv("Capture", aero?.feasible ? "aerocapture — drag pass" : "aerocapture not possible") +
         (aero?.feasible ? kv("Arrival trim Δv", `${(aero.trimDv / 1000).toFixed(3)} km/s`) : "") +
         (aero ? kv("Saved vs propulsive", `${(aero.propulsiveDv / 1000).toFixed(3)} km/s`) : "") +
-        kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
-        (feasible
-          ? `<div class="ok">✓ injection within budget — atmosphere does the braking</div>`
-          : aero && !aero.feasible
-            ? `<div class="warn">✗ arrival too fast to aerocapture here</div>`
-            : `<div class="warn">✗ injection exceeds Δv budget</div>`);
+        stage2 +
+        (feasible ? `<div class="ok">✓ injection within budget — atmosphere does the braking</div>`
+          : aero && !aero.feasible ? `<div class="warn">✗ arrival too fast to aerocapture here</div>`
+          : `<div class="warn">✗ injection exceeds Δv budget</div>`);
       setDisabled(this.commitBtn, !feasible, "Aerocapture infeasible or injection exceeds budget.");
       return;
     }
 
     const feasible = cell.dvDepart <= haveDv;
     this.readout.innerHTML =
-      kv("Depart", formatDate(cell.depT)) +
-      kv("Arrive", formatDate(cell.arrT)) +
-      kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) +
+      optLine +
+      kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
+      kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) + trade +
       kv("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
-      kv("Arrival (capture) Δv", `${(cell.dvArrive / 1000).toFixed(3)} km/s`) +
+      kv(mission ? "Stage 1 capture Δv" : "Arrival (capture) Δv", `${(cell.dvArrive / 1000).toFixed(3)} km/s`) +
       kv("Total Δv", `${(cell.total / 1000).toFixed(3)} km/s`) +
+      stage2 +
       kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
-      (feasible
-        ? `<div class="ok">✓ injection within budget</div>`
-        : `<div class="warn">✗ injection exceeds Δv budget</div>`);
+      (feasible ? `<div class="ok">✓ injection within budget</div>` : `<div class="warn">✗ injection exceeds Δv budget</div>`);
     setDisabled(this.commitBtn, !feasible, "Injection Δv exceeds the ship's budget.");
   }
 
   private commit(): void {
     if (!this.shipId) return;
+    if (this.isMoonTarget() && this.moonPlan) {
+      if (!planMoonTransfer(this.sim, this.shipId, this.targetId, this.moonPlan.tDepart, this.moonPlan.tArrive)) return;
+      this.focusAndClose();
+      return;
+    }
     if (this.chain) {
       if (!planChainAssist(this.sim, this.shipId, this.chain.bodyIds, this.chain.times)) return;
-      this.sm.setFocusTarget(this.shipId, (t) => {
-        const s = this.sim.world.ships.get(this.shipId!);
-        return s ? shipWorldState(s, t).r : { x: 0, y: 0, z: 0 };
-      }, 500);
-      this.close();
+      this.focusAndClose();
       return;
     }
     if (this.viaId && this.assist) {
       const a = this.assist;
       if (!planAssist(this.sim, this.shipId, this.viaId, this.targetId, a.tDepart, a.tFlyby, a.tArrive)) return;
-      this.sm.setFocusTarget(this.shipId, (t) => {
-        const s = this.sim.world.ships.get(this.shipId!);
-        return s ? shipWorldState(s, t).r : { x: 0, y: 0, z: 0 };
-      }, 500);
-      this.close();
+      this.focusAndClose();
       return;
     }
     const cell = this.selectedCell();
     if (!cell) return;
-    const target = BODY_BY_ID.get(this.targetId);
+    const target = BODY_BY_ID.get(this.effectiveTarget());
     const mode = this.captureMode === "aerocapture" && target?.atmosphere ? "aerocapture" : "propulsive";
-    const plan = planTransfer(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT, mode);
-    if (!plan) return;
-    // Focus the ship and let the player fast-forward to the window.
-    this.sm.setFocusTarget(this.shipId, (t) => {
+    // A cross-system mission plans the Stage-1 heliocentric leg to the parent planet and tags the
+    // final moon; the sim auto-chains Stage 2 on capture. A plain transfer otherwise.
+    if (this.isMoonMission()) {
+      if (!planMoonMission(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT, mode)) return;
+      this.focusAndClose();
+      return;
+    }
+    if (!planTransfer(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT, mode)) return;
+    this.focusAndClose();
+  }
+
+  private focusAndClose(): void {
+    this.sm.setFocusTarget(this.shipId!, (t) => {
       const s = this.sim.world.ships.get(this.shipId!);
       return s ? shipWorldState(s, t).r : { x: 0, y: 0, z: 0 };
     }, 500);
     this.close();
   }
 }
-
