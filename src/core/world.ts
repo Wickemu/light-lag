@@ -47,9 +47,9 @@ export interface InterstellarLeg {
   startPos: Vec3; // departure position in the root (ecliptic-J2000) frame (m)
 }
 
-/** An optional gravity-assist flyby leg before the final target. The ship is
- *  seeded toward `bodyId`, swings past it (the heliocentric bend is free), pays
- *  any powered residual, then continues to the target. */
+/** One gravity-assist flyby in a (possibly multi-body) chain. The ship is seeded
+ *  toward `bodyId`, swings past it (the heliocentric bend is free), pays any powered
+ *  residual, then continues to the next flyby — or, for the last one, to the target. */
 export interface FlybyLeg {
   bodyId: string;
   tFlyby: number; // s since J2000 — the patched-conic flyby instant
@@ -109,7 +109,9 @@ export interface ShipTransfer {
   departed: boolean;
   inSoi: boolean; // entered the target's sphere of influence
   arrived: boolean; // captured into orbit at the target
-  flyby?: FlybyLeg; // a gravity-assist leg between departure and the target
+  /** Ordered gravity-assist flyby chain between departure and the target (one entry
+   *  per intermediate body; a single-flyby mission is a 1-element array). */
+  flybys?: FlybyLeg[];
 }
 
 /**

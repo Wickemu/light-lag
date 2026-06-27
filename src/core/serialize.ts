@@ -74,11 +74,10 @@ function qTransfer(t: ShipTransfer) {
     dvDepart: q(t.dvDepart), dvArrive: q(t.dvArrive),
     departed: t.departed, inSoi: t.inSoi, arrived: t.arrived,
   };
-  if (t.flyby) {
-    o.flyby = {
-      bodyId: t.flyby.bodyId, tFlyby: q(t.flyby.tFlyby),
-      dvBurn: q(t.flyby.dvBurn), done: t.flyby.done,
-    };
+  if (t.flybys) {
+    o.flybys = t.flybys.map((f) => ({
+      bodyId: f.bodyId, tFlyby: q(f.tFlyby), dvBurn: q(f.dvBurn), done: f.done,
+    }));
   }
   return o;
 }

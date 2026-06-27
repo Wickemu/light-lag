@@ -40,9 +40,11 @@ flyable, to-scale 3D Solar System.
   only a round-trip later. A NACK arrives if the ship can't execute (out of propellant, wrong
   frame). Telemetry replies propagate back at `c` the same way.
 - **Transfer toolkit**: Hohmann, Lambert (multi-revolution), porkchop launch windows, bi-elliptic
-  transfers, plane changes, and **gravity-assist flybys** — plan an Earth→Jupiter→Saturn
-  slingshot and watch the heliocentric energy jump at the flyby (the bend is free). Gravity-assist
-  via-body mode in the transfer planner; the in-sim executor uses patched-conic geometry.
+  transfers, plane changes, and **gravity-assist flybys** — including **multi-flyby chains**:
+  plan an Earth→Mars→Jupiter→Saturn tour and watch the heliocentric energy jump at *each*
+  slingshot (every bend is free). One- and two-flyby missions fly in-sim via patched-conic
+  geometry; pick the via bodies in the transfer planner (VIA FLYBY 1 / 2) and the route draws
+  every leg.
 - **Landing & takeoff** Δv/propellant budgeting: a calibrated gravity-turn ascent through real
   exponential atmospheres (Earth→LEO ≈ 9.3 km/s, Moon ≈ 1.9, Mars ≈ 4.0), aerobraking on
   descent, and ships that sit on the surface co-rotating with the body.

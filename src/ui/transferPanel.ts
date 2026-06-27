@@ -14,8 +14,8 @@ import { type SceneManager } from "../render/SceneManager.ts";
 import { type TrajectoryViews } from "../render/trajectoryViews.ts";
 import { computePorkchop, type Porkchop, type PorkCell } from "../core/maneuver/porkchop.ts";
 import { hohmann, synodicPeriod } from "../core/maneuver/hohmann.ts";
-import { searchAssist, type AssistResult } from "../core/maneuver/assist.ts";
-import { planTransfer, planAssist } from "../app/commands.ts";
+import { searchAssist, searchChain, type AssistResult, type ChainAssistResult } from "../core/maneuver/assist.ts";
+import { planTransfer, planAssist, planChainAssist } from "../app/commands.ts";
 import { dvRemaining, shipWorldState, shipOsculatingElements } from "../core/ships.ts";
 import { periapsisRadius, orbitalPeriod } from "../core/orbit.ts";
 import { bodyElements } from "../core/ephemeris.ts";
@@ -40,10 +40,13 @@ export class TransferPanel {
   private axisEl!: HTMLElement;
 
   private viaSel!: HTMLSelectElement;
+  private via2Sel!: HTMLSelectElement;
   private shipId: string | null = null;
   private targetId = "mars";
-  private viaId = ""; // "" = direct; otherwise a flyby body id
+  private viaId = ""; // "" = direct; otherwise the first flyby body id
+  private via2Id = ""; // "" = single flyby; otherwise a second flyby body id (a chain)
   private assist: AssistResult | null = null;
+  private chain: { result: ChainAssistResult; times: number[]; bodyIds: string[] } | null = null;
   private pork: Porkchop | null = null;
   private selI = -1;
   private selJ = -1;
@@ -96,6 +99,25 @@ export class TransferPanel {
     this.viaSel.onchange = () => { this.viaId = this.viaSel.value; this.recompute(); };
     viaRow.appendChild(this.viaSel);
     this.panel.appendChild(viaRow);
+
+    // Optional SECOND flyby body — turns the assist into a chain (origin → via → via2 →
+    // target). "—" = single flyby.
+    const via2Row = div("transfer-head");
+    via2Row.appendChild(div("section-label", "VIA FLYBY 2"));
+    this.via2Sel = document.createElement("select");
+    this.via2Sel.className = "target-sel";
+    const none2 = document.createElement("option");
+    none2.value = ""; none2.textContent = "— Single flyby —";
+    this.via2Sel.appendChild(none2);
+    for (const id of TARGETS) {
+      const o = document.createElement("option");
+      o.value = id;
+      o.textContent = BODY_BY_ID.get(id)!.name;
+      this.via2Sel.appendChild(o);
+    }
+    this.via2Sel.onchange = () => { this.via2Id = this.via2Sel.value; this.recompute(); };
+    via2Row.appendChild(this.via2Sel);
+    this.panel.appendChild(via2Row);
 
     this.canvas = document.createElement("canvas");
     this.canvas.width = CANVAS_W;
@@ -150,11 +172,19 @@ export class TransferPanel {
     const rParkTo = target ? target.radius + DEFAULT_CAPTURE_ALT : undefined;
     const el = shipOsculatingElements(ship, this.sim.world.t);
     const rParkFrom = periapsisRadius(el.a, el.e);
+    if (this.chain) {
+      const result = this.chain.result;
+      this.traj.setPreviewRoute({
+        fromId, targetId: this.targetId, tDepart: result.tDepart, tArrive: result.tArrive,
+        flybys: result.flybys.map((f) => ({ bodyId: f.bodyId, tFlyby: f.t })), rParkFrom, rParkTo,
+      });
+      return;
+    }
     if (this.viaId && this.assist) {
       const a = this.assist;
       this.traj.setPreviewRoute({
         fromId, targetId: this.targetId, tDepart: a.tDepart, tArrive: a.tArrive,
-        flyby: { bodyId: this.viaId, tFlyby: a.tFlyby }, rParkFrom, rParkTo,
+        flybys: [{ bodyId: this.viaId, tFlyby: a.tFlyby }], rParkFrom, rParkTo,
       });
       return;
     }
@@ -205,9 +235,26 @@ export class TransferPanel {
       rParkTo,
     });
 
-    // Gravity-assist search (when a flyby body is chosen): scan a few departure
-    // dates, and for each grid the flyby/arrival times, keeping the cheapest.
+    // Two-flyby CHAIN search (when a second via body is chosen): scan a few
+    // departure dates, grid each leg's time-of-flight, keep the cheapest chain.
     this.assist = null;
+    this.chain = null;
+    const distinct = new Set([fromId, this.viaId, this.via2Id, this.targetId]);
+    if (this.viaId && this.via2Id && distinct.size === 4) {
+      const bodyIds = [fromId, this.viaId, this.via2Id, this.targetId];
+      let best: { result: ChainAssistResult; times: number[] } | null = null;
+      for (let k = 0; k < 8; k++) {
+        const tDep = t0 + (depSpan * k) / 7;
+        const r = searchChain(bodyIds, { tDepart: tDep, rParkFrom, rParkTo, steps: 7 });
+        if (r && (!best || r.result.dvTotal < best.result.dvTotal)) best = r;
+      }
+      this.chain = best ? { ...best, bodyIds } : null;
+      this.selectBest();
+      return;
+    }
+
+    // Single gravity-assist search (when one flyby body is chosen): scan a few
+    // departure dates, and for each grid the flyby/arrival times, keeping the cheapest.
     if (this.viaId && this.viaId !== this.targetId && this.viaId !== fromId) {
       const aFly = bodyElements(BODY_BY_ID.get(this.viaId)!, t0)?.a ?? aFrom;
       const tofToFly = hohmann(MU_SUN, aFrom, aFly).tof;
@@ -321,6 +368,41 @@ export class TransferPanel {
   private updateReadout(): void {
     const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
 
+    // Chain mode: show the multi-flyby ledger (per-leg Δv) and compare to direct.
+    if (this.chain && ship) {
+      const r = this.chain.result;
+      const haveDv = dvRemaining(ship);
+      const need = r.dvDepart + r.dvFlybyTotal; // injection + every flyby residual
+      const feasible = need <= haveDv;
+      const directBest = this.pork?.best?.total;
+      const names = r.flybys.map((f) => BODY_BY_ID.get(f.bodyId)!.name).join(" → ");
+      this.axisEl.innerHTML = `<span>gravity-assist chain via ${names}</span>`;
+      this.readout.innerHTML =
+        kv("Depart", formatDate(r.tDepart)) +
+        r.flybys.map((f) =>
+          kv(`Flyby ${BODY_BY_ID.get(f.bodyId)!.name}`,
+            `${formatDate(f.t)} · turn ${((f.turnRequired * 180) / Math.PI).toFixed(0)}° · ${(f.dvFlyby / 1000).toFixed(3)} km/s${f.unpowered ? " (free)" : ""}`),
+        ).join("") +
+        kv("Arrive", formatDate(r.tArrive)) +
+        kv("Injection Δv", `${(r.dvDepart / 1000).toFixed(3)} km/s`) +
+        kv("Flyby Δv (total)", `${(r.dvFlybyTotal / 1000).toFixed(3)} km/s${r.unpowered ? " (all free)" : ""}`) +
+        kv("Capture Δv", `${(r.dvArrive / 1000).toFixed(3)} km/s`) +
+        kv("Total Δv", `${(r.dvTotal / 1000).toFixed(3)} km/s`) +
+        (directBest ? kv("Direct best Δv", `${(directBest / 1000).toFixed(3)} km/s`) : "") +
+        (feasible
+          ? `<div class="ok">✓ injection + flybys within budget</div>`
+          : `<div class="warn">✗ exceeds Δv budget</div>`);
+      setDisabled(this.commitBtn, !feasible, "Injection + flyby Δv exceeds the ship's budget.");
+      return;
+    }
+
+    // Chain requested but no feasible schedule found.
+    if (this.via2Id && ship && !this.chain) {
+      this.readout.innerHTML = "No usable two-flyby chain in range — try different via bodies.";
+      setDisabled(this.commitBtn, true, "No usable gravity-assist chain in range.");
+      return;
+    }
+
     // Gravity-assist mode: show the assisted plan and compare to the direct best.
     if (this.viaId && ship) {
       const a = this.assist;
@@ -376,6 +458,15 @@ export class TransferPanel {
 
   private commit(): void {
     if (!this.shipId) return;
+    if (this.chain) {
+      if (!planChainAssist(this.sim, this.shipId, this.chain.bodyIds, this.chain.times)) return;
+      this.sm.setFocusTarget(this.shipId, (t) => {
+        const s = this.sim.world.ships.get(this.shipId!);
+        return s ? shipWorldState(s, t).r : { x: 0, y: 0, z: 0 };
+      }, 500);
+      this.close();
+      return;
+    }
     if (this.viaId && this.assist) {
       const a = this.assist;
       if (!planAssist(this.sim, this.shipId, this.viaId, this.targetId, a.tDepart, a.tFlyby, a.tArrive)) return;

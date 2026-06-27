@@ -69,7 +69,7 @@ describe("planRoute", () => {
   it("rejects an out-of-order flyby", () => {
     const r = planRoute({
       fromId: "earth", targetId: "jupiter", tDepart: 100 * DAY, tArrive: 800 * DAY,
-      flyby: { bodyId: "venus", tFlyby: 50 * DAY }, // before departure
+      flybys: [{ bodyId: "venus", tFlyby: 50 * DAY }], // before departure
     });
     expect(r.ok).toBe(false);
   });

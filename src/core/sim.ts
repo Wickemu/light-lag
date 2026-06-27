@@ -649,9 +649,10 @@ export class Simulation {
 
     const t = this.world.t; // == tr.tDepart
 
-    // Gravity-assist mission: leg 1 aims at the FLYBY body (a patched-conic point),
-    // and a flyby-pass event handles the bend + the leg toward the final target.
-    if (tr.flyby && !tr.flyby.done) {
+    // Gravity-assist mission: leg 1 aims at the FIRST flyby body (a patched-conic
+    // point), and a chain of flyby-pass events handles each bend + the leg toward the
+    // next flyby (or, after the last, the final target).
+    if (tr.flybys && tr.flybys.length > 0 && !tr.flybys[0]!.done) {
       this.executeAssistDeparture(ship, tr, t, depBody);
       return;
     }
@@ -692,15 +693,16 @@ export class Simulation {
 
   /**
    * Departure of a gravity-assist mission: seed the ship on the heliocentric leg
-   * to the FLYBY body's centre (a patched-conic flyby point) with the Lambert
-   * velocity, pay the Oberth injection, and schedule the flyby-pass.
+   * to the FIRST flyby body's centre (a patched-conic flyby point) with the Lambert
+   * velocity, pay the Oberth injection, and schedule the first flyby-pass.
    */
   private executeAssistDeparture(ship: Ship, tr: NonNullable<Ship["transfer"]>, t: number, depBody: BodyDef): void {
-    const flybyBody = BODY_BY_ID.get(tr.flyby!.bodyId);
+    const first = tr.flybys![0]!;
+    const flybyBody = BODY_BY_ID.get(first.bodyId);
     if (!flybyBody) return;
     const depState = bodyState(depBody, t);
-    const fbState = bodyState(flybyBody, tr.flyby!.tFlyby);
-    const leg1 = lambert(depState.r, fbState.r, tr.flyby!.tFlyby - t, MU_SUN, true);
+    const fbState = bodyState(flybyBody, first.tFlyby);
+    const leg1 = lambert(depState.r, fbState.r, first.tFlyby - t, MU_SUN, true);
     if (!leg1) return; // degenerate; leave un-departed for re-planning
 
     const vInf = length(sub(leg1.v1, depState.v));
@@ -717,47 +719,67 @@ export class Simulation {
     ship.v = undefined;
     ship.elements = stateToElements(depState.r, leg1.v1, MU_SUN);
     ship.epoch = t;
-    this.events.push({ t: tr.flyby!.tFlyby, kind: "flyby-pass", entityId: ship.id });
+    this.events.push({ t: first.tFlyby, kind: "flyby-pass", entityId: ship.id });
   }
 
   /**
-   * The gravity-assist flyby itself (patched-conic, instantaneous at heliocentric
-   * scale, mirroring the SOI-as-point departure idealization). The ship is at the
-   * flyby body; the body-relative excess velocity is rotated toward the leg-2
-   * direction for FREE (the slingshot), only the excess-speed mismatch is charged
-   * (an Oberth periapsis burn), and the ship continues to the final target.
+   * One gravity-assist flyby in the chain (patched-conic, instantaneous at
+   * heliocentric scale, mirroring the SOI-as-point departure idealization). The ship
+   * is at the flyby body; the body-relative excess velocity is rotated toward the next
+   * leg's direction for FREE (the slingshot), only the excess-speed mismatch is charged
+   * (an Oberth periapsis burn). The next leg aims at the FOLLOWING flyby body if one
+   * remains (schedule another flyby-pass), else at the final target (schedule capture).
    */
   private executeFlyby(ship: Ship, evT: number): void {
     const tr = ship.transfer;
-    if (!tr || !tr.flyby || tr.flyby.done) return;
-    if (Math.abs(evT - tr.flyby.tFlyby) > 1) return; // stale
-    const flybyBody = BODY_BY_ID.get(tr.flyby.bodyId);
-    const target = BODY_BY_ID.get(tr.targetId);
-    if (!flybyBody || !target) return;
+    if (!tr || !tr.flybys) return;
+    const idx = tr.flybys.findIndex((f) => !f.done && Math.abs(evT - f.tFlyby) <= 1);
+    if (idx < 0) return; // stale or already done
+    const leg = tr.flybys[idx]!;
+    const flybyBody = BODY_BY_ID.get(leg.bodyId);
+    if (!flybyBody) return;
 
     const t = this.world.t;
     const shipHelio = shipRelativeState(ship, t); // heliocentric (primary == sun)
     const fb = bodyState(flybyBody, t);
 
-    // Leg 2 aims the capture at the final target (B-plane), giving the heliocentric
-    // velocity the ship must leave the flyby with.
-    const rCapture = target.radius + DEFAULT_CAPTURE_ALT;
-    const aim = aimArrival(flybyBody, target, t, tr.tArrive, rCapture);
-    if (!aim) return; // re-plannable
+    // Aim the leg leaving this flyby: at the NEXT flyby body's centre (a patched-conic
+    // point, via Lambert) if the chain continues, else at the final target (B-plane
+    // capture aim). Either way it sets the heliocentric velocity to leave the flyby with.
+    const next = tr.flybys[idx + 1];
+    let v1: Vec3;
+    let nextEvent: { t: number; kind: "flyby-pass" | "soi-crossing" };
+    if (next) {
+      const nextBody = BODY_BY_ID.get(next.bodyId);
+      if (!nextBody) return;
+      const nextState = bodyState(nextBody, next.tFlyby);
+      const legN = lambert(shipHelio.r, nextState.r, next.tFlyby - t, MU_SUN, true);
+      if (!legN) return; // re-plannable
+      v1 = legN.v1;
+      nextEvent = { t: next.tFlyby, kind: "flyby-pass" };
+    } else {
+      const target = BODY_BY_ID.get(tr.targetId);
+      if (!target) return;
+      const rCapture = target.radius + DEFAULT_CAPTURE_ALT;
+      const aim = aimArrival(flybyBody, target, t, tr.tArrive, rCapture);
+      if (!aim) return; // re-plannable
+      v1 = aim.v1;
+      nextEvent = { t: aim.tSoi, kind: "soi-crossing" };
+    }
 
     const vInfIn = sub(shipHelio.v, fb.v); // body-relative excess in
-    const vInfOut = sub(aim.v1, fb.v); // body-relative excess out (leg-2 departure)
+    const vInfOut = sub(v1, fb.v); // body-relative excess out (next-leg departure)
     const man = flybyManeuver(vInfIn, vInfOut, flybyBody);
     if (!applyImpulsiveDv(ship, man.dvFlyby)) return; // can't afford the residual burn
 
-    tr.flyby.done = true;
-    tr.flyby.dvBurn = man.dvFlyby;
-    // Continue on the leg-2 heliocentric conic from the (continuous) flyby point.
+    leg.done = true;
+    leg.dvBurn = man.dvFlyby;
+    // Continue on the next heliocentric conic from the (continuous) flyby point.
     ship.primary = "sun";
     ship.mode = "coast";
-    ship.elements = stateToElements(shipHelio.r, aim.v1, MU_SUN);
+    ship.elements = stateToElements(shipHelio.r, v1, MU_SUN);
     ship.epoch = t;
-    this.events.push({ t: aim.tSoi, kind: "soi-crossing", entityId: ship.id });
+    this.events.push({ t: nextEvent.t, kind: nextEvent.kind, entityId: ship.id });
   }
 
   /** End of a low-thrust spiral: settle the ship onto the final circular orbit
