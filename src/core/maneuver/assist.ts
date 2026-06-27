@@ -74,6 +74,7 @@ export interface AssistResult {
   dvTotal: number;
   vInfIn: number; // excess speed arriving at the flyby body (m/s)
   vInfOut: number; // excess speed leaving it (m/s)
+  vInfArrive: number; // hyperbolic excess speed at the TARGET (m/s) — sizes the capture burn
   turnRequired: number; // angle between in/out excess velocities (rad)
   turnMax: number; // largest bend a safe pass provides at vInfIn (rad)
   flybyRadius: number; // chosen periapsis radius (m)
@@ -122,12 +123,13 @@ export function assistTransfer(
   const rParkFrom = p.rParkFrom ?? origin.radius + DEFAULT_CAPTURE_ALT;
   const rParkTo = p.rParkTo ?? target.radius + DEFAULT_CAPTURE_ALT;
   const dvDepart = hyperbolicBurnDv(length(sub(leg1.v1, orig.v)), origin.mu, rParkFrom);
-  const dvArrive = hyperbolicBurnDv(length(sub(leg2.v2, tgt.v)), target.mu, rParkTo);
+  const vInfArrive = length(sub(leg2.v2, tgt.v));
+  const dvArrive = hyperbolicBurnDv(vInfArrive, target.mu, rParkTo);
 
   return {
     tDepart, tFlyby, tArrive,
     dvDepart, dvFlyby, dvArrive, dvTotal: dvDepart + dvFlyby + dvArrive,
-    vInfIn, vInfOut, turnRequired, turnMax, flybyRadius: rp, unpowered,
+    vInfIn, vInfOut, vInfArrive, turnRequired, turnMax, flybyRadius: rp, unpowered,
   };
 }
 
@@ -148,6 +150,7 @@ export interface ChainAssistResult {
   tArrive: number;
   dvDepart: number; // Oberth injection from the origin parking orbit (m/s)
   dvArrive: number; // capture at the target (m/s)
+  vInfArrive: number; // hyperbolic excess speed at the TARGET (m/s) — sizes the capture burn
   dvFlybyTotal: number; // summed powered-flyby Δv across all flybys (m/s)
   dvTotal: number;
   flybys: ChainFlyby[]; // one per intermediate body, in order
@@ -209,11 +212,12 @@ export function chainAssist(
   const rParkFrom = p.rParkFrom ?? origin.radius + DEFAULT_CAPTURE_ALT;
   const rParkTo = p.rParkTo ?? target.radius + DEFAULT_CAPTURE_ALT;
   const dvDepart = hyperbolicBurnDv(length(sub(firstLeg.v1, states[0]!.v)), origin.mu, rParkFrom);
-  const dvArrive = hyperbolicBurnDv(length(sub(lastLeg.v2, states[states.length - 1]!.v)), target.mu, rParkTo);
+  const vInfArrive = length(sub(lastLeg.v2, states[states.length - 1]!.v));
+  const dvArrive = hyperbolicBurnDv(vInfArrive, target.mu, rParkTo);
 
   return {
     tDepart: times[0]!, tArrive: times[times.length - 1]!,
-    dvDepart, dvArrive, dvFlybyTotal,
+    dvDepart, dvArrive, vInfArrive, dvFlybyTotal,
     dvTotal: dvDepart + dvFlybyTotal + dvArrive,
     flybys, unpowered: flybys.every((f) => f.unpowered),
   };

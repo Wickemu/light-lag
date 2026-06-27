@@ -803,7 +803,11 @@ export class Simulation {
     } else {
       const target = BODY_BY_ID.get(tr.targetId);
       if (!target) return;
-      const rCapture = target.radius + DEFAULT_CAPTURE_ALT;
+      // Aerocapture arrival aims the periapsis INTO the atmosphere (aeroPeriAlt); a
+      // propulsive (circular or elliptical) arrival aims at the parking altitude. The
+      // capture geometry itself is then chosen at SOI entry (enterSoi reads aeroPeriAlt /
+      // captureApoAlt) — mirroring a direct transfer's executeDeparture.
+      const rCapture = target.radius + (tr.aeroPeriAlt ?? DEFAULT_CAPTURE_ALT);
       const aim = aimArrival(flybyBody, target, t, tr.tArrive, rCapture);
       if (!aim) return; // re-plannable
       v1 = aim.v1;

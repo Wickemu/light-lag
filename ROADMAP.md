@@ -90,8 +90,19 @@ read-time analytic, suite green, golden hash documented if it moves.
 4. **ISRU / depots (Phase 7)** — mass economy: propellant depots + refueling, ISRU from
    moon/comet/regolith volatiles, and a colony supplied within a transfer window. *(see Phase 7.)*
 
-*(Done since last round: **Oberth-cheap elliptical capture** — `captureAtPeriapsis` no longer
-always circularizes; a transfer can capture into a loose, eccentric ellipse (low periapsis,
+*(Done since last round: **capture geometry for gravity-assist & chain arrivals** — the
+Oberth-cheap elliptical insertion (and aerocapture, where there's an atmosphere) was wired to direct
+transfers but NOT to the gravity-assist/chain solvers, so an assist arrival at a giant could only
+force a ~17 km/s low-circular capture — which a realistically-fuelled orbiter can't afford, stranding
+it on a hyperbola past the planet. Now `planAssist` / `planChainAssist` take a `captureMode` +
+`captureApoAlt` (the assist solvers expose `vInfArrive`; a shared `resolveAssistCapture` picks the
+burn), the in-sim `executeFlyby` aims the final-leg periapsis into the atmosphere for aerocapture, and
+the planner's CAPTURE MODE control now shows for the flyby route modes. A Cassini-class Earth → Jupiter
+→ Saturn tour captures into an eccentric Saturn orbit for **~0.3 km/s** instead of ~11 km/s — the real
+deep-well SOI-insertion technique, now flyable end-to-end. All new fields are optional ⇒ golden hash
+unmoved; impulsive + scheduled-event ⇒ chunk-invariant (a fresh `assistCapture.test.ts` checks the
+one-step ≡ chunked hash). Earlier: **Oberth-cheap elliptical capture** — `captureAtPeriapsis` no
+longer always circularizes; a transfer can capture into a loose, eccentric ellipse (low periapsis,
 apoapsis at ~½ the SOI) via a new optional `ShipTransfer.captureApoAlt` + `ellipticalCaptureDv`,
 which is how real deep-well orbit insertions are flown — burning at the low periapsis where the
 Oberth effect is strongest and shedding only enough energy to drop just below escape. A Jupiter
