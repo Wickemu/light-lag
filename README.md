@@ -59,8 +59,11 @@ flyable, to-scale 3D Solar System.
   constant-proper-accel brachistochrone), the ~24 nearest star systems, a transit estimator, and
   an in-sim flyable flip-and-burn where the crew clock and Earth clock visibly diverge.
 - **Thermal & detection** — there is no stealth in space: hull temperature (Stefan-Boltzmann),
-  IR signature, and detection range are live readouts; a thrusting drive is a beacon whose
-  detection range spans the inner solar system.
+  IR signature, and a defensible **SNR-vs-range** detection curve are live readouts. The
+  detection model is the radiometer equation — a real detector noise-equivalent power,
+  an integration time τ, a 5σ threshold, and background photon shot noise — so range
+  improves only as τ^(1/4) and √(aperture) and still falls only as √(signature). A cold
+  hull is visible ~0.1 AU off; a thrusting drive is a beacon across tens of AU.
 - **J2 oblateness**: secular nodal/apsidal precession applied analytically at read time (exact at
   any time-warp); sun-synchronous inclination helper.
 - **Preset ship catalog**: 30+ real and inferred designs across Historical / Current / Prototype /

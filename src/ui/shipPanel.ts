@@ -591,7 +591,8 @@ export class ShipPanel {
     lines.push(kv("Solar flux", `${th.solarFlux.toFixed(0)} W/m² @ ${(th.distanceFromSun / AU).toFixed(2)} AU`));
     lines.push(kv("Hull temp", `${th.hullTempK.toFixed(0)} K`));
     lines.push(kv("IR signature", fmtPower(th.signatureW) + (th.thrusting ? " — drive HOT" : "")));
-    lines.push(kv("Detectable to", fmtRange(th.detectionRangeM)));
+    lines.push(kv("Detectable to", `${fmtRange(th.detectionRangeM)} (${th.snrThreshold}σ, τ=${(th.integrationTimeS / 3600).toFixed(0)}h)`));
+    lines.push(kv("Min signal", `${(th.minDetectablePowerW * 1e18).toFixed(1)} aW`));
     if (th.thrusting) {
       lines.push(kv("Drive waste heat", fmtPower(th.driveWasteW)));
       lines.push(kv("Radiator needed", `${Math.round(th.radiatorAreaM2).toLocaleString("en-US")} m²`));

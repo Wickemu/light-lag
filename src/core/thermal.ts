@@ -16,7 +16,7 @@
  * Pure SI; depends only on physical constants.
  */
 
-import { SIGMA, L_SUN, AU } from "./constants.ts";
+import { SIGMA, L_SUN, AU, IR_BAND_PHOTON_J } from "./constants.ts";
 
 /** Cosmic-microwave-background floor (K) — the coldest sink a radiator ever sees. */
 export const T_SPACE = 2.725;
@@ -54,22 +54,74 @@ export function irradiance(P: number, d: number): number {
 }
 
 /**
- * Maximum range (m) at which a source radiating `signatureW` is detectable by a
- * telescope of collecting area `aperture` (m²): the distance at which the
- * collected power falls to the limiting noise power.
- *   d_max = √( P·A_tel / (4π·N) )
- *
- * The limiting noise N is the GREATER of the detector's own noise-equivalent
- * power `nep` and an astrophysical `backgroundFloorW` — the in-beam zodiacal-IR +
- * CMB photon background a real sensor integrates against and cannot null out.
- * Past that floor the sensor is background-limited, not detector-limited, so a
- * perfect detector buys nothing: the sky itself sets the range. Default 0 keeps
- * the pure detector-limited behaviour.
+ * A watching telescope's detection parameters — the radiometer equation made
+ * explicit. The 1/r², √-power, and √-aperture relationships are exact physics;
+ * the absolute numbers (NEP, integration time, the in-beam background) are a
+ * documented calibration that sets only the detection SCALE, exactly like
+ * THERMAL_PARAMS/SENSOR in ships.ts.
  */
-export function detectionRange(signatureW: number, aperture: number, nep: number, backgroundFloorW = 0): number {
+export interface SensorSpec {
+  apertureM2: number; // A_tel, collecting area (m²)
+  nep: number; // detector noise-equivalent power (W/√Hz)
+  integrationTimeS: number; // τ, dwell / integration time (s)
+  snrThreshold: number; // SNR needed to call a detection (dimensionless; 5σ convention)
+  bandPhotonEnergyJ: number; // hν of the sensing band (J) — sets background shot noise
+  backgroundInBeamW: number; // P_bg, in-beam zodiacal-IR + CMB power (W). Aperture-
+  // independent: a diffraction-limited system has étendue A_tel·Ω = λ², so a bigger
+  // mirror sees a proportionally smaller patch of sky and the in-beam power is fixed.
+}
+
+/** A reference cooled-IR watching telescope. Documented calibration. */
+export const DEFAULT_SENSOR: SensorSpec = {
+  apertureM2: 1,
+  nep: 1e-16, // cooled IR detector
+  integrationTimeS: 3600, // stares for an hour
+  snrThreshold: 5, // 5σ astronomy convention
+  bandPhotonEnergyJ: IR_BAND_PHOTON_J, // ≈2e-20 J at 10 µm
+  backgroundInBeamW: 1e-14, // zodiacal + CMB in-beam power
+};
+
+/**
+ * Limiting noise POWER (W) of a sensor after integrating for τ: the detector
+ * noise-equivalent power folded over the post-detection bandwidth Δf = 1/(2τ)
+ * (`NEP/√(2τ)`), in quadrature with the background photon shot noise
+ * `√(P_bg·hν/τ)` (N = P_bg·τ/hν background photons, σ = √N, so the power
+ * fluctuation is hν·√N/τ). Both fall as 1/√τ. Past the background term the sensor
+ * is sky-limited, not detector-limited, and a better detector buys nothing.
+ */
+export function sensorNoiseW(s: SensorSpec): number {
+  const pDet = s.nep / Math.sqrt(2 * s.integrationTimeS);
+  const pBg = Math.sqrt((s.backgroundInBeamW * s.bandPhotonEnergyJ) / s.integrationTimeS);
+  return Math.hypot(pDet, pBg);
+}
+
+/** Minimum detectable collected power (W): the SNR threshold × the limiting noise. */
+export function minDetectablePowerW(s: SensorSpec): number {
+  return s.snrThreshold * sensorNoiseW(s);
+}
+
+/**
+ * Maximum range (m) at which a source radiating `signatureW` reaches the sensor's
+ * detection threshold: the distance at which the collected power
+ * `P·A_tel/(4π d²)` falls to the minimum detectable power.
+ *   d_max = √( P·A_tel / (4π·P_min) )
+ *
+ * Falls only as √P — halving the signature only cuts the range by √2, so there is
+ * no real stealth in space. It improves as τ^(1/4) (range ∝ √(1/P_min), P_min ∝
+ * 1/√τ) and as √(aperture), and shortens as √(SNR threshold).
+ */
+export function detectionRange(signatureW: number, s: SensorSpec): number {
   if (signatureW <= 0) return 0;
-  const noise = Math.max(nep, backgroundFloorW);
-  return Math.sqrt((signatureW * aperture) / (4 * Math.PI * noise));
+  return Math.sqrt((signatureW * s.apertureM2) / (4 * Math.PI * minDetectablePowerW(s)));
+}
+
+/** Instantaneous detection SNR of `signatureW` seen at range d (m): collected
+ *  power over the limiting noise. Falls as 1/d²; equals the sensor's SNR
+ *  threshold exactly at detectionRange(). */
+export function snrAtRange(signatureW: number, s: SensorSpec, d: number): number {
+  if (signatureW <= 0) return 0;
+  if (d <= 0) return Infinity;
+  return (signatureW * s.apertureM2) / (4 * Math.PI * d * d * sensorNoiseW(s));
 }
 
 /** Radiating/cross-section area (m²) of a ship of mass m, modelled as a sphere of

@@ -21,6 +21,13 @@ export const C = 299_792_458;
 export const G0 = 9.80665;
 /** Stefan–Boltzmann constant (W·m^-2·K^-4) — radiators and IR signatures. */
 export const SIGMA = 5.670374419e-8;
+/** Planck constant (J·s) — photon energy hν = hc/λ, sets detector shot noise. */
+export const H_PLANCK = 6.62607015e-34;
+/** Sensing band for IR detection (m). 10 µm — the thermal-IR window where warm
+ *  (~300 K) hulls peak. */
+export const IR_BAND_WAVELENGTH = 10e-6;
+/** Photon energy of the IR sensing band (J): hν = hc/λ ≈ 1.99e-20 J at 10 µm. */
+export const IR_BAND_PHOTON_J = (H_PLANCK * C) / IR_BAND_WAVELENGTH;
 /** Solar luminosity (W) — drives the 1/r^2 fall-off of solar power. */
 export const L_SUN = 3.828e26;
 /** Newtonian gravitational constant (m^3·kg^-1·s^-2) — used only where a raw

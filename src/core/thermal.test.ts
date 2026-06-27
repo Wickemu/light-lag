@@ -6,6 +6,11 @@ import {
   radiatorArea,
   equilibriumTemp,
   detectionRange,
+  sensorNoiseW,
+  minDetectablePowerW,
+  snrAtRange,
+  type SensorSpec,
+  DEFAULT_SENSOR,
   hullArea,
 } from "./thermal.ts";
 import { AU, SIGMA } from "./constants.ts";
@@ -55,24 +60,60 @@ describe("Stefan-Boltzmann radiators", () => {
   });
 });
 
-describe("detection — no stealth in space", () => {
+describe("detection — no stealth in space (radiometer equation)", () => {
+  // A detector-limited base sensor (negligible background) for the clean laws.
+  const base: SensorSpec = { ...DEFAULT_SENSOR, backgroundInBeamW: 0 };
+
   it("range grows as √(signature) and is never zero for a warm object", () => {
-    const r1 = detectionRange(1e6, 1, 1e-15);
-    const r2 = detectionRange(4e6, 1, 1e-15);
+    const r1 = detectionRange(1e6, base);
+    const r2 = detectionRange(4e6, base);
     expect(r1).toBeGreaterThan(0);
     expect(r2 / r1).toBeCloseTo(2, 3); // 4× power → 2× range
   });
 
-  it("a sky background floor makes detection background-limited, not detector-limited", () => {
+  it("the minimum detectable power is SNR × the limiting noise", () => {
+    expect(minDetectablePowerW(base)).toBeCloseTo(base.snrThreshold * sensorNoiseW(base), 12);
+    // Detector-limited base: noise is NEP folded over Δf = 1/(2τ).
+    expect(sensorNoiseW(base)).toBeCloseTo(base.nep / Math.sqrt(2 * base.integrationTimeS), 12);
+  });
+
+  it("a longer integration deepens the range as τ^(1/4)", () => {
+    // P_min ∝ τ^(−1/2) and d ∝ P_min^(−1/2) ⇒ d ∝ τ^(1/4): 16× τ → 2× range.
+    const r1 = detectionRange(1e6, { ...base, integrationTimeS: 3600 });
+    const r16 = detectionRange(1e6, { ...base, integrationTimeS: 16 * 3600 });
+    expect(r16 / r1).toBeCloseTo(2, 2);
+  });
+
+  it("a stricter SNR threshold shortens the range as 1/√SNR", () => {
+    const r5 = detectionRange(1e6, { ...base, snrThreshold: 5 });
+    const r20 = detectionRange(1e6, { ...base, snrThreshold: 20 });
+    expect(r5 / r20).toBeCloseTo(2, 3); // 4× SNR → half the range
+  });
+
+  it("a bigger mirror reaches farther as √(aperture)", () => {
+    const r1 = detectionRange(1e6, { ...base, apertureM2: 1 });
+    const r2 = detectionRange(1e6, { ...base, apertureM2: 2 });
+    expect(r2 / r1).toBeCloseTo(Math.SQRT2, 3);
+  });
+
+  it("the SNR curve falls as 1/d² and hits the threshold exactly at the detection range", () => {
+    const sig = 3e4;
+    const d = detectionRange(sig, DEFAULT_SENSOR);
+    expect(snrAtRange(sig, DEFAULT_SENSOR, d)).toBeCloseTo(DEFAULT_SENSOR.snrThreshold, 6);
+    // Half the range → 4× the SNR (inverse-square).
+    expect(snrAtRange(sig, DEFAULT_SENSOR, d / 2) / snrAtRange(sig, DEFAULT_SENSOR, d)).toBeCloseTo(4, 6);
+  });
+
+  it("a rising sky background makes detection background-limited, not detector-limited", () => {
     const sig = 3e4; // a cold ~30 kW hull
-    const detectorLimited = detectionRange(sig, 1, 1e-15); // NEP only
-    const skyLimited = detectionRange(sig, 1, 1e-15, 1e-14); // floor 10× the NEP dominates
-    // The floor shortens the achievable range — a better detector buys nothing.
-    expect(skyLimited).toBeLessThan(detectorLimited);
-    expect(skyLimited / detectorLimited).toBeCloseTo(1 / Math.sqrt(10), 3); // √(NEP/floor)
+    const detectorLimited = detectionRange(sig, base); // negligible background
+    // Raise the in-beam background until photon shot noise dominates the NEP.
+    const skyLimited = detectionRange(sig, { ...base, backgroundInBeamW: 1e-8 });
+    expect(sensorNoiseW({ ...base, backgroundInBeamW: 1e-8 })).toBeGreaterThan(sensorNoiseW(base));
+    expect(skyLimited).toBeLessThan(detectorLimited); // a better detector buys nothing
     // Under the SAME floor a thrusting drive still vastly outshines the cold hull;
-    // the floor cancels in the ratio, so the √(signature) law is preserved.
-    const drive = detectionRange(1e9, 1, 1e-15, 1e-14);
+    // the noise cancels in the ratio, so the √(signature) law is preserved.
+    const drive = detectionRange(1e9, { ...base, backgroundInBeamW: 1e-8 });
     expect(drive / skyLimited).toBeCloseTo(Math.sqrt(1e9 / sig), 3);
   });
 });
