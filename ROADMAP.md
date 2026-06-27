@@ -72,7 +72,17 @@ read-time analytic, suite green, golden hash documented if it moves.
    trajectory; and Phase 7 (mass economy: propellant depots, ISRU, colony supply) is still
    open. *(see "Gravity assists" and Phase 7.)*
 
-*(Done since last round: **mission-planner overhaul + moons as destinations** — the transfer
+*(Done since last round: **Oberth-cheap elliptical capture** — `captureAtPeriapsis` no longer
+always circularizes; a transfer can capture into a loose, eccentric ellipse (low periapsis,
+apoapsis at ~½ the SOI) via a new optional `ShipTransfer.captureApoAlt` + `ellipticalCaptureDv`,
+which is how real deep-well orbit insertions are flown — burning at the low periapsis where the
+Oberth effect is strongest and shedding only enough energy to drop just below escape. A Jupiter
+arrival captures for a few km/s instead of the ~17 km/s a low circular capture demands; the
+planner's CAPTURE MODE gains a "loose ellipse (cheap)" option that shows the saving live
+(`looseCaptureApoAlt`, `captureDvPreview`). Absent field ⇒ classic circular capture ⇒ golden hash
+unmoved. *(Note: the full Galilean-flyby orbit pump-down — using a parent's moons to ratchet down
+the capture ellipse for free — remains open; the intra-system flyby planner is future work.)*
+Earlier: **mission-planner overhaul + moons as destinations** — the transfer
 planner was rebuilt around the engine's full capability: grouped, origin-aware destination &
 flyby lists (every body, Earth now selectable as a gravity-assist body — the VEEGA bug fixed),
 an **Optimize for** selector (least Δv · shortest flight · balanced, a total-ordering scorer in

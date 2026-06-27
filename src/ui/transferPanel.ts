@@ -19,7 +19,7 @@ import { type Criterion } from "../core/maneuver/criteria.ts";
 import {
   suggestRoutes, transferWindow, bestAssist, bestChain, bestPorkCell, type SuggestedRoute,
 } from "../core/maneuver/suggest.ts";
-import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, searchMoonWindow, aerocapturePreview, type MoonWindow } from "../app/commands.ts";
+import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, searchMoonWindow, aerocapturePreview, captureDvPreview, looseCaptureApoAlt, type MoonWindow } from "../app/commands.ts";
 import { dvRemaining, shipWorldState, shipOsculatingElements, shipRelativeState } from "../core/ships.ts";
 import { periapsisRadius } from "../core/orbit.ts";
 import { formatDate } from "../core/time.ts";
@@ -39,6 +39,8 @@ const GROUPS: { kind: BodyKind; label: string }[] = [
 ];
 
 type RouteMode = "direct" | "suggest" | "via1" | "via2";
+/** Propulsive low-circular capture · propulsive loose-ellipse capture (Oberth-cheap) · aerocapture. */
+type CaptureMode = "propulsive" | "elliptical" | "aerocapture";
 
 /** A body is a useful gravity-assist flyby only if it has real mass: a planet (or Ceres). */
 function isAssistBody(b: BodyDef): boolean {
@@ -74,7 +76,7 @@ export class TransferPanel {
   private moonPlan: MoonWindow | null = null;
   private modeBtns: Partial<Record<RouteMode, HTMLButtonElement>> = {};
 
-  private captureMode: "propulsive" | "aerocapture" = "propulsive";
+  private captureMode: CaptureMode = "propulsive";
   private routeMode: RouteMode = "direct";
   private criterion: Criterion = "dv";
   private shipId: string | null = null;
@@ -134,6 +136,13 @@ export class TransferPanel {
    *  mission, otherwise the chosen target. */
   private effectiveTarget(): string {
     return this.isMoonMission() ? BODY_BY_ID.get(this.targetId)!.parent! : this.targetId;
+  }
+
+  /** Apoapsis altitude for an elliptical capture at the effective target (a loose half-SOI
+   *  ellipse), or undefined for the default low circular capture. */
+  private captureApoAlt(): number | undefined {
+    return this.captureMode === "elliptical"
+      ? looseCaptureApoAlt(this.effectiveTarget(), this.sim.world.t) : undefined;
   }
 
   private destEligible = (b: BodyDef): Eligible => {
@@ -256,12 +265,16 @@ export class TransferPanel {
     this.capRow.appendChild(div("section-label", "CAPTURE MODE"));
     this.captureSel = document.createElement("select");
     this.captureSel.className = "target-sel";
-    for (const [val, label] of [["propulsive", "Propulsive (burn)"], ["aerocapture", "Aerocapture (drag pass)"]] as const) {
+    for (const [val, label] of [
+      ["propulsive", "Propulsive — low circular"],
+      ["elliptical", "Propulsive — loose ellipse (cheap)"],
+      ["aerocapture", "Aerocapture (drag pass)"],
+    ] as const) {
       const o = document.createElement("option");
       o.value = val; o.textContent = label;
       this.captureSel.appendChild(o);
     }
-    this.captureSel.onchange = () => { this.captureMode = this.captureSel.value as "propulsive" | "aerocapture"; this.updateReadout(); this.updatePreview(); };
+    this.captureSel.onchange = () => { this.captureMode = this.captureSel.value as CaptureMode; this.updateReadout(); this.updatePreview(); };
     this.capRow.appendChild(this.captureSel);
     this.panel.appendChild(this.capRow);
 
@@ -611,11 +624,14 @@ export class TransferPanel {
     const mission = this.isMoonMission();
     const directLike = mission || this.routeMode === "direct";
 
-    // Capture mode is a direct-arrival option at a body with an atmosphere only.
+    // Capture mode is a direct-arrival choice. Propulsive (circular or loose ellipse) is always
+    // available; aerocapture needs an atmosphere, so that option is disabled at airless targets.
     const hasAtm = !!BODY_BY_ID.get(this.effectiveTarget())?.atmosphere;
-    this.captureSel.disabled = !hasAtm || !directLike;
+    this.captureSel.disabled = !directLike;
     this.capRow.style.display = directLike ? "flex" : "none";
-    if (this.captureSel.disabled && this.captureMode === "aerocapture") {
+    const aeroOpt = this.captureSel.querySelector('option[value="aerocapture"]') as HTMLOptionElement | null;
+    if (aeroOpt) aeroOpt.disabled = !hasAtm;
+    if (!hasAtm && this.captureMode === "aerocapture") {
       this.captureMode = "propulsive"; this.captureSel.value = "propulsive";
     }
 
@@ -721,14 +737,26 @@ export class TransferPanel {
       return;
     }
 
+    // Capture Δv: the porkchop cell is a low circular capture; an elliptical capture is cheaper,
+    // so recompute it (and the saving) for the chosen apoapsis.
+    const apoAlt = this.captureApoAlt();
+    const captureDv = apoAlt !== undefined
+      ? (captureDvPreview(effId, fromId, cell.depT, cell.arrT, apoAlt) ?? cell.dvArrive)
+      : cell.dvArrive;
+    const ellipseLine = apoAlt !== undefined
+      ? kv("Capture orbit", `${(DEFAULT_CAPTURE_ALT / 1000).toFixed(0)} × ${(apoAlt / 1000).toFixed(0)} km (ellipse)`) +
+        kv("Saved vs circular", `${((cell.dvArrive - captureDv) / 1000).toFixed(3)} km/s`)
+      : "";
+    const totalDv = cell.dvDepart + captureDv;
     const feasible = cell.dvDepart <= haveDv;
     this.readout.innerHTML =
       optLine +
       kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
       kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) + trade +
       kv("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
-      kv(mission ? "Stage 1 capture Δv" : "Arrival (capture) Δv", `${(cell.dvArrive / 1000).toFixed(3)} km/s`) +
-      kv("Total Δv", `${(cell.total / 1000).toFixed(3)} km/s`) +
+      kv(mission ? "Stage 1 capture Δv" : "Arrival (capture) Δv", `${(captureDv / 1000).toFixed(3)} km/s`) +
+      ellipseLine +
+      kv("Total Δv", `${(totalDv / 1000).toFixed(3)} km/s`) +
       stage2 +
       kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
       (feasible ? `<div class="ok">✓ injection within budget</div>` : `<div class="warn">✗ injection exceeds Δv budget</div>`);
@@ -757,14 +785,15 @@ export class TransferPanel {
     if (!cell) return;
     const target = BODY_BY_ID.get(this.effectiveTarget());
     const mode = this.captureMode === "aerocapture" && target?.atmosphere ? "aerocapture" : "propulsive";
+    const apoAlt = this.captureApoAlt(); // set ⇒ elliptical (loose) capture; undefined ⇒ circular
     // A cross-system mission plans the Stage-1 heliocentric leg to the parent planet and tags the
     // final moon; the sim auto-chains Stage 2 on capture. A plain transfer otherwise.
     if (this.isMoonMission()) {
-      if (!planMoonMission(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT, mode)) return;
+      if (!planMoonMission(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT, mode, apoAlt)) return;
       this.focusAndClose();
       return;
     }
-    if (!planTransfer(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT, mode)) return;
+    if (!planTransfer(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT, mode, apoAlt)) return;
     this.focusAndClose();
   }
 

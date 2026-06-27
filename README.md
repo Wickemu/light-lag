@@ -53,7 +53,11 @@ flyable, to-scale 3D Solar System.
   lunar/Galilean parking orbit (LEO → lunar orbit ≈ 4.2 km/s). And a moon of *another* planet is a
   one-click **two-stage mission**: pick Europa from Earth and the planner commits a heliocentric
   Stage-1 leg to Jupiter that **auto-chains** the parent-centric Europa leg the instant the ship
-  captures at Jupiter — Earth → Jupiter → Europa from a single Commit.
+  captures at Jupiter — Earth → Jupiter → Europa from a single Commit. **Capture geometry is a
+  choice**: at a propulsive arrival you pick a low **circular** orbit or an Oberth-cheap **loose
+  ellipse** (low periapsis, apoapsis at ~½ the SOI) — the way real Jupiter/Saturn orbit insertions
+  are flown. A Jupiter arrival then captures for a few km/s of elliptical insertion instead of the
+  ~17 km/s it costs to force a low circular orbit; the planner shows the saving live.
 - **Landing & takeoff** Δv/propellant budgeting: a calibrated gravity-turn ascent through real
   exponential atmospheres (Earth→LEO ≈ 9.3 km/s, Moon ≈ 1.9, Mars ≈ 4.0), aerobraking on
   descent, and ships that sit on the surface co-rotating with the body.
