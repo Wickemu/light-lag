@@ -8,7 +8,7 @@
  */
 
 import { type Simulation } from "../core/sim.ts";
-import { type Ship, type BurnDir } from "../core/world.ts";
+import { type Ship, type BurnDir, type ShipTransfer } from "../core/world.ts";
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "../core/orbit.ts";
 import { hohmann } from "../core/maneuver/hohmann.ts";
@@ -318,11 +318,64 @@ export function cancelTransfer(sim: Simulation, shipId: string): void {
   if (ship) ship.transfer = undefined;
 }
 
+/** How a gravity-assist (or chain) arrival captures at the target: a low circular
+ *  burn by default, an Oberth-cheap loose ellipse (`captureApoAlt`), or — at a body
+ *  with an atmosphere — an aerocapture drag pass. */
+export type CaptureMode = "propulsive" | "aerocapture";
+export interface CaptureChoice {
+  /** Transfer fields to merge (captureApoAlt for an ellipse, aeroPeriAlt for aerocapture). */
+  fields: Pick<ShipTransfer, "captureApoAlt" | "aeroPeriAlt">;
+  dvArrive: number; // the capture/trim Δv actually paid at arrival (m/s)
+}
+
+/**
+ * Resolve a gravity-assist arrival's capture at `target` given the hyperbolic excess
+ * speed `vInfArrive`. Mirrors `planTransfer`'s capture choices so an assist/chain can
+ * insert the realistic way real deep-well orbiters do — a few-km/s elliptical SOI
+ * insertion (or an atmospheric pass) instead of a ~17 km/s low-circular burn. Returns
+ * null if aerocapture is asked for at an airless body / the corridor is infeasible.
+ */
+function resolveAssistCapture(
+  target: BodyDef, vInfArrive: number, captureMode: CaptureMode, captureApoAlt?: number,
+): CaptureChoice | null {
+  if (captureMode === "aerocapture") {
+    if (!target.atmosphere) return null;
+    const ac = aerocapture(target, NOMINAL_ENTRY_VEHICLE, {
+      vInf: vInfArrive,
+      targetApoAlt: Math.max(2e6, target.radius),
+      targetPeriAlt: DEFAULT_CAPTURE_ALT,
+    });
+    if (!ac || !ac.feasible) return null;
+    return { fields: { aeroPeriAlt: ac.periapsisAlt }, dvArrive: ac.trimDv };
+  }
+  const rParkTo = target.radius + DEFAULT_CAPTURE_ALT;
+  const dvArrive = captureApoAlt !== undefined
+    ? ellipticalCaptureDv(vInfArrive, target.mu, rParkTo, target.radius + captureApoAlt)
+    : hyperbolicBurnDv(vInfArrive, target.mu, rParkTo);
+  return { fields: captureApoAlt !== undefined ? { captureApoAlt } : {}, dvArrive };
+}
+
+/** Read-only preview of an assist/chain arrival's capture Δv for a given excess speed and
+ *  mode — circular, loose ellipse, or aerocapture trim. null if aerocapture is infeasible
+ *  here. Lets the planner show the real capture cost (and saving) for a gravity-assist route. */
+export function assistCapturePreview(
+  targetId: string, vInfArrive: number, captureMode: CaptureMode, captureApoAlt?: number,
+): { dvArrive: number; aero: boolean } | null {
+  const target = BODY_BY_ID.get(targetId);
+  if (!target) return null;
+  const cap = resolveAssistCapture(target, vInfArrive, captureMode, captureApoAlt);
+  return cap ? { dvArrive: cap.dvArrive, aero: cap.fields.aeroPeriAlt !== undefined } : null;
+}
+
 /**
  * Plan and schedule a single-flyby gravity-assist mission: leg 1 to `flybyId`,
  * a slingshot past it, then leg 2 to `targetId`. Records the transfer (with its
  * flyby leg) and queues the departure; the sim flies depart → flyby-pass → capture
- * using the existing patched-conic machinery. Returns the assist estimate or null.
+ * using the existing patched-conic machinery. `captureMode`/`captureApoAlt` pick the
+ * arrival capture (low circular · cheap loose ellipse · aerocapture), exactly as a
+ * direct transfer can — so an assist arrival at a giant captures for a few km/s of
+ * elliptical insertion, not the ~17 km/s a low circular orbit costs. Returns the
+ * assist estimate (its `dvArrive` reflects the chosen capture) or null.
  */
 export function planAssist(
   sim: Simulation,
@@ -332,23 +385,29 @@ export function planAssist(
   tDepart: number,
   tFlyby: number,
   tArrive: number,
+  captureMode: CaptureMode = "propulsive",
+  captureApoAlt?: number,
 ): AssistResult | null {
   const ship = sim.world.ships.get(shipId);
   if (!ship || tFlyby <= tDepart || tArrive <= tFlyby) return null;
   const depBody = BODY_BY_ID.get(ship.primary);
-  if (!depBody) return null;
+  const target = BODY_BY_ID.get(targetId);
+  if (!depBody || !target) return null;
   const el = shipOsculatingElements(ship, sim.world.t);
   const rParkFrom = periapsisRadius(el.a, el.e);
   const res = assistTransfer(ship.primary, flybyId, targetId, tDepart, tFlyby, tArrive, { rParkFrom });
   if (!res) return null;
+  const cap = resolveAssistCapture(target, res.vInfArrive, captureMode, captureApoAlt);
+  if (!cap) return null; // aerocapture asked for where it can't be flown
   ship.transfer = {
     targetId, tDepart, tArrive,
-    dvDepart: res.dvDepart, dvArrive: res.dvArrive,
+    dvDepart: res.dvDepart, dvArrive: cap.dvArrive,
     departed: false, inSoi: false, arrived: false,
     flybys: [{ bodyId: flybyId, tFlyby, dvBurn: res.dvFlyby, done: false }],
+    ...cap.fields,
   };
   sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
-  return res;
+  return { ...res, dvArrive: cap.dvArrive, dvTotal: res.dvDepart + res.dvFlyby + cap.dvArrive };
 }
 
 /**
@@ -364,23 +423,31 @@ export function planChainAssist(
   shipId: string,
   bodyIds: string[],
   times: number[],
+  captureMode: CaptureMode = "propulsive",
+  captureApoAlt?: number,
 ): ChainAssistResult | null {
   const ship = sim.world.ships.get(shipId);
   if (!ship || bodyIds.length < 3 || bodyIds.length !== times.length) return null;
   if (bodyIds[0] !== ship.primary) return null; // the chain must start where the ship is
+  const targetId = bodyIds[bodyIds.length - 1]!;
+  const target = BODY_BY_ID.get(targetId);
+  if (!target) return null;
   const el = shipOsculatingElements(ship, sim.world.t);
   const rParkFrom = periapsisRadius(el.a, el.e);
   const res = chainAssist(bodyIds, times, { rParkFrom });
   if (!res) return null;
+  const cap = resolveAssistCapture(target, res.vInfArrive, captureMode, captureApoAlt);
+  if (!cap) return null; // aerocapture asked for where it can't be flown
   ship.transfer = {
-    targetId: bodyIds[bodyIds.length - 1]!,
+    targetId,
     tDepart: times[0]!, tArrive: times[times.length - 1]!,
-    dvDepart: res.dvDepart, dvArrive: res.dvArrive,
+    dvDepart: res.dvDepart, dvArrive: cap.dvArrive,
     departed: false, inSoi: false, arrived: false,
     flybys: res.flybys.map((f) => ({ bodyId: f.bodyId, tFlyby: f.t, dvBurn: f.dvFlyby, done: false })),
+    ...cap.fields,
   };
   sim.events.push({ t: times[0]!, kind: "transfer-depart", entityId: shipId });
-  return res;
+  return { ...res, dvArrive: cap.dvArrive, dvTotal: res.dvDepart + res.dvFlybyTotal + cap.dvArrive };
 }
 
 // ── Surface operations: landing & takeoff ────────────────────────────────────

@@ -19,7 +19,7 @@ import { type Criterion } from "../core/maneuver/criteria.ts";
 import {
   suggestRoutes, transferWindow, bestAssist, bestChain, bestPorkCell, type SuggestedRoute,
 } from "../core/maneuver/suggest.ts";
-import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, searchMoonWindow, aerocapturePreview, captureDvPreview, looseCaptureApoAlt, type MoonWindow } from "../app/commands.ts";
+import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, searchMoonWindow, aerocapturePreview, captureDvPreview, assistCapturePreview, looseCaptureApoAlt, type MoonWindow } from "../app/commands.ts";
 import { dvRemaining, shipWorldState, shipOsculatingElements, shipRelativeState } from "../core/ships.ts";
 import { periapsisRadius } from "../core/orbit.ts";
 import { formatDate } from "../core/time.ts";
@@ -143,6 +143,24 @@ export class TransferPanel {
   private captureApoAlt(): number | undefined {
     return this.captureMode === "elliptical"
       ? looseCaptureApoAlt(this.effectiveTarget(), this.sim.world.t) : undefined;
+  }
+
+  /** The command-layer capture mode the current selection maps to (the planner's "elliptical"
+   *  is a propulsive capture with an apoapsis; aerocapture only where there's an atmosphere). */
+  private commandCaptureMode(): "propulsive" | "aerocapture" {
+    return this.captureMode === "aerocapture" && BODY_BY_ID.get(this.effectiveTarget())?.atmosphere
+      ? "aerocapture" : "propulsive";
+  }
+
+  /** The capture line for a gravity-assist/chain arrival at `vInfArrive` under the current
+   *  capture selection: the Δv paid, a human label, and feasibility (aerocapture can fail). */
+  private assistCaptureLine(vInfArrive: number): { dvArrive: number; label: string; feasible: boolean } {
+    const mode = this.commandCaptureMode();
+    const apoAlt = this.captureApoAlt();
+    const cap = assistCapturePreview(this.targetId, vInfArrive, mode, apoAlt);
+    if (!cap) return { dvArrive: 0, label: "aerocapture not possible here", feasible: false };
+    const label = cap.aero ? " (aerocapture)" : apoAlt !== undefined ? " (loose ellipse)" : " (circular)";
+    return { dvArrive: cap.dvArrive, label, feasible: true };
   }
 
   private destEligible = (b: BodyDef): Eligible => {
@@ -390,7 +408,10 @@ export class TransferPanel {
     this.critRow.style.display = moon ? "none" : "flex";
     this.viaRow.style.display = !moon && !mission && (this.routeMode === "via1" || this.routeMode === "via2") ? "flex" : "none";
     this.via2Row.style.display = !moon && !mission && this.routeMode === "via2" ? "flex" : "none";
-    this.capRow.style.display = !moon && (mission || this.routeMode === "direct") ? "flex" : "none";
+    // Capture mode applies to any heliocentric arrival — a direct transfer, a cross-system
+    // Stage-1, OR a gravity-assist/chain arrival (an assist into a giant captures the cheap
+    // elliptical way, like the real deep-well orbiters do).
+    this.capRow.style.display = !moon && (mission || this.routeMode !== "suggest") ? "flex" : "none";
     this.canvas.style.display = moon || (!mission && this.routeMode === "suggest") ? "none" : "block";
     this.suggestEl.style.display = !moon && !mission && this.routeMode === "suggest" ? "block" : "none";
   }
@@ -623,12 +644,16 @@ export class TransferPanel {
     // capture options and porkchop cell are read against that planet, not the moon.
     const mission = this.isMoonMission();
     const directLike = mission || this.routeMode === "direct";
+    // A gravity-assist / chain arrival captures at the target too, so it offers the same
+    // capture choice (cheap elliptical insertion is how Cassini/Galileo really arrived).
+    const assistLike = !mission && (this.routeMode === "via1" || this.routeMode === "via2");
+    const capturing = directLike || assistLike;
 
-    // Capture mode is a direct-arrival choice. Propulsive (circular or loose ellipse) is always
+    // Capture mode is an arrival choice. Propulsive (circular or loose ellipse) is always
     // available; aerocapture needs an atmosphere, so that option is disabled at airless targets.
     const hasAtm = !!BODY_BY_ID.get(this.effectiveTarget())?.atmosphere;
-    this.captureSel.disabled = !directLike;
-    this.capRow.style.display = directLike ? "flex" : "none";
+    this.captureSel.disabled = !capturing;
+    this.capRow.style.display = capturing ? "flex" : "none";
     const aeroOpt = this.captureSel.querySelector('option[value="aerocapture"]') as HTMLOptionElement | null;
     if (aeroOpt) aeroOpt.disabled = !hasAtm;
     if (!hasAtm && this.captureMode === "aerocapture") {
@@ -645,6 +670,7 @@ export class TransferPanel {
       const need = r.dvDepart + r.dvFlybyTotal;
       const feasible = need <= haveDv;
       const names = r.flybys.map((f) => BODY_BY_ID.get(f.bodyId)!.name).join(" → ");
+      const cap = this.assistCaptureLine(r.vInfArrive);
       this.axisEl.innerHTML = `<span>gravity-assist chain via ${names}</span>`;
       this.readout.innerHTML =
         optLine +
@@ -655,10 +681,12 @@ export class TransferPanel {
         kv("Flight time", `${((r.tArrive - r.tDepart) / DAY).toFixed(0)} days`) +
         kv("Injection Δv", `${(r.dvDepart / 1000).toFixed(3)} km/s`) +
         kv("Flyby Δv (total)", `${(r.dvFlybyTotal / 1000).toFixed(3)} km/s${r.unpowered ? " (all free)" : ""}`) +
-        kv("Capture Δv", `${(r.dvArrive / 1000).toFixed(3)} km/s`) +
-        kv("Total Δv", `${(r.dvTotal / 1000).toFixed(3)} km/s`) +
-        (feasible ? `<div class="ok">✓ injection + flybys within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
-      setDisabled(this.commitBtn, !feasible, "Injection + flyby Δv exceeds the ship's budget.");
+        kv("Capture Δv", cap.feasible ? `${(cap.dvArrive / 1000).toFixed(3)} km/s${cap.label}` : cap.label) +
+        kv("Total Δv", `${((r.dvDepart + r.dvFlybyTotal + cap.dvArrive) / 1000).toFixed(3)} km/s`) +
+        (feasible && cap.feasible ? `<div class="ok">✓ injection + flybys within budget</div>`
+          : !cap.feasible ? `<div class="warn">✗ ${cap.label}</div>`
+          : `<div class="warn">✗ exceeds Δv budget</div>`);
+      setDisabled(this.commitBtn, !feasible || !cap.feasible, "Injection + flyby Δv exceeds the ship's budget, or aerocapture infeasible.");
       return;
     }
 
@@ -679,6 +707,7 @@ export class TransferPanel {
       const need = a.dvDepart + a.dvFlyby;
       const feasible = need <= haveDv;
       const directBest = this.pork ? bestPorkCell(this.pork, "dv")?.total : undefined;
+      const cap = this.assistCaptureLine(a.vInfArrive);
       this.axisEl.innerHTML = `<span>gravity assist via ${BODY_BY_ID.get(this.viaId)!.name}</span>`;
       this.readout.innerHTML =
         optLine +
@@ -688,11 +717,13 @@ export class TransferPanel {
         kv("Flight time", `${((a.tArrive - a.tDepart) / DAY).toFixed(0)} days`) +
         kv("Injection Δv", `${(a.dvDepart / 1000).toFixed(3)} km/s`) +
         kv("Flyby Δv", `${(a.dvFlyby / 1000).toFixed(3)} km/s${a.unpowered ? " (free)" : ""}`) +
-        kv("Capture Δv", `${(a.dvArrive / 1000).toFixed(3)} km/s`) +
-        kv("Total Δv", `${(a.dvTotal / 1000).toFixed(3)} km/s`) +
+        kv("Capture Δv", cap.feasible ? `${(cap.dvArrive / 1000).toFixed(3)} km/s${cap.label}` : cap.label) +
+        kv("Total Δv", `${((a.dvDepart + a.dvFlyby + cap.dvArrive) / 1000).toFixed(3)} km/s`) +
         (directBest ? kv("Direct best Δv", `${(directBest / 1000).toFixed(3)} km/s`) : "") +
-        (feasible ? `<div class="ok">✓ injection + flyby within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
-      setDisabled(this.commitBtn, !feasible, "Injection + flyby Δv exceeds the ship's budget.");
+        (feasible && cap.feasible ? `<div class="ok">✓ injection + flyby within budget</div>`
+          : !cap.feasible ? `<div class="warn">✗ ${cap.label}</div>`
+          : `<div class="warn">✗ exceeds Δv budget</div>`);
+      setDisabled(this.commitBtn, !feasible || !cap.feasible, "Injection + flyby Δv exceeds the ship's budget, or aerocapture infeasible.");
       return;
     }
 
@@ -771,13 +802,17 @@ export class TransferPanel {
       return;
     }
     if (this.chain) {
-      if (!planChainAssist(this.sim, this.shipId, this.chain.bodyIds, this.chain.times)) return;
+      const mode = this.commandCaptureMode();
+      const apoAlt = this.captureApoAlt();
+      if (!planChainAssist(this.sim, this.shipId, this.chain.bodyIds, this.chain.times, mode, apoAlt)) return;
       this.focusAndClose();
       return;
     }
     if (this.viaId && this.assist) {
       const a = this.assist;
-      if (!planAssist(this.sim, this.shipId, this.viaId, this.targetId, a.tDepart, a.tFlyby, a.tArrive)) return;
+      const mode = this.commandCaptureMode();
+      const apoAlt = this.captureApoAlt();
+      if (!planAssist(this.sim, this.shipId, this.viaId, this.targetId, a.tDepart, a.tFlyby, a.tArrive, mode, apoAlt)) return;
       this.focusAndClose();
       return;
     }
