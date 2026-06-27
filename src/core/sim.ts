@@ -23,7 +23,7 @@
 import { type WorldState, type Ship, type ShipBurn, type ShipCommand, type BurnDir } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
-import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius } from "./orbit.ts";
+import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius, visVivaSpeed } from "./orbit.ts";
 import {
   activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
   interstellarProperTime, spiralElements, buildEntryLeg, NOMINAL_ENTRY_VEHICLE,
@@ -36,7 +36,7 @@ import { signalArrival } from "./comms.ts";
 import { aimArrival } from "./maneuver/arrival.ts";
 import { lambert } from "./maneuver/lambert.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
-import { entryInterfaceAlt } from "./maneuver/entry.ts";
+import { entryInterfaceAlt, entryInterfaceCrossing } from "./maneuver/entry.ts";
 import { type BodyDef, BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
 import { type Vec3, add, sub, scale, normalize, length, cross } from "./math/vec3.ts";
 
@@ -546,6 +546,7 @@ export class Simulation {
       case "capture": this.captureAtPeriapsis(ship); break;
       case "entry-start": this.beginEntry(ship); break;
       case "entry-end": this.finishEntry(ship); break;
+      case "aero-trim": this.trimAerocapture(ship); break;
       default: break;
     }
   }
@@ -658,7 +659,9 @@ export class Simulation {
     }
 
     const depState = bodyState(depBody, t);
-    const rCapture = target.radius + DEFAULT_CAPTURE_ALT;
+    // Aerocapture aims the arrival periapsis INTO the atmosphere (aeroPeriAlt); a
+    // propulsive arrival aims at the default parking altitude.
+    const rCapture = target.radius + (tr.aeroPeriAlt ?? DEFAULT_CAPTURE_ALT);
     const aim = aimArrival(depBody, target, t, tr.tArrive, rCapture);
     if (!aim) return; // degenerate geometry; leave the transfer un-departed so it can be re-planned
 
@@ -853,6 +856,19 @@ export class Simulation {
       return;
     }
 
+    // Aerocapture arrival: the hyperbola's periapsis is inside the atmosphere, so fly
+    // the drag pass (an entry leg) at the interface crossing instead of a propulsive
+    // capture burn. finishEntry then trims periapsis up at first apoapsis.
+    if (tr.aeroPeriAlt !== undefined && target.atmosphere) {
+      const x = entryInterfaceCrossing(target, el);
+      if (x) {
+        this.events.push({ t: t + x.dtToInterface, kind: "entry-start", entityId: ship.id });
+        return;
+      }
+      // No interface crossing (aim ended up above the atmosphere) — fall back to a
+      // propulsive capture so the arrival still completes.
+    }
+
     // Schedule the capture at periapsis (time-to-periapsis = −M/n for M < 0).
     const n = meanMotion(el.a, target.mu);
     const tPeri = t + -el.M / n;
@@ -975,9 +991,75 @@ export class Simulation {
     } else {
       // Captured (now bound) or skip-out (still unbound): continue on the osculating
       // orbit defined by the body-relative exit state.
-      ship.elements = stateToElements(leg.exitR, leg.exitV, body.mu);
+      const el = stateToElements(leg.exitR, leg.exitV, body.mu);
+      ship.elements = el;
       ship.epoch = t;
       ship.mode = "coast";
+
+      // Aerocapture follow-up: the captured ellipse's periapsis is still inside the
+      // atmosphere, so trim it up at the FIRST apoapsis (before the ship falls back
+      // in). A skip-out failed to capture — schedule its SOI egress so it leaves.
+      const tr = ship.transfer;
+      if (tr && tr.aeroPeriAlt !== undefined && !tr.arrived) {
+        if (leg.outcome === "captured" && el.e < 1) {
+          const n = meanMotion(el.a, body.mu);
+          const dtApo = (((Math.PI - el.M) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / n;
+          this.events.push({ t: t + dtApo, kind: "aero-trim", entityId: ship.id });
+        } else if (leg.outcome === "skip-out") {
+          this.scheduleSoiEgress(ship, body, el, t);
+        }
+      }
     }
+  }
+
+  /**
+   * Raise periapsis out of the atmosphere at the first apoapsis after an aerocapture
+   * drag pass — the small trim burn that turns the grazing captured ellipse into a
+   * clean parking orbit, completing the arrival. Mirrors captureAtPeriapsis, but at
+   * apoapsis (a prograde burn there raises periapsis).
+   */
+  private trimAerocapture(ship: Ship): void {
+    const tr = ship.transfer;
+    if (!tr || tr.arrived || tr.aeroPeriAlt === undefined) return;
+    const body = BODY_BY_ID.get(ship.primary);
+    if (!body) return;
+    const t = this.world.t;
+    const el = shipOsculatingElements(ship, t);
+    if (el.e >= 1) return; // not bound (shouldn't happen for a captured pass)
+    const mu = body.mu;
+    const ra = el.a * (1 + el.e); // apoapsis radius (the ship is here now)
+    const rpTarget = body.radius + DEFAULT_CAPTURE_ALT;
+    if (rpTarget >= ra) { tr.arrived = true; tr.dvArrive = 0; return; } // already high enough
+    const aNew = (ra + rpTarget) / 2;
+    const trimDv = visVivaSpeed(mu, ra, aNew) - visVivaSpeed(mu, ra, el.a); // prograde, > 0
+    applyImpulsiveDv(ship, trimDv); // affordable by construction (tiny); proceed regardless
+    // Rebuild the orbit sharing this apoapsis (position + prograde direction continuous).
+    ship.elements = {
+      a: aNew, e: (ra - rpTarget) / (ra + rpTarget),
+      i: el.i, Omega: el.Omega, omega: el.omega, M: Math.PI,
+    };
+    ship.epoch = t;
+    ship.mode = "coast";
+    tr.arrived = true;
+    tr.dvArrive = trimDv;
+  }
+
+  /** Schedule the SOI egress of a ship on a target-relative conic `el` at time `t`
+   *  (reuses enterSoi's geometric time-to-egress for an inbound or outbound arc). */
+  private scheduleSoiEgress(ship: Ship, target: BodyDef, el: { a: number; e: number; M: number }, t: number): void {
+    const parentMu = target.parent ? BODY_BY_ID.get(target.parent)!.mu : MU_SUN;
+    const rSoi = soiRadius(bodyElements(target, t)!.a, target.mu, parentMu);
+    const n = meanMotion(el.a, target.mu);
+    let dt = 0;
+    if (el.e < 1) {
+      const cosE = Math.max(-1, Math.min(1, (1 - rSoi / el.a) / el.e));
+      const E = Math.acos(cosE);
+      dt = ((2 * (E - el.e * Math.sin(E))) / n) - (el.M >= 0 ? el.M / n : 0);
+    } else {
+      const coshF = Math.max(1, (1 - rSoi / el.a) / el.e);
+      const F = Math.acosh(coshF);
+      dt = ((2 * (el.e * Math.sinh(F) - F)) / n) - (el.M >= 0 ? el.M / n : 0);
+    }
+    this.events.push({ t: t + Math.max(0, dt), kind: "soi-exit", entityId: ship.id });
   }
 }

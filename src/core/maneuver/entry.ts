@@ -40,7 +40,7 @@ import { type BodyDef, SIGMA, G0 } from "../constants.ts";
 import { atmosphericDensity, DEFAULT_ENTRY_BETA } from "../surface.ts";
 import { visVivaSpeed, hyperbolicBurnDv } from "../orbit.ts";
 import { rk4 } from "../math/integrators.ts";
-import { type KeplerElements, elementsToState, propagate, period } from "../math/kepler.ts";
+import { type KeplerElements, elementsToState, propagate, period, meanMotion } from "../math/kepler.ts";
 import { type Vec3, dot, normalize, length } from "../math/vec3.ts";
 
 /** Sutton-Graves convective stagnation-point heating coefficient for AIR
@@ -340,8 +340,13 @@ export function entryInterfaceCrossing(body: BodyDef, el: KeplerElements): Inter
   if (!(rp < rIface)) return null; // never reaches the atmosphere
 
   const radiusAt = (dt: number): number => length(elementsToState(propagate(el, mu, dt), mu).r);
-  // Scan forward for the first downward crossing of rIface, then bisect.
-  const scanMax = el.a > 0 ? period(el.a, mu) * 1.01 : 12 * 3600;
+  // Scan forward for the first downward crossing of rIface, then bisect. For an
+  // elliptic orbit one period covers it; for a hyperbola the inbound crossing is
+  // before periapsis (time-to-periapsis = −M/n for the inbound M < 0 — which can be
+  // DAYS from an SOI-edge arrival, far longer than a low-orbit deorbit), so size the
+  // window to that rather than a fixed guess.
+  const n = meanMotion(el.a, mu);
+  const scanMax = el.a > 0 ? period(el.a, mu) * 1.01 : el.M < 0 ? 1.3 * (-el.M / n) : 12 * 3600;
   const steps = 720;
   const dtStep = scanMax / steps;
   let prevT = 0, prevR = radiusAt(0);

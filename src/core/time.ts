@@ -50,7 +50,8 @@ export type SimEventKind =
   | "spiral-arrive"
   | "capture"
   | "entry-start"
-  | "entry-end";
+  | "entry-end"
+  | "aero-trim";
 
 export interface SimEvent {
   t: number; // absolute sim time the event fires (s since J2000)
