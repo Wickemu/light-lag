@@ -51,6 +51,8 @@ export type SimEventKind =
   | "capture"
   | "entry-start"
   | "entry-end"
+  | "launch-arrive"
+  | "land-arrive"
   | "aero-trim";
 
 export interface SimEvent {

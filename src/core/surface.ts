@@ -30,6 +30,12 @@ import { type Stage, deltaVBudget, stageWetMass, stageBurnCost } from "./propuls
 import { circularSpeed } from "./orbit.ts";
 import { hohmann } from "./maneuver/hohmann.ts";
 import { rk4 } from "./math/integrators.ts";
+import { type PoweredSample } from "./world.ts";
+
+/** Number of points sampled from the ascent/descent integrator into a leg's visual
+ *  spline. The arc is minutes long and rendered, not physics-critical, so a few dozen
+ *  points are smooth; the spline is interpolated at read time (see ships.ts). */
+const POWERED_SAMPLE_COUNT = 32;
 
 // ── Derived surface quantities (never stored — physics, not data) ────────────
 
@@ -112,7 +118,15 @@ export interface AscentBudget {
  * only when converting Δv to propellant, in surfaceManeuverCost). Returns null
  * for a body with no solid surface (the Sun, the gas giants).
  */
-export function ascentBudget(body: BodyDef, p: AscentParams): AscentBudget | null {
+export function ascentBudget(
+  body: BodyDef,
+  p: AscentParams,
+  /** When provided, the integrator pushes ~POWERED_SAMPLE_COUNT stride-sampled trajectory
+   *  rows {t (elapsed), h, v, gamma, theta} into this array — the visual ascent spline. The
+   *  downrange angle theta is a decoupled extra integrator state, so the returned budget
+   *  numbers are byte-identical whether or not samples are requested. */
+  samples?: PoweredSample[],
+): AscentBudget | null {
   if (body.hasSurface === false) return null;
 
   const R = body.radius;
@@ -132,11 +146,13 @@ export function ascentBudget(body: BodyDef, p: AscentParams): AscentBudget | nul
   const pitch = (v: number): number =>
     (Math.PI / 2) * Math.pow(Math.max(0, 1 - v / vRef), PITCH_EXP);
 
-  // State: [h, v, m, gravLoss, dragLoss]. The gravity turn inserts into the orbit
-  // it naturally reaches (local circular speed); the climb to a higher requested
+  // State: [h, v, m, gravLoss, dragLoss, theta]. The gravity turn inserts into the
+  // orbit it naturally reaches (local circular speed); the climb to a higher requested
   // parking orbit is then an impulsive Hohmann raise, keeping the budget monotonic
-  // in altitude.
-  let y = [0, 0, 1, 0, 0];
+  // in altitude. theta (downrange angle) is a decoupled 6th state — it integrates FROM
+  // (h,v) but feeds back into nothing, so the first five components (and every budget
+  // number) are identical to before it was added; it only drives the visual spline.
+  let y = [0, 0, 1, 0, 0, 0];
   let t = 0;
   const dt = 0.5; // s — fixed step; ascent is a few hundred seconds
 
@@ -146,6 +162,7 @@ export function ascentBudget(body: BodyDef, p: AscentParams): AscentBudget | nul
     const g = mu / (r * r);
     const gamma = pitch(v);
     const sinG = Math.sin(gamma);
+    const cosG = Math.cos(gamma);
     const rho = atmosphericDensity(body, h);
     const dragAcc = (0.5 * rho * v * v) / beta; // D/m = ½ρv²/β
     const thrustAcc = T / Math.max(m, 1e-6);
@@ -155,8 +172,13 @@ export function ascentBudget(body: BodyDef, p: AscentParams): AscentBudget | nul
       -mdot, // dm/dt
       g * sinG, // d(gravLoss)/dt
       dragAcc, // d(dragLoss)/dt
+      (v * cosG) / r, // d(theta)/dt — downrange angular rate
     ];
   };
+
+  // Optional visual spline: record every integration step, downsampled below.
+  const rows: PoweredSample[] | null = samples ? [] : null;
+  if (rows) rows.push({ t: 0, h: 0, v: 0, gamma: pitch(0), theta: 0 });
 
   // Stop at orbital insertion (the LOCAL circular speed is reached), at a ~150
   // mass ratio (≈16 km/s engine Δv — drag-stalled, no conventional vehicle reaches
@@ -169,8 +191,23 @@ export function ascentBudget(body: BodyDef, p: AscentParams): AscentBudget | nul
     t += dt;
     if (y[0]! < 0) y[0] = 0; // never sink below the surface
     if (y[1]! < 0) y[1] = 0; // never fly backwards
+    if (rows) rows.push({ t, h: y[0]!, v: y[1]!, gamma: pitch(y[1]!), theta: y[5]! });
   }
   const insertionAlt = y[0]!;
+
+  // Downsample the recorded trajectory to ~POWERED_SAMPLE_COUNT evenly-spaced rows
+  // (fixed dt ⇒ evenly spaced in time), always keeping the first (liftoff) and last
+  // (insertion) points.
+  if (samples && rows) {
+    const K = Math.min(POWERED_SAMPLE_COUNT, rows.length);
+    if (K <= 1) {
+      samples.push(rows[0]!);
+    } else {
+      for (let i = 0; i < K; i++) {
+        samples.push(rows[Math.round((i * (rows.length - 1)) / (K - 1))]!);
+      }
+    }
+  }
   const converged = y[1]! >= localCirc(insertionAlt);
   const gravityLoss = y[3]!;
   const dragLoss = y[4]!;
@@ -195,6 +232,10 @@ export interface DescentBudget {
   aerobrakeFraction: number; // fraction of vOrbit the atmosphere sheds (0 airless)
   dvPowered: number; // powered Δv the vehicle must provide (m/s)
   dvTotal: number; // = dvPowered (the rest, if any, is free aerobraking)
+  /** Powered-descent duration (s) for the AIRLESS branch — the time-reverse of the
+   *  ascent burn, used to schedule the visual descent leg. Undefined for an atmosphere
+   *  body (its descent is the drag pass, animated by EntryLeg, not this leg). */
+  burnTime?: number;
 }
 
 /**
@@ -211,7 +252,13 @@ export interface DescentBudget {
  * entry vehicle's ballistic coefficient — a documented calibration; the
  * exponential-atmosphere column itself is exact.
  */
-export function descentBudget(body: BodyDef, p: AscentParams): DescentBudget | null {
+export function descentBudget(
+  body: BodyDef,
+  p: AscentParams,
+  /** When provided (AIRLESS bodies only), the time-reversed ascent spline is pushed here
+   *  as the visual descent arc. Ignored for an atmosphere body. */
+  samples?: PoweredSample[],
+): DescentBudget | null {
   if (body.hasSurface === false) return null;
 
   const mu = body.mu;
@@ -221,9 +268,22 @@ export function descentBudget(body: BodyDef, p: AscentParams): DescentBudget | n
   if (!body.atmosphere) {
     // Symmetric to ascent (cancel all orbital speed, pay the same gravity losses)
     // but with no rotation help on the way down: descent = ascent + rotationBonus.
-    const ascent = ascentBudget(body, p)!;
+    // The descent ARC is the ascent spline reversed in time — a powered landing is the
+    // kinematic mirror of a powered ascent (same pitch program, reversed): row i becomes
+    // (T−tᵢ, hᵢ, vᵢ, −γᵢ, θ_T−θᵢ), so it starts at insertion altitude/orbital speed and
+    // ends at a vertical, zero-speed touchdown.
+    const ascSamples: PoweredSample[] | undefined = samples ? [] : undefined;
+    const ascent = ascentBudget(body, p, ascSamples)!;
     const dvTotal = ascent.dvTotal + ascent.rotationBonus;
-    return { vOrbit, aerobrakeFraction: 0, dvPowered: dvTotal, dvTotal };
+    if (samples && ascSamples && ascSamples.length > 0) {
+      const T = ascent.burnTime;
+      const thetaT = ascSamples[ascSamples.length - 1]!.theta;
+      for (let i = ascSamples.length - 1; i >= 0; i--) {
+        const a = ascSamples[i]!;
+        samples.push({ t: T - a.t, h: a.h, v: a.v, gamma: -a.gamma, theta: thetaT - a.theta });
+      }
+    }
+    return { vOrbit, aerobrakeFraction: 0, dvPowered: dvTotal, dvTotal, burnTime: ascent.burnTime };
   }
 
   const atm = body.atmosphere;

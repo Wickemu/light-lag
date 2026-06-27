@@ -8,11 +8,11 @@
  */
 
 import { type Simulation } from "../core/sim.ts";
-import { type Ship, type BurnDir, type ShipTransfer } from "../core/world.ts";
+import { type Ship, type BurnDir, type ShipTransfer, type PoweredSample } from "../core/world.ts";
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "../core/orbit.ts";
 import { hohmann } from "../core/maneuver/hohmann.ts";
-import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
+import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "../core/maneuver/entry.ts";
 import { aimMoonArrival } from "../core/maneuver/arrival.ts";
 export { searchMoonWindow, type MoonWindow } from "../core/maneuver/moon.ts";
@@ -632,32 +632,58 @@ export interface SurfaceOp {
   feasible: boolean; // ship had the Δv to do it
 }
 
+/** Cap on the in-sim ascent/descent arc duration. A real powered launch/landing is a few
+ *  hundred seconds; if the budget integrator reports an absurd burn (a very low-TWR body, or
+ *  the drag-stall time guard), skip the visual leg and snap instead. */
+const MAX_POWERED_LEG_S = 7200;
+
 /**
- * Land the ship on its current primary's surface, paying the descent Δv. The
- * touchdown itself is implicit — we account the Δv/propellant and mark the ship
- * landed (parked on a surface-skimming placeholder orbit). Returns the cost, or
- * null if the body has no surface or the ship isn't coasting in its SOI. When the
- * ship can't afford it, the op is returned with feasible:false and nothing is
- * spent.
+ * Land the ship on its current primary's surface, paying the descent Δv. On an AIRLESS
+ * body the powered descent is flown in-sim as a `DescentLeg` (the ship arcs down to a
+ * downrange touchdown site, watchable at any time-warp); on an ATMOSPHERIC body — whose
+ * realistic animated descent is the drag pass (`flyEntry`/`EntryLeg`) — and in degenerate
+ * cases the touchdown is snapped as before. The Δv/propellant are charged at commit either
+ * way. Returns the cost, or null if the body has no surface or the ship isn't coasting in
+ * its SOI. When the ship can't afford it, the op is returned with feasible:false and nothing
+ * is spent.
  */
 export function landShip(sim: Simulation, shipId: string): SurfaceOp | null {
   const ship = sim.world.ships.get(shipId);
   if (!ship || ship.landed || ship.mode !== "coast") return null;
+  if (ship.launchLeg || ship.descentLeg) return null; // a powered leg already owns the state
   const body = BODY_BY_ID.get(ship.primary);
   if (!body || body.hasSurface === false) return null;
 
   const el = shipOsculatingElements(ship, sim.world.t);
   const alt = Math.max(0, periapsisRadius(el.a, el.e) - body.radius);
-  const desc = descentBudget(body, shipSurfaceParams(ship, body, alt));
+  const samples: PoweredSample[] = [];
+  const desc = descentBudget(body, shipSurfaceParams(ship, body, alt), samples);
   if (!desc) return null;
   const cost = surfaceManeuverCost(ship.stages.slice(ship.activeStage), ship.payloadMass, desc.dvTotal);
   if (cost.feasible < 0 || !applyImpulsiveDv(ship, desc.dvTotal)) {
     return { dv: desc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: false };
   }
-  // Land directly below the current orbital position; store the site as a
-  // body-fixed direction (de-rotate the inertial direction by the body's rotation
-  // angle) so the ship co-rotates with the surface from here on.
   const t = sim.world.t;
+  const ret = { dv: desc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: true };
+
+  // Airless body with a real powered-descent duration: fly the descent arc in-sim. The
+  // `land-arrive` finalize sets `ship.landed` at the (downrange) touchdown site.
+  if (!body.atmosphere && desc.burnTime !== undefined && desc.burnTime > 0 && desc.burnTime < MAX_POWERED_LEG_S && samples.length >= 2) {
+    const st = shipRelativeState(ship, t);
+    const leg = buildDescentLeg(body, st.r, st.v, t, desc.burnTime, samples);
+    ship.descentLeg = leg;
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = undefined;
+    ship.epoch = t;
+    sim.events.push({ t: leg.tEnd, kind: "land-arrive", entityId: shipId });
+    return ret;
+  }
+
+  // Snap fallback (atmosphere / degenerate): land directly below the current orbital
+  // position; store the site as a body-fixed direction (de-rotate the inertial direction by
+  // the body's rotation angle) so the ship co-rotates with the surface from here on.
   const dir = normalize(shipRelativeState(ship, t).r);
   const T = body.rotationPeriod ?? 0;
   const om = T !== 0 ? (2 * Math.PI) / T : 0;
@@ -669,7 +695,7 @@ export function landShip(sim: Simulation, shipId: string): SurfaceOp | null {
   ship.elements = undefined;
   ship.epoch = t;
   ship.landed = { bodyId: body.id, surfaceDir };
-  return { dv: desc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: true };
+  return ret;
 }
 
 /** The predicted budget of an entry pass committed by flyEntry, for the UI. */
@@ -712,9 +738,12 @@ export function flyEntry(sim: Simulation, shipId: string): EntryPlan | null {
 }
 
 /**
- * Launch a landed ship to a circular parking orbit at `altitudeKm`, paying the
- * ascent Δv. Returns the cost, or null if the ship isn't landed. feasible:false
- * (nothing spent) if it can't afford the climb.
+ * Launch a landed ship to a circular parking orbit at `altitudeKm`, paying the ascent Δv.
+ * The powered ascent is flown in-sim as a `LaunchLeg` (the ship arcs up from the surface to
+ * the parking orbit, watchable at any time-warp); a `launch-arrive` finalize seats it on the
+ * parking orbit at `tEnd`. A degenerate climb (drag-stalled / absurd burn time) snaps as
+ * before. Returns the cost, or null if the ship isn't landed. feasible:false (nothing spent)
+ * if it can't afford the climb.
  */
 export function launchShip(sim: Simulation, shipId: string, altitudeKm: number): SurfaceOp | null {
   const ship = sim.world.ships.get(shipId);
@@ -723,20 +752,40 @@ export function launchShip(sim: Simulation, shipId: string, altitudeKm: number):
   if (!body) return null;
 
   const alt = altitudeKm * 1000;
-  const asc = ascentBudget(body, shipSurfaceParams(ship, body, alt));
+  const samples: PoweredSample[] = [];
+  const asc = ascentBudget(body, shipSurfaceParams(ship, body, alt), samples);
   if (!asc) return null;
   const cost = surfaceManeuverCost(ship.stages.slice(ship.activeStage), ship.payloadMass, asc.dvTotal);
   if (cost.feasible < 0 || !applyImpulsiveDv(ship, asc.dvTotal)) {
     return { dv: asc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: false };
   }
-  // Insert into a circular orbit; the launch-site latitude is the minimum
-  // inclination reachable from there.
+  const t = sim.world.t;
+  const ret = { dv: asc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: true };
+  // The launch-site latitude is the minimum inclination reachable from there.
   const incl = Math.asin(Math.max(-1, Math.min(1, ship.landed.surfaceDir.z)));
+
+  // Fly the ascent arc in-sim unless the climb is degenerate (drag-stalled, or an absurd
+  // multi-hour integration) — then fall back to the instant snap.
+  if (asc.converged && asc.burnTime > 0 && asc.burnTime < MAX_POWERED_LEG_S && samples.length >= 2) {
+    const liftoff = landedRelativeState(ship, t); // capture the surface state before clearing landed
+    const leg = buildLaunchLeg(body, liftoff.r, liftoff.v, alt, t, asc.burnTime, samples);
+    ship.launchLeg = leg;
+    ship.landed = undefined;
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = undefined;
+    ship.epoch = t;
+    sim.events.push({ t: leg.tEnd, kind: "launch-arrive", entityId: shipId });
+    return ret;
+  }
+
+  // Snap fallback: insert into a circular orbit directly.
   ship.mode = "coast";
   ship.r = undefined;
   ship.v = undefined;
   ship.elements = circularOrbit(body.radius + alt, Math.abs(incl), 0, 0);
-  ship.epoch = sim.world.t;
+  ship.epoch = t;
   ship.landed = undefined;
-  return { dv: asc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: true };
+  return ret;
 }

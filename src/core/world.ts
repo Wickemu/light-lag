@@ -101,6 +101,55 @@ export interface EntryLeg {
   heatLoad: number; // J/m²
 }
 
+/** One sampled point of a powered ascent/descent arc: `t` is elapsed seconds since
+ *  the leg started (so it is warp/epoch-independent and small-magnitude), `h` altitude
+ *  above the surface (m), `v` speed (m/s), `gamma` flight-path angle (rad, positive-up —
+ *  climbing on ascent, negative descending), `theta` downrange angle swept (rad). */
+export interface PoweredSample {
+  t: number;
+  h: number;
+  v: number;
+  gamma: number;
+  theta: number;
+}
+
+/**
+ * An in-progress in-sim powered ASCENT from a surface to a parking orbit. Visual only:
+ * the Δv/propellant were charged at commit and the terminal parking orbit is PINNED in
+ * `exitR,exitV` (== the orbit `launchShip` snapped to before this round). The interior
+ * arc is a precomputed spline (sampled from the gravity-turn budget integrator at commit)
+ * reconstructed in the launch plane (`planeBasis(r0,v0)`); read-time interpolation makes
+ * it exact at any time-warp (chunk-invariant) and golden-hash-neutral (optional, absent
+ * from the golden scenario). Cleared at `tEnd` by the `launch-arrive` finalize. */
+export interface LaunchLeg {
+  bodyId: string;
+  tStart: number; // s since J2000 — liftoff
+  tEnd: number; // s — tStart + ascentBudget.burnTime
+  r0: Vec3; // body-relative liftoff position (m)
+  v0: Vec3; // body-relative liftoff velocity (m/s, surface co-rotation)
+  samples: PoweredSample[]; // ascent spline, t relative to tStart
+  exitR: Vec3; // pinned parking-orbit position at tEnd (m)
+  exitV: Vec3; // pinned parking-orbit velocity at tEnd (m/s)
+}
+
+/**
+ * An in-progress in-sim powered DESCENT from a parking orbit to a surface site. AIRLESS
+ * bodies only — atmospheric arrivals fly the drag pass (`EntryLeg`/`flyEntry`) instead, so
+ * this never duplicates the entry-heating physics. The spline is the ascent spline reversed
+ * in time (a powered landing is the kinematic mirror of a powered ascent). The touchdown site
+ * is PINNED in `exitR,exitV` (== the site `landShip` snapped to before this round). Cleared
+ * at `tEnd` by the `land-arrive` finalize. */
+export interface DescentLeg {
+  bodyId: string;
+  tStart: number; // s since J2000 — start of the powered descent
+  tEnd: number; // s — tStart + descentBudget.burnTime
+  r0: Vec3; // body-relative orbital position at start (m)
+  v0: Vec3; // body-relative orbital velocity at start (m/s)
+  samples: PoweredSample[]; // descent spline (time-reversed ascent), t relative to tStart
+  exitR: Vec3; // pinned landed-site position at tEnd (m)
+  exitV: Vec3; // pinned landed-site velocity at tEnd (m/s, surface co-rotation)
+}
+
 /** A planned/active interplanetary transfer (Lambert leg to another body). */
 export interface ShipTransfer {
   targetId: string;
@@ -164,6 +213,14 @@ export interface Ship {
   spiral?: SpiralLeg;
   /** An in-progress in-sim atmospheric-entry / aerocapture pass about its body. */
   entryLeg?: EntryLeg;
+  /** An in-progress in-sim powered ascent to a parking orbit (visual; cleared at tEnd).
+   *  Mutually exclusive with `landed`/`elements` — the leg owns the ship's state until
+   *  the `launch-arrive` finalize sets the parking orbit. */
+  launchLeg?: LaunchLeg;
+  /** An in-progress in-sim powered descent to a surface site (airless bodies; visual;
+   *  cleared at tEnd). Mutually exclusive with `landed` — the leg owns the ship's state
+   *  until the `land-arrive` finalize marks it landed. */
+  descentLeg?: DescentLeg;
   /** Set when the ship has touched down on a body's surface (after paying the
    *  descent Δv). `surfaceDir` is the landing site as a BODY-FIXED unit vector, so
    *  the ship co-rotates with the surface (moving at surface speed, not orbital
