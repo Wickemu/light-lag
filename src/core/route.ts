@@ -31,7 +31,7 @@ export interface PlannedRoute {
   legs: RouteLeg[];
   depPoint: Vec3; // departure body centre at tDepart
   arrPoint: Vec3; // target body centre at tArrive
-  flybyPoint?: Vec3; // flyby body centre at tFlyby (assist routes)
+  flybyPoints?: Vec3[]; // flyby body centres at each tFlyby, in order (assist routes)
   ok: boolean; // false ⇒ degenerate geometry; renderer hides it
 }
 
@@ -43,8 +43,8 @@ export interface RouteArgs {
   /** Optional context ring radii at the departure / arrival bodies (m). */
   rParkFrom?: number;
   rParkTo?: number;
-  /** Optional gravity-assist leg between departure and the target. */
-  flyby?: { bodyId: string; tFlyby: number };
+  /** Optional gravity-assist flyby chain between departure and the target, in order. */
+  flybys?: { bodyId: string; tFlyby: number }[];
   /** Heliocentric arc sample count (split across the two legs for an assist). */
   segments?: number;
 }
@@ -79,23 +79,34 @@ export function planRoute(args: RouteArgs): PlannedRoute {
   const arrPoint = bodyState(target, tArrive).r;
   const legs: RouteLeg[] = [];
 
-  // Gravity-assist: two heliocentric legs meeting at the flyby body.
-  if (args.flyby) {
-    const fb = BODY_BY_ID.get(args.flyby.bodyId);
-    const tFlyby = args.flyby.tFlyby;
-    if (!fb || tFlyby <= tDepart || tArrive <= tFlyby) {
-      return { legs: [], depPoint, arrPoint, ok: false };
+  // Gravity-assist: N+1 heliocentric legs meeting at each flyby body in the chain.
+  if (args.flybys && args.flybys.length > 0) {
+    // Waypoints: departure → each flyby body's centre → target, with strictly
+    // increasing times.
+    const times = [tDepart, ...args.flybys.map((f) => f.tFlyby), tArrive];
+    const points: Vec3[] = [depPoint];
+    const flybyPoints: Vec3[] = [];
+    for (const f of args.flybys) {
+      const fb = BODY_BY_ID.get(f.bodyId);
+      if (!fb) return { legs: [], depPoint, arrPoint, ok: false };
+      const p = bodyState(fb, f.tFlyby).r;
+      points.push(p);
+      flybyPoints.push(p);
     }
-    const fbPoint = bodyState(fb, tFlyby).r;
-    const leg1 = lambert(depPoint, fbPoint, tFlyby - tDepart, MU_SUN, true);
-    const leg2 = lambert(fbPoint, arrPoint, tArrive - tFlyby, MU_SUN, true);
-    if (!leg1 || !leg2) return { legs: [], depPoint, arrPoint, flybyPoint: fbPoint, ok: false };
-    const half = Math.max(2, Math.round(segments / 2));
+    points.push(arrPoint);
+    for (let i = 1; i < times.length; i++) if (times[i]! <= times[i - 1]!) {
+      return { legs: [], depPoint, arrPoint, flybyPoints, ok: false };
+    }
+    const per = Math.max(2, Math.round(segments / (times.length - 1)));
     if (args.rParkFrom) legs.push({ kind: "park-from", points: ring(depPoint, args.rParkFrom) });
-    legs.push({ kind: "helio", points: sampleConic(depPoint, leg1.v1, tFlyby - tDepart, half) });
-    legs.push({ kind: "helio", points: sampleConic(fbPoint, leg2.v1, tArrive - tFlyby, half) });
+    for (let i = 0; i < times.length - 1; i++) {
+      const tof = times[i + 1]! - times[i]!;
+      const leg = lambert(points[i]!, points[i + 1]!, tof, MU_SUN, true);
+      if (!leg) return { legs: [], depPoint, arrPoint, flybyPoints, ok: false };
+      legs.push({ kind: "helio", points: sampleConic(points[i]!, leg.v1, tof, per) });
+    }
     if (args.rParkTo) legs.push({ kind: "park-to", points: ring(arrPoint, args.rParkTo) });
-    return { legs, depPoint, arrPoint, flybyPoint: fbPoint, ok: true };
+    return { legs, depPoint, arrPoint, flybyPoints, ok: true };
   }
 
   // Direct: one heliocentric leg.

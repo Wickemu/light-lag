@@ -16,7 +16,7 @@ import { entryInterfaceCrossing, entryTrajectory } from "../core/maneuver/entry.
 import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
 import { wrapPi } from "../core/math/kepler.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
-import { assistTransfer, type AssistResult } from "../core/maneuver/assist.ts";
+import { assistTransfer, chainAssist, type AssistResult, type ChainAssistResult } from "../core/maneuver/assist.ts";
 import { STAR_BY_ID, starPosition } from "../core/stars.ts";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
@@ -163,9 +163,41 @@ export function planAssist(
     targetId, tDepart, tArrive,
     dvDepart: res.dvDepart, dvArrive: res.dvArrive,
     departed: false, inSoi: false, arrived: false,
-    flyby: { bodyId: flybyId, tFlyby, dvBurn: res.dvFlyby, done: false },
+    flybys: [{ bodyId: flybyId, tFlyby, dvBurn: res.dvFlyby, done: false }],
   };
   sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
+  return res;
+}
+
+/**
+ * Plan and schedule a MULTI-flyby gravity-assist chain: `bodyIds` lists every body
+ * in order — origin → flyby₁ → … → target (length ≥ 3) — with `times` the epoch at
+ * each (strictly increasing). Records the transfer with one `FlybyLeg` per intermediate
+ * body and queues the departure; the sim flies depart → flyby-pass×N → capture. Returns
+ * the chain estimate, or null if the schedule is degenerate / the ship's parking orbit
+ * is unknown.
+ */
+export function planChainAssist(
+  sim: Simulation,
+  shipId: string,
+  bodyIds: string[],
+  times: number[],
+): ChainAssistResult | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || bodyIds.length < 3 || bodyIds.length !== times.length) return null;
+  if (bodyIds[0] !== ship.primary) return null; // the chain must start where the ship is
+  const el = shipOsculatingElements(ship, sim.world.t);
+  const rParkFrom = periapsisRadius(el.a, el.e);
+  const res = chainAssist(bodyIds, times, { rParkFrom });
+  if (!res) return null;
+  ship.transfer = {
+    targetId: bodyIds[bodyIds.length - 1]!,
+    tDepart: times[0]!, tArrive: times[times.length - 1]!,
+    dvDepart: res.dvDepart, dvArrive: res.dvArrive,
+    departed: false, inSoi: false, arrived: false,
+    flybys: res.flybys.map((f) => ({ bodyId: f.bodyId, tFlyby: f.t, dvBurn: f.dvFlyby, done: false })),
+  };
+  sim.events.push({ t: times[0]!, kind: "transfer-depart", entityId: shipId });
   return res;
 }
 

@@ -67,12 +67,18 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-1. **In-sim flyable aerocapture pass + B-plane / chained executors** — a deorbit/landing
-   entry now flies in-sim; the remaining in-sim gaps are an aerocapture pass that exits to a
-   bound orbit from a hyperbolic SOI arrival, and the chained-flyby / B-plane-targeted
-   executors. *(see "Landing / takeoff" and "Gravity assists".)*
+1. **In-sim flyable aerocapture pass + B-plane executor** — a deorbit/landing entry and a
+   multi-flyby chain now fly in-sim; the remaining in-sim gaps are an aerocapture pass that
+   exits to a bound orbit from a hyperbolic SOI arrival, and a B-plane-targeted in-sim pass.
+   *(see "Landing / takeoff" and "Gravity assists".)*
 
-*(Done since last round: **in-sim flyable entry pass** — a coasting ship whose orbit dips
+*(Done since last round: **in-sim chained multi-flyby executor** — a planned multi-flyby
+tour (e.g. Earth→Mars→Jupiter→Saturn) now FLIES in-sim, not just costed: `ShipTransfer.flybys`
+is an ordered chain, the executor walks it (each pass bends the heliocentric velocity for free
+and aims the next leg at the following flyby body, or the target after the last), `planChainAssist`
++ a bounded `searchChain` schedule it, and the transfer planner gains a second "VIA FLYBY 2"
+dropdown that draws and commits a two-flyby chain (see "Gravity assists"). Earlier:
+**in-sim flyable entry pass** — a coasting ship whose orbit dips
 into the atmosphere can be flown down in-sim ("Fly entry") instead of teleported: a new
 read-time `EntryLeg` integrates the ballistic drag trajectory deterministically from the
 interface crossing (planar, lift = 0, reusing the entry.ts EOM), watchable at any time-warp
@@ -164,9 +170,18 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   **Free-bend B-plane targeting — DONE (analytic):** `bPlaneAim` solves the
   hyperbola that rotates v∞_in into v∞_out's direction (e = 1/sin(δ/2), rp, impact
   parameter b, and the B-vector/plane-normal aim geometry); `impactParameter` gives
-  b = rp·√((e+1)/(e−1)). Still to do: an in-sim *chained* executor (the executor
-  flies one flyby today) and a B-plane-targeted in-sim pass (it uses a patched-conic
-  point + charged residual), plus a planner-UI search over chain schedules.
+  b = rp·√((e+1)/(e−1)). **In-sim chained executor — DONE:** `ShipTransfer.flybys` is
+  an ordered chain (the single flyby is a 1-element array), and `sim.ts::executeFlyby`
+  walks it — each scheduled `flyby-pass` bends the heliocentric velocity for free,
+  aims the next leg at the FOLLOWING flyby body (Lambert) and schedules the next pass,
+  or aims at the target (B-plane capture) and schedules SOI-crossing after the last.
+  `planChainAssist` records the chain and a bounded `searchChain` grid-searches the
+  per-leg times-of-flight around their Hohmann estimates; the transfer planner's new
+  "VIA FLYBY 2" dropdown draws and commits a two-flyby chain. Impulsive + analytic-coast,
+  so chunk-invariant (one-step ≡ chunked) and golden-hash-neutral (the absent `flybys`
+  field doesn't touch the direct-transfer golden scenario). Still to do: a B-plane-targeted
+  in-sim pass (it uses a patched-conic point + charged residual), and a full chain porkchop
+  (the UI searches TOF multipliers around Hohmann timings, not an exhaustive window sweep).
 - **Transfer toolkit** — DONE: plane-change Δv, bi-elliptic transfers, and
   multi-revolution Lambert (wired into the porkchop).
 - **J2 oblateness** — DONE: secular nodal/apsidal precession of ship/station

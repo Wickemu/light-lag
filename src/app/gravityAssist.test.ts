@@ -51,7 +51,7 @@ describe("in-sim gravity assist (Earth → Jupiter → Saturn)", () => {
 
     // Through the flyby.
     sim.step(best.tFlyby + DAY - sim.world.t);
-    expect(ship.transfer!.flyby!.done).toBe(true);
+    expect(ship.transfer!.flybys![0]!.done).toBe(true);
     const eAfter = helioEnergy(sim, id);
     // The slingshot changed the heliocentric orbital energy (the free assist).
     expect(Math.abs(eAfter - eBefore)).toBeGreaterThan(1e6);
@@ -72,8 +72,8 @@ describe("in-sim gravity assist (Earth → Jupiter → Saturn)", () => {
 
     const restored = deserializeWorld(serializeWorld(sim.world));
     const tr = restored.ships.get(id)!.transfer!;
-    expect(tr.flyby!.bodyId).toBe("jupiter");
-    expect(tr.flyby!.done).toBe(false);
+    expect(tr.flybys![0]!.bodyId).toBe("jupiter");
+    expect(tr.flybys![0]!.done).toBe(false);
     expect(hashWorld(restored)).toBe(hashWorld(sim.world));
   });
 });

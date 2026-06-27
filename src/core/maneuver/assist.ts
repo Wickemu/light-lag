@@ -13,8 +13,9 @@
  */
 
 import { type BodyDef, BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT } from "../constants.ts";
-import { bodyState } from "../ephemeris.ts";
+import { bodyState, bodyElements } from "../ephemeris.ts";
 import { lambert } from "./lambert.ts";
+import { hohmann } from "./hohmann.ts";
 import { hyperbolicBurnDv, combinedPlaneChangeDv } from "../orbit.ts";
 import { maxTurnAngle } from "./flyby.ts";
 import { type Vec3, length, sub, dot } from "../math/vec3.ts";
@@ -239,6 +240,53 @@ export function searchAssist(
       const tArrive = s.arriveWindow[0] + ((s.arriveWindow[1] - s.arriveWindow[0]) * j) / (n - 1);
       const r = assistTransfer(originId, flybyId, targetId, s.tDepart, tFlyby, tArrive, s);
       if (r && isFinite(r.dvTotal) && (!best || r.dvTotal < best.dvTotal)) best = r;
+    }
+  }
+  return best;
+}
+
+export interface ChainSearch extends AssistParams {
+  tDepart: number; // fixed departure epoch (s since J2000)
+  steps?: number; // TOF multipliers sampled per leg (default 7)
+  tofLo?: number; // smallest per-leg TOF as a fraction of its Hohmann TOF (default 0.7)
+  tofHi?: number; // largest (default 1.6)
+}
+
+/**
+ * Grid-search the cheapest multi-flyby chain through `bodyIds` (≥ 3) for a fixed
+ * departure, varying each heliocentric leg's time-of-flight around its Hohmann
+ * estimate. Bounded (steps^legs `chainAssist` evaluations), so keep the chain short.
+ * Returns the minimum-total-Δv schedule (the result + the chosen `times`), or null.
+ */
+export function searchChain(
+  bodyIds: string[], s: ChainSearch,
+): { result: ChainAssistResult; times: number[] } | null {
+  if (bodyIds.length < 3) return null;
+  const bodies = bodyIds.map((id) => BODY_BY_ID.get(id));
+  if (bodies.some((b) => !b)) return null;
+  const legs = bodyIds.length - 1;
+  // Nominal Hohmann TOF for each consecutive leg, from semi-major axes at departure.
+  const semi = bodies.map((b) => bodyElements(b!, s.tDepart)?.a ?? b!.radius);
+  const nomTof: number[] = [];
+  for (let i = 0; i < legs; i++) nomTof.push(hohmann(MU_SUN, semi[i]!, semi[i + 1]!).tof);
+
+  const n = s.steps ?? 7;
+  const lo = s.tofLo ?? 0.7, hi = s.tofHi ?? 1.6;
+  const mult = (k: number): number => (n === 1 ? 1 : lo + ((hi - lo) * k) / (n - 1));
+
+  let best: { result: ChainAssistResult; times: number[] } | null = null;
+  const total = Math.pow(n, legs);
+  for (let combo = 0; combo < total; combo++) {
+    const times = [s.tDepart];
+    let c = combo;
+    for (let i = 0; i < legs; i++) {
+      const k = c % n;
+      c = Math.floor(c / n);
+      times.push(times[i]! + nomTof[i]! * mult(k));
+    }
+    const res = chainAssist(bodyIds, times, s);
+    if (res && isFinite(res.dvTotal) && (!best || res.dvTotal < best.result.dvTotal)) {
+      best = { result: res, times };
     }
   }
   return best;

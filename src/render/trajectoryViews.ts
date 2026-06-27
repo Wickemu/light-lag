@@ -186,7 +186,7 @@ export class TrajectoryViews {
         tArrive: tr!.tArrive,
         rParkFrom: from ? from.radius + DEFAULT_CAPTURE_ALT : undefined,
         rParkTo: target ? target.radius + DEFAULT_CAPTURE_ALT : undefined,
-        flyby: tr!.flyby ? { bodyId: tr!.flyby.bodyId, tFlyby: tr!.flyby.tFlyby } : undefined,
+        flybys: tr!.flybys ? tr!.flybys.map((f) => ({ bodyId: f.bodyId, tFlyby: f.tFlyby })) : undefined,
         segments: SEGMENTS,
       });
       if (!route.ok) {
