@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { lightTime, signalArrival, retardedTime } from "./comms.ts";
+import { lightTime, signalArrival, retardedTime, dopplerFactor, redshiftZ, shiftedWavelength } from "./comms.ts";
 import { bodyState } from "./ephemeris.ts";
 import { BODY_BY_ID, C, AU } from "./constants.ts";
+
+const ZERO = { x: 0, y: 0, z: 0 };
+// Standard line of sight: emitter at origin, observer down the +x axis. n̂ = +x̂.
+const FROM = ZERO;
+const TO = { x: AU, y: 0, z: 0 };
 
 const earth = BODY_BY_ID.get("earth")!;
 const mars = BODY_BY_ID.get("mars")!;
@@ -87,5 +92,54 @@ describe("convergence at relativistic speed", () => {
     const posFn = (t: number) => ({ x: AU + C * t, y: 0, z: 0 }); // recedes at exactly c
     const tArr = signalArrival({ x: 0, y: 0, z: 0 }, posFn, 0);
     expect(tArr).toBe(Infinity);
+  });
+});
+
+describe("Doppler shift of signals", () => {
+  it("no relative motion ⇒ no shift (factor 1, z 0)", () => {
+    expect(dopplerFactor(ZERO, ZERO, FROM, TO)).toBeCloseTo(1, 12);
+    expect(redshiftZ(1)).toBeCloseTo(0, 12);
+  });
+
+  it("classical limit: a slow emitter receding reddens by ~1 − v/c", () => {
+    const v = 30_000; // 30 km/s ≈ Earth's orbital speed, ≪ c
+    // Emitter moving in −x̂ (away from the +x observer): redshift.
+    const factor = dopplerFactor({ x: -v, y: 0, z: 0 }, ZERO, FROM, TO);
+    expect(factor).toBeCloseTo(1 - v / C, 7); // exact form adds the γ term ~½(v/c)²≈5e-9
+    expect(redshiftZ(factor)).toBeGreaterThan(0);
+  });
+
+  it("a slow emitter approaching blueshifts (factor > 1, z < 0)", () => {
+    const v = 30_000;
+    const factor = dopplerFactor({ x: v, y: 0, z: 0 }, ZERO, FROM, TO); // toward observer
+    expect(factor).toBeCloseTo(1 + v / C, 7); // exact form adds the γ term ~½(v/c)²≈5e-9
+    expect(redshiftZ(factor)).toBeLessThan(0);
+  });
+
+  it("transverse motion still reddens by 1/γ (pure time dilation, no classical term)", () => {
+    const v = 0.6 * C; // emitter crosses the line of sight (along ŷ): n̂·β = 0
+    const factor = dopplerFactor({ x: 0, y: v, z: 0 }, ZERO, FROM, TO);
+    const gamma = 1 / Math.sqrt(1 - 0.6 * 0.6); // = 1.25
+    expect(factor).toBeCloseTo(1 / gamma, 12); // 0.8 — a redshift with zero radial speed
+  });
+
+  it("relativistic longitudinal recession matches √((1−β)/(1+β))", () => {
+    for (const beta of [0.5, 0.9, 0.95]) {
+      const factor = dopplerFactor({ x: -beta * C, y: 0, z: 0 }, ZERO, FROM, TO);
+      expect(factor).toBeCloseTo(Math.sqrt((1 - beta) / (1 + beta)), 10);
+    }
+  });
+
+  it("the factor is reciprocal under swapping emitter and observer velocity (approach↔recede)", () => {
+    const v = { x: 0.3 * C, y: 0, z: 0 };
+    const approach = dopplerFactor(v, ZERO, FROM, TO); // emitter chasing the photon: blueshift
+    const recede = dopplerFactor(ZERO, v, FROM, TO); // observer fleeing the photon: redshift
+    expect(approach * recede).toBeCloseTo(1, 10); // symmetric Doppler pair
+  });
+
+  it("wavelength shifts inversely to frequency: a redshift stretches 10 µm", () => {
+    const factor = 0.5; // f halved
+    expect(shiftedWavelength(10e-6, factor)).toBeCloseTo(20e-6, 12); // λ doubled
+    expect(redshiftZ(factor)).toBeCloseTo(1, 12); // z = 1
   });
 });

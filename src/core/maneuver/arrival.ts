@@ -18,7 +18,7 @@ import { lambert, type LambertSolution } from "./lambert.ts";
 import { stateToElements, elementsToState, propagate, wrapPi } from "../math/kepler.ts";
 import { bodyState, bodyStateRelative, bodyElements } from "../ephemeris.ts";
 import { soiRadius, j2Rates } from "../orbit.ts";
-import { type BodyDef, BODY_BY_ID, MU_SUN } from "../constants.ts";
+import { type BodyDef, BODY_BY_ID, MU_SUN, j2RefRadius } from "../constants.ts";
 
 export interface AimResult {
   v1: Vec3; // heliocentric departure velocity to fly
@@ -146,7 +146,7 @@ export function aimMoonArrival(
     const cruise = (t: number) => {
       const el = propagate(shipEl, parent.mu, t - tDepart);
       if (parent.J2 && el.e < 1) {
-        const r = j2Rates(parent.mu, parent.radius, parent.J2, el.a, el.e, el.i);
+        const r = j2Rates(parent.mu, j2RefRadius(parent), parent.J2, el.a, el.e, el.i);
         el.Omega = wrapPi(el.Omega + r.nodeDot * (t - tDepart));
         el.omega = wrapPi(el.omega + r.periDot * (t - tDepart));
         el.M = wrapPi(el.M + r.anomalyDot * (t - tDepart));

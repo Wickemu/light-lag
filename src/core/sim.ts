@@ -38,7 +38,7 @@ import { searchMoonWindow } from "./maneuver/moon.ts";
 import { lambert } from "./maneuver/lambert.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
 import { entryInterfaceAlt, entryInterfaceCrossing } from "./maneuver/entry.ts";
-import { type BodyDef, BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
+import { type BodyDef, BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT, j2RefRadius } from "./constants.ts";
 import { type Vec3, add, sub, scale, normalize, length, cross } from "./math/vec3.ts";
 
 /** Sub-step grid spacing during powered flight (s). LEO period is ~5500 s, so a
@@ -124,12 +124,15 @@ export class Simulation {
   step(dtSim: number): void {
     if (dtSim <= 0) return;
 
-    // Proper time advances with coordinate time for every ship (τ ≡ t in-system).
-    // A ship on an interstellar leg ages by the DILATED proper time over the part
-    // of [t, t+dt] that overlaps the leg, and by coordinate time outside it — the
-    // relativistic divergence the τ field was always kept for. This telescopes
-    // exactly across chunkings (it is a difference of an analytic function), so
-    // determinism is preserved.
+    // Proper time advances with coordinate time for every ship (τ ≡ t in-system,
+    // where γ−1 ~ 1e-10 at orbital speeds). A ship on an interstellar leg ages by
+    // the DILATED proper time over the part of [t, t+dt] that overlaps the leg, and
+    // by coordinate time outside it — the relativistic divergence the τ field was
+    // always kept for; this telescopes exactly across chunkings (a difference of an
+    // analytic function). A ship on a relativistic in-system BURN is seeded the
+    // coordinate interval here and then has the dilation deficit refunded per thrust
+    // segment in advanceThrustShip (γ_seg is known there), so its crew clock dilates
+    // too — a no-op to f64 for the sub-relativistic burns every preset ship flies.
     const T0 = this.world.t, T1 = this.world.t + dtSim;
     for (const s of this.world.ships.values()) {
       const leg = s.interstellarLeg;
@@ -288,6 +291,14 @@ export class Simulation {
       if (tauCut < segTau) { segTau = tauCut; event = "cut"; }
       if (tauEmpty < segTau) { segTau = tauEmpty; event = "empty"; }
       const seg = segTau * gammaSeg; // coordinate-time length of the segment
+
+      // Crew ages by PROPER time over the burn, not coordinate time. step()'s
+      // pre-loop already credited this ship the full coordinate interval (part of
+      // dtSim); refund the dilation deficit (segTau − seg ≤ 0) so τ accrues the
+      // dilated proper time during a relativistic in-system burn. A no-op to f64 at
+      // sub-relativistic speed (γ_seg = 1 ⇒ segTau = seg), so the classical golden
+      // path — and every preset ship — is byte-unchanged.
+      ship.tau += segTau - seg;
 
       // Integrate r,v over the smooth segment (thrust always on — no toggling).
       const dirFor = (r: Vec3, v: Vec3): Vec3 => {
@@ -458,6 +469,11 @@ export class Simulation {
     if (tauEmptyMin < segTau) { segTau = tauEmptyMin; event = "empty"; }
     const seg = segTau * gammaSeg;
 
+    // Crew ages by proper time over the segment (see advanceThrustShip): refund the
+    // step() pre-loop's coordinate-time over-count so a relativistic boostered burn
+    // dilates τ. No-op to f64 sub-relativistically (γ_seg = 1).
+    ship.tau += segTau - seg;
+
     const dirFor = (r: Vec3, v: Vec3): Vec3 => {
       const f = orbitFrame(r, v);
       switch (burn.dir) {
@@ -582,7 +598,7 @@ export class Simulation {
     // mean motion here would make the impact time depend on the evaluation epoch and
     // break chunk-invariance over a precessing orbit.
     const n = meanMotion(el.a, mu);
-    const nEff = body.J2 && el.e < 1 ? n + j2Rates(mu, R, body.J2, el.a, el.e, el.i).anomalyDot : n;
+    const nEff = body.J2 && el.e < 1 ? n + j2Rates(mu, j2RefRadius(body), body.J2, el.a, el.e, el.i).anomalyDot : n;
     if (el.e < 1) {
       // Eccentric anomaly at r = R; the impact is the DESCENDING crossing (toward
       // periapsis), whose mean anomaly is 2π − M_ascending.

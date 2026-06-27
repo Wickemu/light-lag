@@ -17,8 +17,9 @@ import {
 } from "./math/kepler.ts";
 import { j2Rates } from "./orbit.ts";
 import { bodyState } from "./ephemeris.ts";
+import { retardedTime, dopplerFactor, redshiftZ } from "./comms.ts";
 import { STAR_BY_ID, starPosition } from "./stars.ts";
-import { BODY_BY_ID, C } from "./constants.ts";
+import { BODY_BY_ID, C, j2RefRadius } from "./constants.ts";
 import { type Vec3, add, addScaled, sub, scale, dot, cross, normalize, length, distance } from "./math/vec3.ts";
 import { integrateEntryPlanar, entryTrajectory } from "./maneuver/entry.ts";
 import { DEFAULT_ENTRY_BETA } from "./surface.ts";
@@ -132,7 +133,7 @@ export function coastElements(ship: Ship, t: number): KeplerElements {
   // Secular precession applies to BOUND orbits only — a hyperbolic mean anomaly is
   // not mod-2π, so it must never be wrapped (and a brief flyby barely precesses).
   if (body?.J2 && el.e < 1) {
-    const r = j2Rates(mu, body.radius, body.J2, el.a, el.e, el.i);
+    const r = j2Rates(mu, j2RefRadius(body), body.J2, el.a, el.e, el.i);
     el.Omega = wrapPi(el.Omega + r.nodeDot * dt);
     el.omega = wrapPi(el.omega + r.periDot * dt);
     el.M = wrapPi(el.M + r.anomalyDot * dt);
@@ -294,6 +295,35 @@ export function shipWorldState(ship: Ship, t: number): State {
   const body = BODY_BY_ID.get(ship.primary)!;
   const primary = bodyState(body, t);
   return { r: add(primary.r, rel.r), v: add(primary.v, rel.v) };
+}
+
+/** The Doppler readout for the telemetry a control node receives from a ship NOW. */
+export interface TelemetryDoppler {
+  factor: number; // f_obs / f_emit (< 1 redshift, > 1 blueshift)
+  z: number; // redshift z = Δλ/λ = 1/factor − 1
+  retardedTime: number; // the (past) emission time whose light arrives now
+  lightDelay: number; // one-way light delay of this telemetry (s)
+}
+
+/**
+ * The Doppler shift of the telemetry a `controlNodeId` body observes from `ship`
+ * at the current time `t` — a pure read-time quantity (no world mutation, nothing
+ * serialized). The signal arriving now left the ship at its RETARDED time, so the
+ * shift is set by the ship's velocity THEN against the control node's velocity NOW,
+ * projected on the (retarded) line of sight. For an in-system ship the shift is
+ * ~1e-6 (orbital speeds); for an accelerating torchship it is dramatic and inverts
+ * sign at the flip. Returns null if the body is unknown or the ship is out of
+ * contact (light cannot bridge the gap within the contact horizon).
+ */
+export function shipTelemetryDoppler(ship: Ship, controlNodeId: string, t: number): TelemetryDoppler | null {
+  const control = BODY_BY_ID.get(controlNodeId);
+  if (!control) return null;
+  const obs = bodyState(control, t); // observer (control node) state at reception
+  const tRet = retardedTime(obs.r, (tt) => shipWorldState(ship, tt).r, t);
+  if (!isFinite(tRet)) return null;
+  const emit = shipWorldState(ship, tRet); // ship state at emission
+  const factor = dopplerFactor(emit.v, obs.v, emit.r, obs.r);
+  return { factor, z: redshiftZ(factor), retardedTime: tRet, lightDelay: t - tRet };
 }
 
 /**
