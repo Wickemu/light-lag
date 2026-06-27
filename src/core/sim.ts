@@ -651,6 +651,15 @@ export class Simulation {
 
     const t = this.world.t; // == tr.tDepart
 
+    // Intra-system moon TOUR (most-specific case first): cruises about the parent (tr.central)
+    // AND walks a moon-flyby chain inside the parent's SOI. A plain moon transfer sets `central`
+    // but no `flybys`; a heliocentric assist sets `flybys` but no `central` — so the tour is the
+    // combination, and must be matched BEFORE the plain-moon branch below.
+    if (tr.central && tr.central !== "sun" && tr.flybys && tr.flybys.length > 0 && !tr.flybys[0]!.done) {
+      this.executeMoonTourDeparture(ship, tr, t);
+      return;
+    }
+
     // Moon transfer: cruise about the PARENT (tr.central), not the Sun. The ship stays in
     // the parent's SOI, so it is seeded at its CURRENT parking-orbit position (not the
     // parent's centre) onto a parent-centric transfer conic toward the moon.
@@ -735,6 +744,37 @@ export class Simulation {
   }
 
   /**
+   * Departure of an intra-system moon TOUR (cruise frame = the parent planet `tr.central`): seed
+   * the parent-centric leg-1 Lambert from the ship's current parking position to the FIRST flyby
+   * moon's centre (a patched-conic point), pay the DIRECT injection (the ship is already in orbit
+   * about the parent — no origin-body well to escape, mirroring executeMoonDeparture), keep it in
+   * the parent's SOI, and schedule the first moon flyby-pass. The parent-frame twin of
+   * executeAssistDeparture.
+   */
+  private executeMoonTourDeparture(ship: Ship, tr: NonNullable<Ship["transfer"]>, t: number): void {
+    const central = BODY_BY_ID.get(tr.central!);
+    const first = tr.flybys![0]!;
+    const firstMoon = BODY_BY_ID.get(first.bodyId);
+    if (!central || !firstMoon) return;
+    const shipDep = shipRelativeState(ship, t); // parent-relative (primary == central)
+    const moonR = bodyStateRelative(firstMoon, first.tFlyby).r;
+    const leg1 = lambert(shipDep.r, moonR, first.tFlyby - t, central.mu, true);
+    if (!leg1) return; // degenerate; leave un-departed for re-planning
+    const dv = length(sub(leg1.v1, shipDep.v));
+    if (!applyImpulsiveDv(ship, dv)) return; // can't afford the injection — stay parked
+
+    tr.departed = true;
+    tr.dvDepart = dv;
+    ship.primary = central.id;
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = stateToElements(shipDep.r, leg1.v1, central.mu);
+    ship.epoch = t;
+    this.events.push({ t: first.tFlyby, kind: "flyby-pass", entityId: ship.id });
+  }
+
+  /**
    * Departure of a gravity-assist mission: seed the ship on the heliocentric leg
    * to the FIRST flyby body's centre (a patched-conic flyby point) with the Lambert
    * velocity, pay the Oberth injection, and schedule the first flyby-pass.
@@ -782,49 +822,71 @@ export class Simulation {
     const flybyBody = BODY_BY_ID.get(leg.bodyId);
     if (!flybyBody) return;
 
+    // Frame: an intra-system moon TOUR bends about the PARENT (tr.central) with its moons as the
+    // assist bodies; a heliocentric assist bends about the Sun with planets. The flyby relations
+    // are identical — only the central μ, the frame body states are read in, the final-leg aim, and
+    // the conic the ship continues on differ.
+    const moonCruise = tr.central !== undefined && tr.central !== "sun";
+    const central = moonCruise ? BODY_BY_ID.get(tr.central!) : undefined;
+    if (moonCruise && !central) return;
+    const mu = moonCruise ? central!.mu : MU_SUN;
+    const stateOf = (b: BodyDef, tt: number): { r: Vec3; v: Vec3 } =>
+      moonCruise ? bodyStateRelative(b, tt) : bodyState(b, tt);
+
     const t = this.world.t;
-    const shipHelio = shipRelativeState(ship, t); // heliocentric (primary == sun)
-    const fb = bodyState(flybyBody, t);
+    const shipRel = shipRelativeState(ship, t); // parent- or helio-relative, per ship.primary
+    const fb = stateOf(flybyBody, t);
 
     // Aim the leg leaving this flyby: at the NEXT flyby body's centre (a patched-conic
-    // point, via Lambert) if the chain continues, else at the final target (B-plane
-    // capture aim). Either way it sets the heliocentric velocity to leave the flyby with.
+    // point, via Lambert) if the chain continues, else at the final target (a B-plane
+    // capture aim). Either way it sets the frame velocity to leave the flyby with.
     const next = tr.flybys[idx + 1];
     let v1: Vec3;
     let nextEvent: { t: number; kind: "flyby-pass" | "soi-crossing" };
     if (next) {
       const nextBody = BODY_BY_ID.get(next.bodyId);
       if (!nextBody) return;
-      const nextState = bodyState(nextBody, next.tFlyby);
-      const legN = lambert(shipHelio.r, nextState.r, next.tFlyby - t, MU_SUN, true);
+      const nextState = stateOf(nextBody, next.tFlyby);
+      const legN = lambert(shipRel.r, nextState.r, next.tFlyby - t, mu, true);
       if (!legN) return; // re-plannable
       v1 = legN.v1;
       nextEvent = { t: next.tFlyby, kind: "flyby-pass" };
     } else {
       const target = BODY_BY_ID.get(tr.targetId);
       if (!target) return;
-      // Aerocapture arrival aims the periapsis INTO the atmosphere (aeroPeriAlt); a
-      // propulsive (circular or elliptical) arrival aims at the parking altitude. The
-      // capture geometry itself is then chosen at SOI entry (enterSoi reads aeroPeriAlt /
-      // captureApoAlt) — mirroring a direct transfer's executeDeparture.
-      const rCapture = target.radius + (tr.aeroPeriAlt ?? DEFAULT_CAPTURE_ALT);
-      const aim = aimArrival(flybyBody, target, t, tr.tArrive, rCapture);
-      if (!aim) return; // re-plannable
-      v1 = aim.v1;
-      nextEvent = { t: aim.tSoi, kind: "soi-crossing" };
+      if (moonCruise) {
+        // Final moon leg: a J2-aware PARENT-frame B-plane aim (aimMoonArrival) into the moon's
+        // small SOI — the parent-frame twin of the heliocentric aimArrival below.
+        const rCapture = target.radius + DEFAULT_CAPTURE_ALT;
+        const aim = aimMoonArrival(central!, target, shipRel.r, t, tr.tArrive, rCapture);
+        if (!aim) return; // re-plannable
+        v1 = aim.v1;
+        nextEvent = { t: aim.tSoi, kind: "soi-crossing" };
+      } else {
+        // Aerocapture arrival aims the periapsis INTO the atmosphere (aeroPeriAlt); a
+        // propulsive (circular or elliptical) arrival aims at the parking altitude. The
+        // capture geometry itself is then chosen at SOI entry (enterSoi reads aeroPeriAlt /
+        // captureApoAlt) — mirroring a direct transfer's executeDeparture.
+        const rCapture = target.radius + (tr.aeroPeriAlt ?? DEFAULT_CAPTURE_ALT);
+        const aim = aimArrival(flybyBody, target, t, tr.tArrive, rCapture);
+        if (!aim) return; // re-plannable
+        v1 = aim.v1;
+        nextEvent = { t: aim.tSoi, kind: "soi-crossing" };
+      }
     }
 
-    const vInfIn = sub(shipHelio.v, fb.v); // body-relative excess in
+    const vInfIn = sub(shipRel.v, fb.v); // body-relative excess in
     const vInfOut = sub(v1, fb.v); // body-relative excess out (next-leg departure)
     const man = flybyManeuver(vInfIn, vInfOut, flybyBody);
     if (!applyImpulsiveDv(ship, man.dvFlyby)) return; // can't afford the residual burn
 
     leg.done = true;
     leg.dvBurn = man.dvFlyby;
-    // Continue on the next heliocentric conic from the (continuous) flyby point.
-    ship.primary = "sun";
+    // Continue on the next conic from the (continuous) flyby point, in the SAME frame — the
+    // parent for a moon tour (the ship never leaves the planet's SOI), the Sun otherwise.
+    ship.primary = moonCruise ? central!.id : "sun";
     ship.mode = "coast";
-    ship.elements = stateToElements(shipHelio.r, v1, MU_SUN);
+    ship.elements = stateToElements(shipRel.r, v1, mu);
     ship.epoch = t;
     this.events.push({ t: nextEvent.t, kind: nextEvent.kind, entityId: ship.id });
   }
@@ -939,8 +1001,26 @@ export class Simulation {
 
     const t = this.world.t;
     const rel = shipRelativeState(ship, t); // continuous target-relative state at egress
-    const tgt = bodyState(target, t);
 
+    // Re-patch into the frame the cruise lives in. An intra-system moon TOUR egresses from a
+    // moon's SOI back into the PARENT planet's frame (parent.mu, parent-relative) — the ship is
+    // still deep inside the planet's SOI, so re-patching to the Sun (as a heliocentric flyby does)
+    // would corrupt the frame. A heliocentric flyby egresses to the Sun.
+    const moonCruise = tr.central !== undefined && tr.central !== "sun";
+    const parent = moonCruise && target.parent ? BODY_BY_ID.get(target.parent) : undefined;
+    if (parent) {
+      const tgt = bodyStateRelative(target, t); // parent-relative moon state
+      ship.primary = parent.id;
+      ship.mode = "coast";
+      ship.r = undefined;
+      ship.v = undefined;
+      ship.elements = stateToElements(add(rel.r, tgt.r), add(rel.v, tgt.v), parent.mu);
+      ship.epoch = t;
+      tr.inSoi = false; // back on a parent-centric conic — the tour continues correctly
+      return;
+    }
+
+    const tgt = bodyState(target, t);
     ship.primary = "sun";
     ship.mode = "coast";
     ship.r = undefined;
