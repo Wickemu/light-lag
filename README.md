@@ -48,8 +48,12 @@ flyable, to-scale 3D Solar System.
   moves the porkchop crosshair, and a **Suggest** button that auto-searches the workhorse
   gravity-assist routes (incl. VEEGA-style chains) and ranks them — or pick the flybys yourself.
   **Moons are real destinations**: from a planet orbit you can transfer to its moons (LEO → the
-  Moon, Jupiter orbit → a Galilean, Saturn orbit → Titan) — a parent-centric Lambert that flies
-  in-sim and captures into a lunar/Galilean parking orbit (LEO → lunar orbit ≈ 4.2 km/s).
+  Moon, Jupiter orbit → a Galilean, Saturn orbit → Titan) — a parent-centric Lambert (J2-aware,
+  so even a gas giant's oblateness is honoured) that flies in-sim and captures into a
+  lunar/Galilean parking orbit (LEO → lunar orbit ≈ 4.2 km/s). And a moon of *another* planet is a
+  one-click **two-stage mission**: pick Europa from Earth and the planner commits a heliocentric
+  Stage-1 leg to Jupiter that **auto-chains** the parent-centric Europa leg the instant the ship
+  captures at Jupiter — Earth → Jupiter → Europa from a single Commit.
 - **Landing & takeoff** Δv/propellant budgeting: a calibrated gravity-turn ascent through real
   exponential atmospheres (Earth→LEO ≈ 9.3 km/s, Moon ≈ 1.9, Mars ≈ 4.0), aerobraking on
   descent, and ships that sit on the surface co-rotating with the body.

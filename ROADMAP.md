@@ -72,7 +72,22 @@ read-time analytic, suite green, golden hash documented if it moves.
    trajectory; and Phase 7 (mass economy: propellant depots, ISRU, colony supply) is still
    open. *(see "Gravity assists" and Phase 7.)*
 
-*(Done since last round: **in-sim aerocapture on arrival** — a transfer can capture at a
+*(Done since last round: **mission-planner overhaul + moons as destinations** — the transfer
+planner was rebuilt around the engine's full capability: grouped, origin-aware destination &
+flyby lists (every body, Earth now selectable as a gravity-assist body — the VEEGA bug fixed),
+an **Optimize for** selector (least Δv · shortest flight · balanced, a total-ordering scorer in
+`criteria.ts`) that moves the porkchop crosshair and ranks the assist/chain sweeps, and a
+**Suggest** button that auto-searches the workhorse flyby routes (`suggest.ts`). **Moons became
+real destinations**: a same-parent moon flies a parent-centric Lambert (`planMoonTransfer`,
+`ShipTransfer.central`) that captures into a lunar/Galilean parking orbit, and a moon of
+*another* planet is a one-click **cross-system two-stage mission** (`planMoonMission`,
+`ShipTransfer.thenMoonId`) — a heliocentric Stage-1 leg to the parent planet that the sim
+**auto-chains** into the parent-centric moon leg on capture (Earth → Jupiter → Europa). The
+B-plane moon aim (`aimMoonArrival`) is J2-aware so a gas giant's oblateness doesn't drift the
+short hop out of the moon's small SOI, and `searchMoonWindow` scores cells with that same aim so
+the window it picks is one the sim can actually fly. All new state is optional ⇒ golden hash
+unmoved; impulsive + analytic-coast + scheduled-event ⇒ chunk-invariant. Earlier:
+**in-sim aerocapture on arrival** — a transfer can capture at a
 body with an atmosphere by flying the drag pass instead of a propulsive burn. `planTransfer`
 takes a capture mode; aerocapture aims the arrival hyperbola's periapsis INTO the atmosphere
 (`aeroPeriAlt`, from the `aerocapture()` corridor solver), `enterSoi` flies the entry leg at

@@ -34,6 +34,7 @@ import { stateToElements, meanMotion } from "./math/kepler.ts";
 import { bodyState, bodyElements, bodyStateRelative } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
 import { aimArrival, aimMoonArrival } from "./maneuver/arrival.ts";
+import { searchMoonWindow } from "./maneuver/moon.ts";
 import { lambert } from "./maneuver/lambert.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
 import { entryInterfaceAlt, entryInterfaceCrossing } from "./maneuver/entry.ts";
@@ -975,6 +976,33 @@ export class Simulation {
     ship.mode = "coast";
     tr.arrived = true;
     tr.dvArrive = captureDv;
+    this.maybeChainMoonLeg(ship, tr);
+  }
+
+  /**
+   * Auto-chain the Stage-2 (moon) leg of a cross-system mission. On capturing into a parking
+   * orbit at a planet, if the just-completed transfer carried `thenMoonId` AND that moon orbits
+   * the planet we're now at, search a fresh parent-centric window (searchMoonWindow) and queue
+   * the moon-leg departure — which then flies exactly as a same-parent moon transfer. The field
+   * is consumed unconditionally so a missed window never re-fires. Capture is a deterministic
+   * event and the search is a fixed grid ⇒ the chain is chunk-invariant.
+   */
+  private maybeChainMoonLeg(ship: Ship, tr: NonNullable<Ship["transfer"]>): void {
+    const moonId = tr.thenMoonId;
+    if (!moonId) return;
+    tr.thenMoonId = undefined;
+    const moon = BODY_BY_ID.get(moonId);
+    if (!moon || moon.parent !== ship.primary) return; // not at the moon's planet
+    const t = this.world.t;
+    const aPark = shipOsculatingElements(ship, t).a;
+    const win = searchMoonWindow(ship.primary, moonId, t, (tt) => shipRelativeState(ship, tt), aPark);
+    if (!win) return;
+    ship.transfer = {
+      targetId: moonId, tDepart: win.tDepart, tArrive: win.tArrive,
+      dvDepart: win.dvDepart, dvArrive: win.dvArrive,
+      departed: false, inSoi: false, arrived: false, central: ship.primary,
+    };
+    this.events.push({ t: win.tDepart, kind: "transfer-depart", entityId: ship.id });
   }
 
   /**
@@ -1084,6 +1112,7 @@ export class Simulation {
     ship.mode = "coast";
     tr.arrived = true;
     tr.dvArrive = trimDv;
+    this.maybeChainMoonLeg(ship, tr);
   }
 
   /** Schedule the SOI egress of a ship on a target-relative conic `el` at time `t`

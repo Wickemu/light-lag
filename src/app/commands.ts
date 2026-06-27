@@ -15,6 +15,7 @@ import { hohmann } from "../core/maneuver/hohmann.ts";
 import { shipOsculatingElements, shipRelativeState, shipWorldState, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "../core/maneuver/entry.ts";
 import { aimMoonArrival } from "../core/maneuver/arrival.ts";
+export { searchMoonWindow, type MoonWindow } from "../core/maneuver/moon.ts";
 import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
 import { wrapPi } from "../core/math/kepler.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
@@ -25,8 +26,8 @@ import {
 } from "../core/surface.ts";
 import { bodyState, bodyStateRelative } from "../core/ephemeris.ts";
 import { lambert } from "../core/maneuver/lambert.ts";
-import { type Vec3, length, sub, normalize, distance } from "../core/math/vec3.ts";
-import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
+import { length, sub, normalize, distance } from "../core/math/vec3.ts";
+import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT, type BodyDef } from "../core/constants.ts";
 
 export interface ShipDesign {
   name: string;
@@ -213,48 +214,52 @@ export function planMoonTransfer(
   return { dvDepart, dvArrive, tof: tArrive - tDepart };
 }
 
-/** A planned moon-transfer window: the cheapest departure/arrival found, with its costs. */
-export interface MoonWindow {
-  tDepart: number;
-  tArrive: number;
-  dvDepart: number; // injection from the parking orbit (m/s)
-  dvArrive: number; // capture about the moon (m/s)
+/** A two-stage cross-system mission: the heliocentric Stage-1 cost plus an estimate of the
+ *  parent-centric Stage-2 (moon) leg that the sim auto-chains on arrival at the planet. */
+export interface MoonMissionPlan extends TransferPlan {
+  stage2Dv: number; // estimated Stage-2 injection + capture (m/s)
+  parentId: string; // the planet captured at first
+}
+
+/** Rough Stage-2 estimate: a Hohmann hop from a default parking orbit about `parent` out to the
+ *  moon, plus a hyperbolic capture about the moon. Used only for the planner readout — the real
+ *  Stage-2 is searched fresh (searchMoonWindow) when the ship actually captures at the planet. */
+function estimateMoonLeg(parent: BodyDef, moon: BodyDef, tArrive: number): number {
+  const rPark = parent.radius + DEFAULT_CAPTURE_ALT;
+  const rMoon = length(bodyStateRelative(moon, tArrive).r);
+  const hoh = hohmann(parent.mu, rPark, rMoon);
+  const rCap = moon.radius + DEFAULT_CAPTURE_ALT;
+  // Arrival relative speed ≈ the Hohmann arrival-leg velocity defect vs. the moon's circular speed.
+  const vMoon = Math.sqrt(parent.mu / rMoon);
+  const vArr = Math.sqrt(parent.mu * (2 / rMoon - 2 / (rPark + rMoon)));
+  const dvCapture = hyperbolicBurnDv(Math.abs(vMoon - vArr), moon.mu, rCap);
+  return hoh.dv1 + dvCapture;
 }
 
 /**
- * Find a cheap parent-centric transfer window from a parking orbit about `parentId` to one
- * of its moons, searching departure phase over one moon period × a time-of-flight band around
- * the Hohmann estimate. Deterministic, bounded. `shipR0`/`shipV0` and `aPark` describe the
- * parking orbit (parent-relative position/velocity at t0 and its radius). null if none.
+ * Plan a CROSS-SYSTEM two-stage mission to a moon whose parent planet is heliocentric and not
+ * the ship's current primary (e.g. ship at Earth → Europa@Jupiter). Stage 1 is an ordinary
+ * heliocentric transfer to the moon's parent planet (captured into a parking orbit there);
+ * the transfer carries `thenMoonId`, so on capture the sim auto-chains a parent-centric Stage-2
+ * leg to the moon (see sim.ts). Returns the Stage-1 cost + a Stage-2 estimate, or null.
  */
-export function searchMoonWindow(parentId: string, moonId: string, t0: number, shipState: (t: number) => { r: Vec3; v: Vec3 }, aPark: number): MoonWindow | null {
-  const parent = BODY_BY_ID.get(parentId);
+export function planMoonMission(
+  sim: Simulation, shipId: string, moonId: string, tDepart: number, tArrive: number,
+  captureMode: "propulsive" | "aerocapture" = "propulsive",
+): MoonMissionPlan | null {
+  const ship = sim.world.ships.get(shipId);
   const moon = BODY_BY_ID.get(moonId);
-  if (!parent || !moon || moon.parent !== parentId) return null;
-  const aMoon = bodyStateRelative(moon, t0);
-  const rMoon = length(aMoon.r);
-  const moonPeriod = 2 * Math.PI * Math.sqrt((rMoon * rMoon * rMoon) / parent.mu);
-  const hTof = hohmann(parent.mu, aPark, rMoon).tof;
-  const rParkTo = moon.radius + DEFAULT_CAPTURE_ALT;
+  if (!ship || !moon || !moon.parent) return null;
+  const parent = BODY_BY_ID.get(moon.parent);
+  // Only a cross-system moon (parent is a heliocentric planet, and not where we already are).
+  if (!parent || parent.parent !== "sun" || parent.id === ship.primary) return null;
 
-  let best: MoonWindow | null = null;
-  let bestTotal = Infinity;
-  for (let i = 0; i < 24; i++) {
-    const tDep = t0 + (moonPeriod * i) / 24;
-    const dep = shipState(tDep);
-    for (let j = 0; j < 7; j++) {
-      const tof = hTof * (0.7 + (0.7 * j) / 6);
-      const tArr = tDep + tof;
-      const moonArr = bodyStateRelative(moon, tArr);
-      const sol = lambert(dep.r, moonArr.r, tof, parent.mu, true);
-      if (!sol) continue;
-      const dvDepart = length(sub(sol.v1, dep.v));
-      const dvArrive = hyperbolicBurnDv(length(sub(sol.v2, moonArr.v)), moon.mu, rParkTo);
-      const total = dvDepart + dvArrive;
-      if (total < bestTotal) { bestTotal = total; best = { tDepart: tDep, tArrive: tArr, dvDepart, dvArrive }; }
-    }
-  }
-  return best;
+  const stage1 = planTransfer(sim, shipId, parent.id, tDepart, tArrive, captureMode);
+  if (!stage1) return null;
+  // Tag the just-planned transfer so the sim flies the moon leg on arrival.
+  ship.transfer!.thenMoonId = moonId;
+  const stage2Dv = estimateMoonLeg(parent, moon, tArrive);
+  return { ...stage1, stage2Dv, parentId: parent.id };
 }
 
 /** Forget a planned transfer (a stale scheduled departure is ignored later). */

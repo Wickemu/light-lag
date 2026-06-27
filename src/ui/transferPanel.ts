@@ -19,7 +19,7 @@ import { type Criterion } from "../core/maneuver/criteria.ts";
 import {
   suggestRoutes, transferWindow, bestAssist, bestChain, bestPorkCell, type SuggestedRoute,
 } from "../core/maneuver/suggest.ts";
-import { planTransfer, planAssist, planChainAssist, planMoonTransfer, searchMoonWindow, aerocapturePreview, type MoonWindow } from "../app/commands.ts";
+import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, searchMoonWindow, aerocapturePreview, type MoonWindow } from "../app/commands.ts";
 import { dvRemaining, shipWorldState, shipOsculatingElements, shipRelativeState } from "../core/ships.ts";
 import { periapsisRadius } from "../core/orbit.ts";
 import { formatDate } from "../core/time.ts";
@@ -105,16 +105,35 @@ export class TransferPanel {
     return ship && ship.primary !== "sun" ? ship.primary : "earth";
   }
 
-  /** Can the ship reach this moon? Same-parent moons fly directly about the parent; a moon
-   *  of a different planet needs a two-stage mission (Phase C — shown disabled for now). */
+  /** Can the ship reach this moon? Same-parent moons fly directly about the parent; a moon of
+   *  a different (heliocentric) planet flies as a two-stage mission that auto-chains on arrival. */
   private moonEligible(moon: BodyDef): Eligible {
     if (moon.parent === this.originId()) return { show: true, enabled: true };
-    return { show: true, enabled: false, note: `(via ${BODY_BY_ID.get(moon.parent ?? "")?.name ?? "its planet"})` };
+    const parent = BODY_BY_ID.get(moon.parent ?? "");
+    if (parent && parent.parent === "sun") return { show: true, enabled: true, note: `(via ${parent.name})` };
+    return { show: true, enabled: false, note: "(unreachable)" };
   }
 
+  /** A same-parent moon hop: a single parent-centric Lambert (ship at Earth → Moon, …). */
   private isMoonTarget(): boolean {
     const b = BODY_BY_ID.get(this.targetId);
     return !!b && b.kind === "moon" && b.parent === this.originId();
+  }
+
+  /** A cross-system two-stage mission: the moon's parent is a heliocentric planet we're not at
+   *  (Earth → Jupiter → Europa). Stage 1 is a heliocentric leg to the parent; the sim chains the
+   *  parent-centric moon leg on capture. */
+  private isMoonMission(): boolean {
+    const b = BODY_BY_ID.get(this.targetId);
+    if (!b || b.kind !== "moon" || b.parent === this.originId()) return false;
+    const parent = BODY_BY_ID.get(b.parent ?? "");
+    return !!parent && parent.parent === "sun";
+  }
+
+  /** The body the heliocentric leg actually targets — the parent planet for a cross-system moon
+   *  mission, otherwise the chosen target. */
+  private effectiveTarget(): string {
+    return this.isMoonMission() ? BODY_BY_ID.get(this.targetId)!.parent! : this.targetId;
   }
 
   private destEligible = (b: BodyDef): Eligible => {
@@ -342,21 +361,25 @@ export class TransferPanel {
     const rParkFrom = ship.primary === "sun"
       ? BODY_BY_ID.get("earth")!.radius + DEFAULT_CAPTURE_ALT
       : periapsisRadius(shipOsculatingElements(ship, this.sim.world.t).a, shipOsculatingElements(ship, this.sim.world.t).e);
-    const rParkTo = BODY_BY_ID.get(this.targetId)!.radius + DEFAULT_CAPTURE_ALT;
+    const rParkTo = BODY_BY_ID.get(this.effectiveTarget())!.radius + DEFAULT_CAPTURE_ALT;
     return { rParkFrom, rParkTo };
   }
 
   /** Heliocentric controls (route mode, criterion, capture, porkchop) apply to interplanetary
    *  transfers; a moon transfer is a single parent-centric hop, so they're hidden. */
   private layoutForTarget(): void {
-    const moon = this.isMoonTarget();
-    this.modeRow.style.display = moon ? "none" : "flex";
+    const moon = this.isMoonTarget();       // same-parent parent-centric hop
+    const mission = this.isMoonMission();   // cross-system two-stage (heliocentric Stage 1)
+    // A same-parent hop hides every heliocentric control. A mission flies a Direct heliocentric
+    // Stage-1 to the parent planet, so it keeps the porkchop + criterion + capture, but offers no
+    // flyby/suggest variants (planMoonMission plans a direct Stage 1).
+    this.modeRow.style.display = moon || mission ? "none" : "flex";
     this.critRow.style.display = moon ? "none" : "flex";
-    this.viaRow.style.display = !moon && (this.routeMode === "via1" || this.routeMode === "via2") ? "flex" : "none";
-    this.via2Row.style.display = !moon && this.routeMode === "via2" ? "flex" : "none";
-    this.capRow.style.display = !moon && this.routeMode === "direct" ? "flex" : "none";
-    this.canvas.style.display = moon || this.routeMode === "suggest" ? "none" : "block";
-    this.suggestEl.style.display = !moon && this.routeMode === "suggest" ? "block" : "none";
+    this.viaRow.style.display = !moon && !mission && (this.routeMode === "via1" || this.routeMode === "via2") ? "flex" : "none";
+    this.via2Row.style.display = !moon && !mission && this.routeMode === "via2" ? "flex" : "none";
+    this.capRow.style.display = !moon && (mission || this.routeMode === "direct") ? "flex" : "none";
+    this.canvas.style.display = moon || (!mission && this.routeMode === "suggest") ? "none" : "block";
+    this.suggestEl.style.display = !moon && !mission && this.routeMode === "suggest" ? "block" : "none";
   }
 
   private recomputeMoon(): void {
@@ -375,17 +398,22 @@ export class TransferPanel {
     if (this.isMoonTarget()) { this.recomputeMoon(); return; }
     const t0 = this.sim.world.t;
     const fromId = this.originId();
+    const toId = this.effectiveTarget(); // the parent planet for a cross-system moon mission
     const { rParkFrom, rParkTo } = this.parkRadii();
-    const win = transferWindow(fromId, this.targetId, t0);
+    const win = transferWindow(fromId, toId, t0);
 
     // The porkchop underpins Direct and Via modes (and the Suggest list's Direct option).
     this.pork = computePorkchop({
-      fromId, toId: this.targetId, depStart: t0, depEnd: t0 + win.depSpan, depN: 64,
+      fromId, toId, depStart: t0, depEnd: t0 + win.depSpan, depN: 64,
       tofMin: win.tofMin, tofMax: win.tofMax, tofN: 48, rParkFrom, rParkTo,
     });
     this.assist = null;
     this.chain = null;
     this.suggestions = [];
+
+    // A cross-system moon mission flies a Direct heliocentric Stage-1 to the parent planet
+    // (the sim auto-chains the moon leg on capture) — no flyby/suggest variants in this cut.
+    if (this.isMoonMission()) { this.selectBest(); return; }
 
     if (this.routeMode === "suggest") {
       this.suggestions = suggestRoutes(fromId, this.targetId, t0, { rParkFrom, rParkTo }, this.criterion);
@@ -578,15 +606,20 @@ export class TransferPanel {
       return;
     }
 
+    // A cross-system mission flies a Direct heliocentric Stage-1 to the parent planet — its
+    // capture options and porkchop cell are read against that planet, not the moon.
+    const mission = this.isMoonMission();
+    const directLike = mission || this.routeMode === "direct";
+
     // Capture mode is a direct-arrival option at a body with an atmosphere only.
-    const hasAtm = !!BODY_BY_ID.get(this.targetId)?.atmosphere;
-    this.captureSel.disabled = !hasAtm || this.routeMode !== "direct";
-    this.capRow.style.display = this.routeMode === "direct" ? "flex" : "none";
+    const hasAtm = !!BODY_BY_ID.get(this.effectiveTarget())?.atmosphere;
+    this.captureSel.disabled = !hasAtm || !directLike;
+    this.capRow.style.display = directLike ? "flex" : "none";
     if (this.captureSel.disabled && this.captureMode === "aerocapture") {
       this.captureMode = "propulsive"; this.captureSel.value = "propulsive";
     }
 
-    if (this.routeMode === "suggest") return; // the list is the readout
+    if (!mission && this.routeMode === "suggest") return; // the list is the readout
 
     const optLine = kv("Optimizing", this.criterionLabel());
 
@@ -613,13 +646,13 @@ export class TransferPanel {
       return;
     }
 
-    if (this.routeMode === "via2" && ship && !this.chain) {
+    if (!mission && this.routeMode === "via2" && ship && !this.chain) {
       this.readout.innerHTML = optLine + "No usable two-flyby chain in range — try different via bodies.";
       setDisabled(this.commitBtn, true, "No usable gravity-assist chain in range.");
       return;
     }
 
-    if (this.viaId && ship) {
+    if (!mission && this.viaId && ship) {
       const a = this.assist;
       if (!a) {
         this.readout.innerHTML = optLine + `No usable ${BODY_BY_ID.get(this.viaId)?.name ?? this.viaId} assist in range.`;
@@ -654,15 +687,22 @@ export class TransferPanel {
       return;
     }
     const haveDv = dvRemaining(ship);
-    const target = BODY_BY_ID.get(this.targetId);
+    const effId = this.effectiveTarget();
+    const target = BODY_BY_ID.get(effId);
     const fromId = this.originId();
-    this.axisEl.innerHTML = `<span>↑ flight time &nbsp; → departure date</span>`;
+    // For a cross-system mission the porkchop targets the parent planet (Stage 1); name both legs.
+    const moonName = mission ? BODY_BY_ID.get(this.targetId)!.name : "";
+    const stage2 = mission
+      ? kv("Stage 2", `${target!.name} → ${moonName} (auto on arrival)`) : "";
+    this.axisEl.innerHTML = mission
+      ? `<span>Stage 1: ${BODY_BY_ID.get(fromId)?.name} → ${target!.name} &nbsp;·&nbsp; → departure date</span>`
+      : `<span>↑ flight time &nbsp; → departure date</span>`;
     const dvMin = this.pork ? bestPorkCell(this.pork, "dv") : null;
     const trade = this.criterion !== "dv" && dvMin
       ? kv("Min-Δv flight time", `${(dvMin.tof / DAY).toFixed(0)} days @ ${(dvMin.total / 1000).toFixed(2)} km/s`) : "";
 
     const aero = this.captureMode === "aerocapture" && target?.atmosphere
-      ? aerocapturePreview(this.targetId, fromId, cell.depT, cell.arrT) : null;
+      ? aerocapturePreview(effId, fromId, cell.depT, cell.arrT) : null;
     if (this.captureMode === "aerocapture" && target?.atmosphere) {
       const feasible = aero != null && aero.feasible && cell.dvDepart <= haveDv;
       this.readout.innerHTML =
@@ -673,6 +713,7 @@ export class TransferPanel {
         kv("Capture", aero?.feasible ? "aerocapture — drag pass" : "aerocapture not possible") +
         (aero?.feasible ? kv("Arrival trim Δv", `${(aero.trimDv / 1000).toFixed(3)} km/s`) : "") +
         (aero ? kv("Saved vs propulsive", `${(aero.propulsiveDv / 1000).toFixed(3)} km/s`) : "") +
+        stage2 +
         (feasible ? `<div class="ok">✓ injection within budget — atmosphere does the braking</div>`
           : aero && !aero.feasible ? `<div class="warn">✗ arrival too fast to aerocapture here</div>`
           : `<div class="warn">✗ injection exceeds Δv budget</div>`);
@@ -686,8 +727,9 @@ export class TransferPanel {
       kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
       kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) + trade +
       kv("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
-      kv("Arrival (capture) Δv", `${(cell.dvArrive / 1000).toFixed(3)} km/s`) +
+      kv(mission ? "Stage 1 capture Δv" : "Arrival (capture) Δv", `${(cell.dvArrive / 1000).toFixed(3)} km/s`) +
       kv("Total Δv", `${(cell.total / 1000).toFixed(3)} km/s`) +
+      stage2 +
       kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
       (feasible ? `<div class="ok">✓ injection within budget</div>` : `<div class="warn">✗ injection exceeds Δv budget</div>`);
     setDisabled(this.commitBtn, !feasible, "Injection Δv exceeds the ship's budget.");
@@ -713,8 +755,15 @@ export class TransferPanel {
     }
     const cell = this.selectedCell();
     if (!cell) return;
-    const target = BODY_BY_ID.get(this.targetId);
+    const target = BODY_BY_ID.get(this.effectiveTarget());
     const mode = this.captureMode === "aerocapture" && target?.atmosphere ? "aerocapture" : "propulsive";
+    // A cross-system mission plans the Stage-1 heliocentric leg to the parent planet and tags the
+    // final moon; the sim auto-chains Stage 2 on capture. A plain transfer otherwise.
+    if (this.isMoonMission()) {
+      if (!planMoonMission(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT, mode)) return;
+      this.focusAndClose();
+      return;
+    }
     if (!planTransfer(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT, mode)) return;
     this.focusAndClose();
   }

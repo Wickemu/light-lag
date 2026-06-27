@@ -119,6 +119,10 @@ export interface ShipTransfer {
   /** Cruise central body for the transfer (default "sun"). A MOON transfer cruises about the
    *  parent PLANET instead — the ship stays in the planet's SOI and patches into the moon's. */
   central?: string;
+  /** Final moon of a two-stage CROSS-SYSTEM mission (e.g. Earth→Jupiter→Europa). This
+   *  heliocentric leg targets the moon's parent planet; on capture there the sim auto-chains a
+   *  parent-centric Stage-2 leg to this moon (see sim.ts), then clears the field. */
+  thenMoonId?: string;
 }
 
 /**

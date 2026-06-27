@@ -15,21 +15,23 @@
 
 import { type Vec3, add, sub, scale, cross, normalize, length, distance } from "../math/vec3.ts";
 import { lambert, type LambertSolution } from "./lambert.ts";
-import { stateToElements, elementsToState, propagate } from "../math/kepler.ts";
+import { stateToElements, elementsToState, propagate, wrapPi } from "../math/kepler.ts";
 import { bodyState, bodyStateRelative, bodyElements } from "../ephemeris.ts";
-import { soiRadius } from "../orbit.ts";
+import { soiRadius, j2Rates } from "../orbit.ts";
 import { type BodyDef, BODY_BY_ID, MU_SUN } from "../constants.ts";
 
 export interface AimResult {
   v1: Vec3; // heliocentric departure velocity to fly
   tSoi: number; // sphere-of-influence entry time (s since J2000)
   periapsis: number; // achieved target-relative periapsis radius (m)
+  vInf?: number; // target-relative approach speed at SOI entry (m/s) — sized for the capture burn
 }
 
 interface Probe {
   peri: number;
   sol: LambertSolution;
   tSoi: number;
+  vInf: number; // target-relative speed at SOI entry
 }
 
 /**
@@ -80,7 +82,7 @@ export function aimArrival(
     const sh = elementsToState(propagate(shipEl, MU_SUN, tSoi - tDepart), MU_SUN);
     const tg = bodyState(target, tSoi);
     const el = stateToElements(sub(sh.r, tg.r), sub(sh.v, tg.v), target.mu);
-    return { peri: el.a * (1 - el.e), sol, tSoi };
+    return { peri: el.a * (1 - el.e), sol, tSoi, vInf: length(sub(sh.v, tg.v)) };
   };
 
   // Bisection on the offset: periapsis grows with d.
@@ -102,7 +104,7 @@ export function aimArrival(
     if (Math.abs(r.peri - rPeri) < 1) { best = r; break; }
   }
 
-  return { v1: best.sol.v1, tSoi: best.tSoi, periapsis: best.peri };
+  return { v1: best.sol.v1, tSoi: best.tSoi, periapsis: best.peri, vInf: best.vInf };
 }
 
 /**
@@ -137,8 +139,21 @@ export function aimMoonArrival(
     const sol = lambert(depPos, aim, tof, parent.mu, true);
     if (!sol) return null;
     const shipEl = stateToElements(depPos, sol.v1, parent.mu);
-    const shipAt = (t: number): Vec3 => elementsToState(propagate(shipEl, parent.mu, t - tDepart), parent.mu).r;
-    const dist = (t: number): number => distance(shipAt(t), bodyStateRelative(moon, t).r);
+    // Propagate the parent-centric cruise the SAME way the sim does (coastElements): with the
+    // parent's J2 secular precession. A gas giant's J2 is large and a moon's SOI is small, so
+    // omitting it (as a plain Kepler propagation would) drifts the ship clean out of the SOI and
+    // the patched-conic aim misses — the aim must match the flown trajectory.
+    const cruise = (t: number) => {
+      const el = propagate(shipEl, parent.mu, t - tDepart);
+      if (parent.J2 && el.e < 1) {
+        const r = j2Rates(parent.mu, parent.radius, parent.J2, el.a, el.e, el.i);
+        el.Omega = wrapPi(el.Omega + r.nodeDot * (t - tDepart));
+        el.omega = wrapPi(el.omega + r.periDot * (t - tDepart));
+        el.M = wrapPi(el.M + r.anomalyDot * (t - tDepart));
+      }
+      return elementsToState(el, parent.mu);
+    };
+    const dist = (t: number): number => distance(cruise(t).r, bodyStateRelative(moon, t).r);
     if (dist(tArrive) > rSoi) return null;
     let lo = tDepart, hi = tArrive;
     for (let i = 0; i < 64; i++) {
@@ -146,18 +161,22 @@ export function aimMoonArrival(
       if (dist(mid) > rSoi) lo = mid; else hi = mid;
     }
     const tSoi = hi;
-    const sh = elementsToState(propagate(shipEl, parent.mu, tSoi - tDepart), parent.mu);
+    const sh = cruise(tSoi);
     const tg = bodyStateRelative(moon, tSoi);
     const el = stateToElements(sub(sh.r, tg.r), sub(sh.v, tg.v), moon.mu);
-    return { peri: el.a * (1 - el.e), sol, tSoi };
+    return { peri: el.a * (1 - el.e), sol, tSoi, vInf: length(sub(sh.v, tg.v)) };
   };
 
+  // The aim OFFSET must stay inside the moon's SOI: a tight SOI (a Galilean is ~10⁴ km,
+  // far smaller than the Moon's ~66·10³) can be smaller than the planet-arrival default of
+  // rPeri·8, which would put the aim point OUTSIDE the SOI so the approach never enters it.
+  const hiCap = 0.9 * rSoi;
   let lo = rPeri * 0.05;
-  let hi = rPeri * 8;
+  let hi = Math.min(rPeri * 8, hiCap);
   let best = probe(hi);
   let guard = 0;
-  while ((!best || !isFinite(best.peri) || best.peri < rPeri) && guard++ < 40) {
-    hi *= 1.5;
+  while ((!best || !isFinite(best.peri) || best.peri < rPeri) && hi < hiCap && guard++ < 40) {
+    hi = Math.min(hi * 1.5, hiCap);
     best = probe(hi);
   }
   if (!best) return null;
@@ -170,5 +189,5 @@ export function aimMoonArrival(
     if (Math.abs(r.peri - rPeri) < 1) { best = r; break; }
   }
 
-  return { v1: best.sol.v1, tSoi: best.tSoi, periapsis: best.peri };
+  return { v1: best.sol.v1, tSoi: best.tSoi, periapsis: best.peri, vInf: best.vInf };
 }
