@@ -22,7 +22,8 @@ Saturnians, five Uranians, Triton, Phobos/Deimos, Charon), and TNOs + comets
 (Sedna, Quaoar, Gonggong, Orcus, 1P/Halley, 2P/Encke), each on a JPL-validated
 ephemeris;
 **landing & takeoff** Δv/propellant budgeting (a calibrated gravity-turn ascent
-through real atmospheres, with aerobraking on descent); and the first
+through real atmospheres, with aerobraking on descent — now extended with a full
+**atmospheric-entry heating** trajectory and single-pass **aerocapture**); and the first
 **interstellar** layer — relativistic propulsion (rapidity rocket equation +
 constant-proper-accel brachistochrone), a ~24-system nearby-star catalog
 (~12 ly radius, ecliptic-J2000 frame, drifting under real proper motion), a transit
@@ -66,11 +67,17 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-1. **Aerocapture + atmospheric-entry heating** — descent uses an aerobraking fraction
-   today; a full entry trajectory with a heat-flux/temperature budget is the next
-   atmospheric-fidelity step. *(see "Landing / takeoff".)*
+1. **Defensible SNR-vs-range detection curve** — the IR detection model is single-band
+   with a zodiacal+CMB background floor but no explicit integration time or SNR>1
+   threshold. *(see "Detection model".)*
 
-*(Done since last round: **parallel staging / strap-on boosters** — a stage can carry
+*(Done since last round: **aerocapture + atmospheric-entry heating** — a full ballistic
+entry trajectory RK4-integrated through the exponential atmosphere, reporting peak
+deceleration, the Sutton-Graves convective stagnation heat flux, the radiative-equilibrium
+wall temperature, and the integrated heat load that sizes a TPS; plus single-pass
+aerocapture that bisects the entry corridor to capture a hyperbolic arrival into a bound
+orbit and reports the Δv it saves vs a propulsive burn (see "Landing / takeoff"). Earlier:
+**parallel staging / strap-on boosters** — a stage can carry
 strap-on boosters that ignite with it and burn concurrently at the thrust-weighted
 vₑ_eff = F/ṁ, each dropping as it empties while the core keeps firing; honest Δv budget,
 in-sim concurrent-burn integrator, and Falcon Heavy / Space Shuttle / Soyuz / Ariane 5
@@ -172,10 +179,24 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   background floor (range goes sky-limited once the signal noise is
   background-dominated). Still single-band with no explicit integration time or
   SNR>1 threshold — refine for a fully defensible SNR-vs-range curve.
-- **Landing / takeoff** — DONE (first cut): a calibrated gravity-turn ascent Δv
-  budget through real exponential atmospheres + an aerobraking descent model, with
-  in-sim land/launch and co-rotating landed ships (sit on the surface at surface
-  speed). Still to do: full aerocapture trajectories and atmospheric-entry heating.
+- **Landing / takeoff** — DONE: a calibrated gravity-turn ascent Δv budget through
+  real exponential atmospheres + an aerobraking descent model, with in-sim
+  land/launch and co-rotating landed ships (sit on the surface at surface speed).
+  **Aerocapture + atmospheric-entry heating — DONE** (`maneuver/entry.ts`): a real
+  ballistic entry trajectory, RK4-integrated through the same exponential atmosphere,
+  yielding the peak deceleration (β-independent, cross-checked against Allen-Eggers),
+  the **Sutton-Graves** convective stagnation-point heat flux `q = k·√(ρ/R_n)·v³`
+  (air vs CO₂ coefficient), the radiative-equilibrium wall temperature `T = (q/εσ)^¼`,
+  and the integrated heat load `∫q dt` (TPS sizing); the atmospheric interface sits at
+  11 scale heights so the discarded upper-atmosphere drag is negligible. Outcomes
+  classify as land / capture / skip-out from the exit energy. **Aerocapture** wraps the
+  same integrator in a deterministic bisection on the entry flight-path angle to find
+  the single-pass corridor that leaves a hyperbolic arrival bound at a target apoapsis,
+  reporting the Δv saved vs the propulsive capture burn (`orbit.ts hyperbolicBurnDv`)
+  minus a small post-pass periapsis-raise trim — pure functions, no world state, golden
+  hash unmoved; the descent panel shows the live peak-g / heat-flux / wall-temp / heat-load
+  readout. Still to do: radiative (shock-layer) heating above ~11 km/s, an in-sim flyable
+  entry/aerocapture pass (the budget lands first), and an aerocapture planner UI.
 - **More bodies** — DONE: 43 bodies (dwarfs, asteroids, gas-giant & other moons,
   plus TNOs and comets) on the fixed-J2000-conic (`FixedHelioRow`) + `MoonRow`
   paths, Horizons-checked. Still to do: irregular-moon precession, more small

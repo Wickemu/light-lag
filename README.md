@@ -46,6 +46,12 @@ flyable, to-scale 3D Solar System.
 - **Landing & takeoff** Δv/propellant budgeting: a calibrated gravity-turn ascent through real
   exponential atmospheres (Earth→LEO ≈ 9.3 km/s, Moon ≈ 1.9, Mars ≈ 4.0), aerobraking on
   descent, and ships that sit on the surface co-rotating with the body.
+- **Atmospheric-entry heating & aerocapture**: a real ballistic entry trajectory integrated
+  through the exponential atmosphere — peak deceleration (cross-checked against Allen-Eggers),
+  Sutton-Graves convective stagnation heat flux, radiative-equilibrium wall temperature, and
+  the integrated heat load that sizes a heat shield. Aerocapture solves the single-pass
+  corridor that captures a hyperbolic arrival into a bound orbit, saving nearly the whole
+  propulsive capture burn (a Mars arrival captures for ~10 m/s of trim instead of ~2 km/s).
 - **Electric (low-thrust) propulsion**: power-limited ion/Hall drives whose real thrust is
   `min(F_rated, 2ηP/vₑ)` with solar power falling as 1/r² — fly a multi-month Edelbaum spiral
   from LEO to GEO (or any near-circular orbit), charged up front and exact at any time-warp.
@@ -125,6 +131,7 @@ src/
       flyby.ts           gravity-flyby geometry
       assist.ts          two-leg gravity-assist solver + grid search
       lowThrust.ts       Edelbaum analytic spiral (electric, power-limited)
+      entry.ts           ballistic entry heating (Sutton-Graves) + aerocapture
       interstellar.ts    relativistic brachistochrone + transit estimator
     constants.ts         physical constants + body catalog (JPL elements, μ, radii)
     ephemeris.ts         analytic body state at any t
