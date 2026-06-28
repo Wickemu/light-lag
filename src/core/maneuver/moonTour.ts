@@ -28,6 +28,7 @@ import { hohmann } from "./hohmann.ts";
 import { flybyManeuver, minFlybyRadius } from "./assist.ts";
 import { maxTurnAngle } from "./flyby.ts";
 import { aimMoonArrival } from "./arrival.ts";
+import { outboundClearsParent } from "./moon.ts";
 import { hyperbolicBurnDv, ellipticalCaptureDv } from "../orbit.ts";
 import { bodyStateRelative } from "../ephemeris.ts";
 import { type BodyDef, BODY_BY_ID, DEFAULT_CAPTURE_ALT } from "../constants.ts";
@@ -199,6 +200,11 @@ function tourScore(
   const built = tourArcs(parent, dep.r, flybyMoons, times);
   if (!built) return null;
   const { arcs, moonR, moonV } = built;
+  // Reject any schedule whose leg-1 injection would fly the ship into the parent at departure
+  // (an unfavourable parking-orbit phase). Same surface-clearance guard the single-moon search
+  // applies — without it the Δv ranking can pick an unsafe first leg that crashes at departure.
+  // The phase sweep still finds the cheap, SAFE schedules.
+  if (!outboundClearsParent(dep.r, arcs[0]!.v1, parent.mu, parent.radius)) return null;
   const N = flybyMoons.length;
   const tArrive = times[times.length - 1]!;
   const tgt = bodyStateRelative(target, tArrive);
