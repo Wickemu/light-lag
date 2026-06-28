@@ -53,6 +53,19 @@ const BLOOM: Record<Theme, { strength: number; radius: number; threshold: number
   light: { strength: 0.35, radius: 0.4, threshold: 1.05 },
 };
 
+/** Graphics-quality presets, toggled from the help panel. The post chain (HDR +
+ *  MSAA + UnrealBloom) is fill-rate bound, so its cost scales with the total
+ *  drawing-buffer pixels. "performance" trades a little crispness for frame rate
+ *  on integrated GPUs by pushing fewer pixels three ways:
+ *   - pixelCap:    cap the device-pixel ratio (2 → 1.5 ⇒ ~0.56× the buffer area)
+ *   - samples:     halve MSAA in the post target (4× → 2×)
+ *   - bloomScale:  run the bloom blur pyramid at half resolution (¼ the blur cost)
+ *  "quality" is the unchanged default — nothing is downgraded unless asked. */
+const QUALITY = {
+  quality: { pixelCap: 2, samples: 4, bloomScale: 1 },
+  performance: { pixelCap: 1.5, samples: 2, bloomScale: 0.5 },
+} as const;
+
 export class SceneManager {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
@@ -68,6 +81,9 @@ export class SceneManager {
    *  to the canvas (tone mapping still applied by the renderer) — much cheaper, a
    *  user toggle for frame rate. */
   private bloomOn = true;
+  /** Graphics-quality preset: false = quality (default), true = performance.
+   *  Drives the device-pixel cap, MSAA sample count and bloom blur resolution. */
+  private perfMode = false;
 
   /** Active map. The in-system views and the interstellar view each draw only in
    *  their own mode (they self-park in the other), and the frame loop updates the
@@ -114,7 +130,7 @@ export class SceneManager {
       // depth buffer span from a planet's surface to Neptune without z-fighting.
       logarithmicDepthBuffer: true,
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.applyPixelRatio();
     // Filmic response curve: the scene is lit in linear HDR (the Sun is far
     // brighter than white), and ACES rolls that enormous dynamic range down to
     // the display the way a real camera does — bright sunlit limbs stay detailed
@@ -172,11 +188,12 @@ export class SceneManager {
    *  half-float target, add bloom, then tone-map + encode to the canvas. */
   private setupComposer(): void {
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-    // Half-float so HDR (Sun > 1.0) survives into the bloom pass; 4× MSAA so the
-    // composer keeps the crisp geometry edges the bare renderer's antialias gave.
+    // Half-float so HDR (Sun > 1.0) survives into the bloom pass; MSAA so the
+    // composer keeps the crisp geometry edges the bare renderer's antialias gave
+    // (4× in quality, 2× in performance).
     const target = new THREE.WebGLRenderTarget(Math.max(size.x, 1), Math.max(size.y, 1), {
       type: THREE.HalfFloatType,
-      samples: 4,
+      samples: QUALITY[this.perfMode ? "performance" : "quality"].samples,
     });
     this.composer = new EffectComposer(this.renderer, target);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -205,6 +222,36 @@ export class SceneManager {
    *  soft glow. */
   setBloomEnabled(on: boolean): void {
     this.bloomOn = on;
+  }
+
+  get performanceMode(): boolean {
+    return this.perfMode;
+  }
+
+  /** Switch the graphics-quality preset. The MSAA sample count is baked into the
+   *  post target at creation, so changing it means rebuilding the composer; the
+   *  pixel-ratio cap and bloom scale are then re-applied by resize(). Cheap
+   *  enough for a settings toggle (one target re-allocation), and a no-op when
+   *  the mode is unchanged. */
+  setPerformanceMode(on: boolean): void {
+    if (on === this.perfMode && this.composer) return;
+    this.perfMode = on;
+    this.applyPixelRatio();
+    this.rebuildComposer();
+    this.resize();
+  }
+
+  /** Cap the device-pixel ratio per the active quality preset. */
+  private applyPixelRatio(): void {
+    const cap = QUALITY[this.perfMode ? "performance" : "quality"].pixelCap;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, cap));
+  }
+
+  /** Tear down and rebuild the post chain (e.g. to change MSAA samples). */
+  private rebuildComposer(): void {
+    this.composer?.dispose();
+    this.bloom?.dispose();
+    this.setupComposer();
   }
 
   setTheme(theme: Theme): void {
@@ -456,7 +503,11 @@ export class SceneManager {
     // Keep the post chain matched to the (device-pixel) drawing buffer.
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     this.composer?.setSize(size.x, size.y);
-    this.bloom?.setSize(size.x, size.y);
+    // composer.setSize() resets every pass (incl. bloom) to the full buffer, so
+    // re-apply the bloom blur scale *after* it. The blur pyramid is downsampled
+    // anyway, so a half-res base is near-invisible but a quarter of the cost.
+    const scale = QUALITY[this.perfMode ? "performance" : "quality"].bloomScale;
+    this.bloom?.setSize(Math.max(1, Math.round(size.x * scale)), Math.max(1, Math.round(size.y * scale)));
   }
 
   render(): void {

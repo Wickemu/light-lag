@@ -80,6 +80,7 @@ export class Hud {
   private helpEl!: HTMLElement;
   private showFps = getFlag("showFps", false);
   private bloomOn = getFlag("bloom", true);
+  private perfMode = getFlag("perfMode", false);
   private labels = new Map<string, HTMLElement>();
   // Cached rendered width per label (text is static), so de-collision can do a
   // bounding-box test without forcing a layout read every frame.
@@ -104,6 +105,7 @@ export class Hud {
     this.build();
     // Apply the persisted graphics choice before the first frame.
     this.sm.setBloomEnabled(this.bloomOn);
+    this.sm.setPerformanceMode(this.perfMode);
     this.vis.onChange(() => this.refreshVisibilityUI());
     this.refreshVisibilityUI();
     this.refreshViewSwitch();
@@ -297,6 +299,17 @@ export class Hud {
     bloomRow.append(bloomCb, el("span", "", "Bloom / glow (off boosts FPS)"));
     panel.appendChild(bloomRow);
 
+    // Performance mode: lower device-pixel cap, half-res bloom and 2× (vs 4×)
+    // MSAA. A big frame-rate win on integrated GPUs / HiDPI displays for a small,
+    // mostly-invisible softening; keeps bloom and everything else on.
+    const perfRow = el("label", "help-toggle");
+    const perfCb = document.createElement("input");
+    perfCb.type = "checkbox";
+    perfCb.checked = this.perfMode;
+    perfCb.onchange = () => this.setPerfMode(perfCb.checked);
+    perfRow.append(perfCb, el("span", "", "Performance mode (lower res, faster)"));
+    panel.appendChild(perfRow);
+
     const fpsRow = el("label", "help-toggle");
     const cb = document.createElement("input");
     cb.type = "checkbox";
@@ -330,6 +343,12 @@ export class Hud {
     this.bloomOn = on;
     this.sm.setBloomEnabled(on);
     setFlag("bloom", on);
+  }
+
+  private setPerfMode(on: boolean): void {
+    this.perfMode = on;
+    this.sm.setPerformanceMode(on);
+    setFlag("perfMode", on);
   }
 
   /** The chip row of cross-cutting overlay toggles (orbits, labels, stars, …). */
