@@ -62,6 +62,9 @@ function qStage(s: Stage): Record<string, unknown> {
   // Omit an absent or fully-spent (spliced-to-empty) booster set so a stage with
   // no live boosters serializes identically to a plain serial stage.
   if (s.boosters && s.boosters.length > 0) o.boosters = s.boosters.map(qBooster);
+  // Tank capacity (refuelling ceiling) only when tracked, so an untracked stage
+  // serializes identically to one before the refuelling model existed.
+  if (s.propCapacity !== undefined) o.propCapacity = q(s.propCapacity);
   return o;
 }
 
