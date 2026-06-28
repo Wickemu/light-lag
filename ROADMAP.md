@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is `src/core/` (see
-[ARCHITECTURE.md](ARCHITECTURE.md)); 588 passing physics/sim tests — including a
+[ARCHITECTURE.md](ARCHITECTURE.md)); 595 passing physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
 golden-state determinism hash.
@@ -100,7 +100,24 @@ read-time analytic, suite green, golden hash documented if it moves.
 *(**Animated launch / landing trajectories** — candidate #3 last round — is now DONE; see the
 "Done since last round" note below.)*
 
-*(Done since last round: **orbital propellant transfer + in-orbit construction** (Phase-7 first cut) —
+*(Done since last round: **launch vehicles fly the ascent to LEO** — closing the "everything spawns
+full in LEO" hole. A preset's `role` now drives WHERE it starts: a launch vehicle (`spawnOnPad`)
+stands on the Earth pad and flies the gravity-turn ascent (the existing `launchShip`, now with an
+`opts.instant` express path `expressToOrbit`), so its boost/lower stages are EXPENDED in the climb
+(via the rocket equation across stages) and only the surviving payload + orbital stage reaches LEO;
+an in-space craft still deploys directly in LEO with full propellant (so the default/custom designs —
+and the golden scenario — are unchanged, hash unmoved). `shipSurfaceParams` is now booster-aware
+(`stageLiftoffThrust` + new `stageLiftoffExhaust` for the thrust-weighted liftoff vₑ_eff) — without
+it a strap-on launcher (Shuttle/Soyuz/Falcon Heavy/Ariane) read T/W < 1 and couldn't lift off. The
+designer gained a "launch vehicle" toggle, role-aware launch controls, and a live ascent-budget /
+orbital-survivor readout that gates launch. Catalog: first-stage Isp corrected to TRAJECTORY-AVERAGED
+(pure sea-level understated total impulse and left real launchers below orbit), and a few
+representative payloads set so all 11 launch vehicles reach their historical LEO with honest margins
+(Saturn V keeps ~3 km/s of TLI; the R-7/Titan/Saturn-IB arrive at the ragged edge, as the real
+vehicles did). +7 tests (`app/launchAscent.test.ts`): per-preset LEO feasibility + survivor sanity,
+flown-ascent ≡ express, pad placement, in-space-unchanged, and an infeasible-design guard. Falcon
+Heavy's headline 63.8 t assumes crossfeed (still a backlog item) so it's modeled at a no-crossfeed
+~45 t. Earlier: **orbital propellant transfer + in-orbit construction** (Phase-7 first cut) —
 the SpaceX-tanker / depot mechanic and dock-merge assembly, both gated on a TRUE RENDEZVOUS (shared
 primary + co-located in position and matched in velocity; co-orbital craft pass exactly). A new pure
 `core/refuel.ts` adds the rendezvous gate (`dockState`/`isDockable`), a mass-conserving,
@@ -338,8 +355,9 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   move. Five presets ship it: Falcon Heavy, Space Shuttle, Soyuz, Ariane 5 (plus
   the genuinely-serial Vega). **Still to do:** drop-tank cross-feed (a no-engine
   reservoir feeding the core — folded into the core stage today, e.g. the Shuttle's
-  ET), and a planner-UI hint when a launcher's boostered first stage is fired from
-  LEO (boost stages don't fly in-game).
+  ET; Falcon Heavy's headline 63.8 t LEO assumes it, so it's modeled at a
+  no-crossfeed ~45 t). (Boostered first stages now DO fly the ascent from the pad —
+  see "launch vehicles fly the ascent to LEO" above.)
 - **Gravity assists** — DONE: flyby physics (flyby.ts), a two-leg patched-conic
   assist solver (assist.ts), and in-sim execution (a flyby-pass that bends the
   heliocentric velocity for free and continues to the target), with a "via flyby"
@@ -496,6 +514,13 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   documented approximation, like the Pluto–Charon barycentre).
 - Minor fidelity: EMB-vs-Earth-centre ~4671 km offset; Moon & small-body two-body
   precession drift over years; the Pluto–Charon barycentre approximation.
+- **Latitude-dependent launch rotation bonus** — `ascentBudget` credits the full
+  EQUATORIAL surface speed (~465 m/s on Earth) regardless of pad latitude; a real pad
+  at latitude φ inherits only `v_rot·cos φ` (zero at the poles). Thread the launch
+  latitude (the landed `surfaceDir.z` ⇒ the design inclination) through `AscentParams`
+  and scale the bonus by cos φ. Slightly over-credits high-inclination launches today
+  (e.g. ~176 m/s for a 51.6° Soyuz pad); a few of the marginal launchers would need a
+  small re-fit against the corrected budget.
 
 ## Consciously-deferred audit notes (non-blocking, already judged)
 

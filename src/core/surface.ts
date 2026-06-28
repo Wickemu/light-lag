@@ -218,6 +218,11 @@ export function ascentBudget(
     ? hohmann(mu, R + insertionAlt, targetR).dvTotal
     : 0;
 
+  // Rotation help is the body's EQUATORIAL surface speed — the maximum, latitude-
+  // independent value. A real pad at latitude φ inherits only v_rot·cos φ (an eastward
+  // equatorial launch gets it all; a polar/SSO launch forfeits it), so this slightly
+  // over-credits high-inclination launches. A documented approximation (see ROADMAP);
+  // refine by threading the launch latitude through AscentParams.
   const rotationBonus = (p.retrograde ? -1 : 1) * rotationSpeed(body);
   const vInsertion = circularSpeed(mu, R + insertionAlt);
   const dvTotal = vInsertion + gravityLoss + dragLoss + raiseDv - rotationBonus;

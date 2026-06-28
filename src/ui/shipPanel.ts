@@ -3,7 +3,10 @@
  *
  * Designer: edit a staged stack (dry mass, propellant, Isp, thrust) and watch
  * the Δv budget, masses, and thrust-to-weight update live from the rocket
- * equation. Launch places the ship in a circular LEO.
+ * equation. Launch is role-aware: an in-space craft deploys directly into a
+ * circular LEO (full propellant); a launch vehicle rolls out to the Earth pad and
+ * flies (or expresses) the ascent, expending its boost stages — the designer shows
+ * the live ascent budget and the projected orbital survivor, and gates launch on it.
  *
  * Flight: select a ship to see its real osculating orbit (periapsis/apoapsis
  * altitude, period, speed), its remaining mass and Δv, then spend Δv in a chosen
@@ -17,6 +20,9 @@ import {
   type ShipDesign,
   defaultDesign,
   spawnShip,
+  spawnOnPad,
+  expressToOrbit,
+  ascentPreview,
   sendBurn,
   landShip,
   launchShip,
@@ -98,6 +104,10 @@ export class ShipPanel {
   private nameInput!: HTMLInputElement;
   private payloadInput!: HTMLInputElement;
   private altInput!: HTMLInputElement;
+  private inclInput!: HTMLInputElement;
+  private fromSurfaceToggle!: HTMLInputElement;
+  private launchArea!: HTMLElement;
+  private expressBtn: HTMLButtonElement | null = null;
   private shipListEl!: HTMLElement;
   private flightEl!: HTMLElement;
   private readoutEl!: HTMLElement;
@@ -207,16 +217,43 @@ export class ShipPanel {
     this.altInput = numberField(params, "LEO alt (km)", this.design.altitudeKm, (v) => {
       this.design.altitudeKm = v;
       this.markCustom();
+      this.refreshBudget();
+    });
+    // Inclination doubles as the launch-pad LATITUDE for a launch vehicle (the minimum
+    // inclination a pad can reach is its latitude), so it drives both the parking-orbit
+    // plane and where a from-surface ship lifts off.
+    this.inclInput = numberField(params, "Incl / pad lat (°)", this.design.inclinationDeg, (v) => {
+      this.design.inclinationDeg = Math.max(0, Math.min(90, v));
+      this.markCustom();
+      this.refreshBudget();
     });
     dsn.appendChild(params);
+
+    // Start-on-pad toggle: a LAUNCH VEHICLE starts on the Earth pad and flies the ascent
+    // (its boost stages are expended in the climb); an IN-SPACE craft deploys directly in
+    // LEO. Set automatically when a preset is loaded; the player can override for a custom
+    // design. Default off (the legacy in-orbit deploy, and what every default/custom ship is).
+    const padRow = el("label", "field pad-field");
+    this.fromSurfaceToggle = document.createElement("input");
+    this.fromSurfaceToggle.type = "checkbox";
+    this.fromSurfaceToggle.checked = !!this.design.fromSurface;
+    this.fromSurfaceToggle.onchange = () => {
+      this.design.fromSurface = this.fromSurfaceToggle.checked;
+      this.markCustom();
+      this.renderLaunchArea();
+      this.refreshBudget();
+    };
+    padRow.append(this.fromSurfaceToggle, el("span", "field-label", "Launch vehicle (starts on the pad, flies the ascent)"));
+    padRow.title = "On: a launch vehicle — fly the ascent to LEO, expending its boost stages. Off: an in-space craft deployed directly in LEO with full propellant.";
+    dsn.appendChild(padRow);
 
     this.budgetEl = el("div", "budget");
     dsn.appendChild(this.budgetEl);
 
-    const launch = button("▶ Launch to LEO", () => this.launch());
-    launch.className = "wide-btn primary";
-    launch.title = "Place this design in a circular low orbit and start flying it.";
-    dsn.appendChild(launch);
+    // Role-aware launch controls (rebuilt by renderLaunchArea on toggle / preset load).
+    this.launchArea = el("div", "launch-area");
+    dsn.appendChild(this.launchArea);
+    this.renderLaunchArea();
 
     // ── Fleet section (launched ships) ────────────────────────────────────────
     this.fleetSection = collapsible("Fleet", { id: "fleet", open: true });
@@ -436,12 +473,26 @@ export class ShipPanel {
     const perStage = b.perStage.map((d, i) => `S${i + 1}: ${(d / 1000).toFixed(2)}`).join("  ");
     const first = this.design.stages[0];
     const hasBoosters = !!(first && first.boosters && first.boosters.length > 0);
-    this.budgetEl.innerHTML =
+    let html =
       kv("Total Δv", `${(b.total / 1000).toFixed(2)} km/s`) +
       kv("Wet / final mass", `${(b.wetMass / 1000).toFixed(1)} / ${(b.finalMass / 1000).toFixed(1)} t`) +
       kv("Initial T/W", twr.toFixed(2) + (twr < 1 ? " (low thrust)" : "")) +
       (hasBoosters ? kv("Liftoff thrust", `${(stageLiftoffThrust(first!) / 1000).toFixed(0)} kN (core + boosters)`) : "") +
       `<div class="per-stage">${perStage} km/s</div>`;
+
+    // Launch vehicle: show the honest Earth→LEO ascent budget and what survives into
+    // orbit once the boost stages are expended (and gate the express button on it).
+    if (this.design.fromSurface) {
+      const pv = ascentPreview(this.design);
+      if (pv) {
+        html += kv("Ascent to LEO", `${(pv.ascentDv / 1000).toFixed(2)} km/s`);
+        html += pv.reachesOrbit
+          ? `<div class="ok">✓ reaches LEO — survivor ${(pv.survivorMass / 1000).toFixed(1)} t, ${(pv.survivorDv / 1000).toFixed(2)} km/s in orbit</div>`
+          : `<div class="warn">✗ ${((pv.ascentDv - pv.stackDv) / 1000).toFixed(2)} km/s short of LEO — trim payload or lower the target orbit</div>`;
+      }
+      if (this.expressBtn) setDisabled(this.expressBtn, !pv?.reachesOrbit, "This design can't reach LEO — trim payload or lower the target orbit.");
+    }
+    this.budgetEl.innerHTML = html;
   }
 
   /** A category-grouped <select> over the whole preset fleet. */
@@ -478,7 +529,10 @@ export class ShipPanel {
     this.nameInput.value = this.design.name;
     this.payloadInput.value = String(this.design.payloadMass / 1000);
     this.altInput.value = String(this.design.altitudeKm);
+    this.inclInput.value = String(this.design.inclinationDeg);
+    this.fromSurfaceToggle.checked = !!this.design.fromSurface;
     this.renderStages();
+    this.renderLaunchArea();
     this.refreshBudget();
     this.showCaption(preset);
   }
@@ -505,6 +559,43 @@ export class ShipPanel {
   private launch(): void {
     const id = spawnShip(this.sim, this.design);
     this.select(id);
+  }
+
+  /** Rebuild the launch controls for the design's role: a launch vehicle rolls out to
+   *  the pad (then flies the ascent) or expresses straight to LEO; an in-space craft
+   *  deploys directly in LEO. */
+  private renderLaunchArea(): void {
+    this.launchArea.innerHTML = "";
+    this.expressBtn = null;
+    if (this.design.fromSurface) {
+      const pad = button("🚀 Roll out to pad", () => this.rollOut());
+      pad.className = "wide-btn";
+      pad.title = "Stand this launch vehicle on the Earth pad. Fly the ascent (⬆ Launch in the flight console) — the boost stages are expended and only the survivor reaches LEO.";
+      const express = button("⏩ Express to LEO", () => this.express());
+      express.className = "wide-btn primary";
+      express.title = "Resolve the ascent instantly: expend the boost stages and seat the surviving stack in a LEO parking orbit.";
+      this.expressBtn = express;
+      this.launchArea.append(pad, express);
+    } else {
+      const deploy = button("▶ Deploy in LEO", () => this.launch());
+      deploy.className = "wide-btn primary";
+      deploy.title = "Place this in-space craft directly in a circular low orbit, fully fuelled.";
+      this.launchArea.append(deploy);
+    }
+  }
+
+  /** Stand a launch vehicle on the Earth pad (fly the ascent from the flight console). */
+  private rollOut(): void {
+    this.select(spawnOnPad(this.sim, this.design));
+  }
+
+  /** Resolve the ascent instantly and seat the survivor in LEO. The express button is
+   *  gated off when the design can't reach orbit; if a stale click still slips through,
+   *  refresh the budget so the "✗ short of LEO" readout is shown rather than failing silently. */
+  private express(): void {
+    const { id } = expressToOrbit(this.sim, this.design);
+    if (id) this.select(id);
+    else this.refreshBudget();
   }
 
   private select(id: string): void {
@@ -696,9 +787,9 @@ export class ShipPanel {
     }
 
     // A transfer can only be planned from a planet (not mid-flight or interstellar).
-    setDisabled(this.planBtn, ship.primary === "sun" || !!leg || (!!tr && tr.departed),
-      "Plan a transfer only from a parking orbit around a body (not mid-transfer or interstellar).");
-    setDisabled(this.interstellarBtn, !!leg, "Already on an interstellar leg.");
+    setDisabled(this.planBtn, ship.primary === "sun" || !!leg || !!ship.landed || (!!tr && tr.departed),
+      ship.landed ? "Launch to a parking orbit first." : "Plan a transfer only from a parking orbit around a body (not mid-transfer or interstellar).");
+    setDisabled(this.interstellarBtn, !!leg || !!ship.landed, ship.landed ? "Launch to a parking orbit first." : "Already on an interstellar leg.");
 
     // Thermal & detection — there is no stealth in space.
     const th = shipThermalState(ship, t);

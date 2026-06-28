@@ -206,6 +206,26 @@ export function stageLiftoffThrust(stage: Stage): number {
   return f;
 }
 
+/** Effective exhaust velocity at LIFTOFF: the thrust-weighted vₑ_eff = F_total/ṁ_total
+ *  of the core plus every booster igniting with it (NOT an Isp average) — the same
+ *  combination `stagePhases` uses for a boostered stage's first phase. For a serial
+ *  stage (no boosters) this is exactly `exhaustVelocity(stage.isp)`, so it changes
+ *  nothing for non-boostered launchers. Used to size the ascent budget honestly for
+ *  strap-on launchers (Shuttle, Soyuz, Falcon Heavy, Ariane). */
+export function stageLiftoffExhaust(stage: Stage): number {
+  const veCore = exhaustVelocity(stage.isp);
+  if (!stage.boosters || stage.boosters.length === 0) return veCore;
+  let f = stage.thrust;
+  let mdot = veCore > 0 ? stage.thrust / veCore : 0;
+  for (const b of stage.boosters) {
+    const n = boosterCount(b);
+    const veB = exhaustVelocity(b.isp);
+    f += b.thrust * n;
+    mdot += veB > 0 ? (b.thrust * n) / veB : 0;
+  }
+  return mdot > 0 ? f / mdot : veCore;
+}
+
 /** Which reservoir a slice of propellant comes from, and its share of the flow.
  *  `idx === -1` is the core stage; `idx >= 0` indexes `stage.boosters`. */
 interface PhaseBurner {
