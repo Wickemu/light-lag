@@ -862,6 +862,23 @@ button.danger:hover {
 .dv-input {
   width: 70px;
 }
+.goal-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0;
+  padding: 6px;
+  border: 1px solid var(--border, #2a3344);
+  border-radius: 4px;
+}
+.goal-row .dir-row {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+.guidance-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
 
 .surface-ops {
   display: flex;

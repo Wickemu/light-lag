@@ -12,7 +12,7 @@
 
 import { type Simulation } from "../core/sim.ts";
 import { type SceneManager } from "../render/SceneManager.ts";
-import { type BurnDir, type Ship } from "../core/world.ts";
+import { type BurnDir, type BurnGoal, type Ship } from "../core/world.ts";
 import {
   type ShipDesign,
   defaultDesign,
@@ -88,6 +88,8 @@ export class ShipPanel {
   private design: ShipDesign = defaultDesign();
   private selectedId: string | null = null;
   private dir: BurnDir = "prograde";
+  private guidanceMode: "open" | "closed" = "open";
+  private goalType: "periapsis" | "apoapsis" | "circularize" = "periapsis";
   private lastShipCount = -1;
 
   private panelEl!: HTMLElement;
@@ -103,6 +105,11 @@ export class ShipPanel {
   private readoutEl!: HTMLElement;
   private dvInput!: HTMLInputElement;
   private dirRow!: HTMLElement;
+  private guidanceRow!: HTMLElement;
+  private goalRow!: HTMLElement;
+  private goalTypeRow!: HTMLElement;
+  private goalAltInput!: HTMLInputElement;
+  private guidanceHint!: HTMLElement;
   private executeBtn!: HTMLButtonElement;
   private planBtn!: HTMLButtonElement;
   private interstellarBtn!: HTMLButtonElement;
@@ -334,6 +341,50 @@ export class ShipPanel {
     }
     mnv.appendChild(this.dirRow);
 
+    // Guidance: open-loop fires the exact Δv below; closed-loop carries a goal and
+    // the ship trims its Δv at delivery to hit it (the autonomous counter-pole to
+    // the light-lag bargain). Reuses the .dir-row/.dir-btn segmented idiom.
+    this.guidanceRow = el("div", "dir-row");
+    const GUIDANCE: { mode: "open" | "closed"; label: string }[] = [
+      { mode: "open", label: "Open-loop" },
+      { mode: "closed", label: "Closed-loop" },
+    ];
+    for (const g of GUIDANCE) {
+      const b = button(g.label, () => {
+        this.guidanceMode = g.mode;
+        this.syncGuidanceButtons();
+      });
+      b.className = "dir-btn";
+      b.dataset.mode = g.mode;
+      markTerm(b, g.label, { decorate: false });
+      this.guidanceRow.appendChild(b);
+    }
+    mnv.appendChild(this.guidanceRow);
+
+    // Goal sub-row (closed-loop only): target apsis + altitude.
+    this.goalRow = el("div", "goal-row");
+    this.goalTypeRow = el("div", "dir-row");
+    const GOALS: { key: "periapsis" | "apoapsis" | "circularize"; label: string }[] = [
+      { key: "periapsis", label: "Periapsis" },
+      { key: "apoapsis", label: "Apoapsis" },
+      { key: "circularize", label: "Circularize" },
+    ];
+    for (const g of GOALS) {
+      const b = button(g.label, () => {
+        this.goalType = g.key;
+        this.syncGuidanceButtons();
+      });
+      b.className = "dir-btn";
+      b.dataset.goal = g.key;
+      markTerm(b, g.label, { decorate: false });
+      this.goalTypeRow.appendChild(b);
+    }
+    this.goalRow.appendChild(this.goalTypeRow);
+    this.goalAltInput = numberField(this.goalRow, "Target alt (km)", 1000, () => {});
+    this.guidanceHint = el("div", "guidance-hint");
+    this.goalRow.appendChild(this.guidanceHint);
+    mnv.appendChild(this.goalRow);
+
     const dvRow = el("div", "dv-row");
     this.dvInput = document.createElement("input");
     this.dvInput.type = "number";
@@ -362,6 +413,7 @@ export class ShipPanel {
     this.renderStages();
     this.refreshBudget();
     this.syncDirButtons();
+    this.syncGuidanceButtons();
     this.flightEl.style.display = "none";
   }
 
@@ -561,14 +613,60 @@ export class ShipPanel {
     if (!this.selectedId) return;
     const dv = parseFloat(this.dvInput.value);
     if (!isFinite(dv) || dv <= 0) return;
+    // Open-loop: dv is the exact Δv. Closed-loop: dv is the correction CAP and the
+    // command carries a goal the ship trims to at delivery.
     // The order is transmitted, not applied: it reaches the ship at light-lag.
-    sendBurn(this.sim, this.selectedId, dv, this.dir);
+    sendBurn(this.sim, this.selectedId, dv, this.dir, this.buildGoal());
+  }
+
+  /** The closed-loop goal for the current selection, or undefined for open-loop. */
+  private buildGoal(): BurnGoal | undefined {
+    if (this.guidanceMode !== "closed") return undefined;
+    const kind = this.goalType;
+    if (kind === "circularize") return { kind: "circular" };
+    const ship = this.selectedId ? this.sim.world.ships.get(this.selectedId) : undefined;
+    const primary = ship ? BODY_BY_ID.get(ship.primary) : undefined;
+    const altKm = parseFloat(this.goalAltInput.value);
+    if (!primary || !isFinite(altKm)) return undefined;
+    return { kind, rTarget: primary.radius + altKm * 1000 };
   }
 
   private syncDirButtons(): void {
     for (const b of Array.from(this.dirRow.children) as HTMLButtonElement[]) {
       b.classList.toggle("active", b.dataset.dir === this.dir);
     }
+  }
+
+  private syncGuidanceButtons(): void {
+    for (const b of Array.from(this.guidanceRow.children) as HTMLButtonElement[]) {
+      b.classList.toggle("active", b.dataset.mode === this.guidanceMode);
+    }
+    const closed = this.guidanceMode === "closed";
+    this.goalRow.style.display = closed ? "" : "none";
+    for (const b of Array.from(this.goalTypeRow.children) as HTMLButtonElement[]) {
+      b.classList.toggle("active", b.dataset.goal === this.goalType);
+    }
+    // Circularize needs no altitude — it circularizes at the delivery radius.
+    const altField = this.goalAltInput.parentElement as HTMLElement | null;
+    if (altField) altField.style.display = this.goalType === "circularize" ? "none" : "";
+    if (closed) {
+      const what =
+        this.goalType === "circularize"
+          ? "circularize at the delivery radius"
+          : `reach the target ${this.goalType}`;
+      this.guidanceHint.textContent =
+        `The ship trims its Δv (≤ the value below, its correction budget) to ${what} at delivery — or NACKs if it can't.`;
+    }
+  }
+
+  /** Lock the guidance controls (e.g. while a burn is running or the ship is lost). */
+  private setGuidanceDisabled(disabled: boolean): void {
+    const btns = [
+      ...Array.from(this.guidanceRow.children),
+      ...Array.from(this.goalTypeRow.children),
+    ] as HTMLButtonElement[];
+    for (const b of btns) setDisabled(b, disabled);
+    this.goalAltInput.disabled = disabled;
   }
 
   private refreshShipList(): void {
@@ -725,9 +823,11 @@ export class ShipPanel {
       lines.push(kv("BURNING", `${ship.burn.dvDone.toFixed(0)} / ${ship.burn.dvTarget.toFixed(0)} m/s (${pct.toFixed(0)}%)`));
       setDisabled(this.executeBtn, true, "Burn in progress.");
       this.executeBtn.textContent = "Burning…";
+      this.setGuidanceDisabled(true);
     } else {
       setDisabled(this.executeBtn, false);
       this.executeBtn.textContent = "Execute burn";
+      this.setGuidanceDisabled(false);
     }
 
     this.updateSurfaceOps(ship);
@@ -935,6 +1035,7 @@ export class ShipPanel {
     setDisabled(this.interstellarBtn, true, "Ship lost.");
     setDisabled(this.executeBtn, true, "Ship lost.");
     this.executeBtn.textContent = "Execute burn";
+    this.setGuidanceDisabled(true);
   }
 
   /** Commit a low-thrust Edelbaum spiral from the current circular orbit to the
