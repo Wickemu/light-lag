@@ -29,6 +29,13 @@ export type Theme = "dark" | "light";
  *  the nearby-star neighbourhood (Sol + the ~24 systems + ships in transit). */
 export type ViewMode = "system" | "interstellar";
 
+/** How far back a fly-to bows the camera mid-flight, as a fraction of the gap
+ *  between the two bodies. ~0.9 keeps both endpoints inside the frame at the
+ *  half-way point (the 50° FOV plus perspective foreshortening puts them near the
+ *  edges, so the journey reads as motion rather than a static overview). Only
+ *  kicks in when the gap dwarfs the framing distances — short hops dolly in. */
+const FLY_FRAME_FRACTION = 0.9;
+
 const BG: Record<Theme, number> = {
   dark: 0x05070d,
   light: 0xdfe6ef,
@@ -79,9 +86,9 @@ export class SceneManager {
   private flight?: {
     fn: (t: number) => Vec3; // the new focus point (target of the flight)
     dist: number; // framing distance to settle at, in render units
-    dir: THREE.Vector3; // unit camera→target offset direction, held constant
+    dir: THREE.Vector3; // unit target→camera offset direction, held constant
     startTarget: THREE.Vector3; // camera target at lift-off (old-origin render space)
-    startCam: THREE.Vector3; // camera position at lift-off
+    startDist: number; // camera distance from target at lift-off, in render units
     elapsed: number; // seconds since lift-off
     duration: number; // total flight time, seconds
   };
@@ -325,18 +332,27 @@ export class SceneManager {
    *  target (panning the look-at point and easing the distance) before the
    *  origin is handed off. Re-selecting during a flight simply retargets it. */
   private startFlight(id: string, fn: (t: number) => Vec3, dist: number): void {
-    const dir = this.camera.position.clone().sub(this.controls.target);
-    if (dir.lengthSq() === 0) dir.set(0, 0.5, 1);
-    dir.normalize();
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    if (offset.lengthSq() === 0) offset.set(0, 0.5, 1);
+    const startDist = Math.max(offset.length(), 1e-6);
+    const dir = offset.normalize();
     this.focusId = id; // light up the selection immediately
+    // Duration scales with how much "zoom" the flight covers — counting both the
+    // dolly between framing distances and the mid-flight pull-back that frames the
+    // gap (see advanceFlight). A moon hop stays snappy; a cross-system jump gets a
+    // touch more time so the eye can follow the journey instead of being whipped.
+    const sep = this.toRender(fn(this.lastT)).distanceTo(this.controls.target);
+    const peak = Math.max(startDist, dist, sep * FLY_FRAME_FRACTION);
+    const octaves = Math.log2(peak / startDist) + Math.log2(peak / dist);
+    const duration = Math.min(1.6, Math.max(0.55, 0.5 + 0.08 * octaves));
     this.flight = {
       fn,
       dist,
       dir,
       startTarget: this.controls.target.clone(),
-      startCam: this.camera.position.clone(),
+      startDist,
       elapsed: 0,
-      duration: 0.8,
+      duration,
     };
     this.flightLastMs = undefined;
     // focusFn is deliberately left on the old body: it remains the render origin
@@ -358,12 +374,24 @@ export class SceneManager {
     const p = f.duration > 0 ? Math.min(1, f.elapsed / f.duration) : 1;
     const e = p * p * (3 - 2 * p); // smoothstep: ease in and out
 
-    // Target's position in the *current* (old-origin) render space, and the
-    // camera seat a framing distance back along the held direction.
+    // Target's position in the *current* (old-origin) render space. Pan the look-at
+    // straight across to it; the seat distance is what makes the motion read.
     const endTarget = this.toRender(f.fn(t));
-    const endCam = endTarget.clone().add(f.dir.clone().multiplyScalar(f.dist));
     this.controls.target.copy(f.startTarget).lerp(endTarget, e);
-    this.camera.position.copy(f.startCam).lerp(endCam, e);
+
+    // Geometric (log-space) interpolation of the seat distance: the old body
+    // recedes and the new one swells at a *perceptually* even rate, since apparent
+    // size goes as 1/distance. A linear dolly would shrink the body you left to a
+    // dot within the first frames and rush the new one in only at the very end.
+    let dist = f.startDist * Math.pow(f.dist / f.startDist, e);
+    // On long hops, bow the camera outward mid-flight so both bodies — and the
+    // space between — stay framed: a clear zoom-out-then-in arc instead of a blur
+    // past empty space. sin() is zero at both ends, so lift-off and arrival are
+    // untouched; the bow only appears when the gap dwarfs the framing distances.
+    const sep = endTarget.distanceTo(f.startTarget);
+    const peak = Math.max(0, sep * FLY_FRAME_FRACTION - Math.max(f.startDist, f.dist));
+    dist += peak * Math.sin(Math.PI * e);
+    this.camera.position.copy(this.controls.target).addScaledVector(f.dir, dist);
 
     if (p >= 1) {
       this.focusFn = f.fn;
