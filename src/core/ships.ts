@@ -19,7 +19,7 @@ import { j2Rates, circularSpeed } from "./orbit.ts";
 import { bodyState } from "./ephemeris.ts";
 import { retardedTime, dopplerFactor, redshiftZ } from "./comms.ts";
 import { STAR_BY_ID, starPosition } from "./stars.ts";
-import { BODY_BY_ID, C, j2RefRadius, type BodyDef } from "./constants.ts";
+import { BODY_BY_ID, C, DEG, j2RefRadius, type BodyDef } from "./constants.ts";
 import { type Vec3, add, addScaled, sub, scale, dot, cross, normalize, length, distance } from "./math/vec3.ts";
 import { integrateEntryPlanar, entryTrajectory } from "./maneuver/entry.ts";
 import { DEFAULT_ENTRY_BETA } from "./surface.ts";
@@ -97,25 +97,65 @@ export function interstellarProperTime(leg: InterstellarLeg, t: number): number 
   return 2 * tauAt(T / 2) - tauAt(T - tc); // symmetric deceleration half
 }
 
-/** Parent-relative state of a ship sitting on the surface, co-rotating with the
- *  body: the landing-site body-fixed direction is rotated by θ(t)=Ω·t (about the
- *  ecliptic-Z axis — a documented approximation that neglects axial tilt) and the
- *  velocity is ω×r, so the ship moves at SURFACE speed, not orbital speed. */
+/** Signed diurnal rate Ω (rad/s) of a body's spin; negative ⇒ retrograde, 0 if it
+ *  has no rotation period. */
+export function bodySpinRate(body: BodyDef): number {
+  const T = body.rotationPeriod ?? 0;
+  return T !== 0 ? (2 * Math.PI) / T : 0;
+}
+
+/** The body's spin axis (unit) in the inertial/ecliptic frame: ecliptic +Z tilted by
+ *  the obliquity about +X — the SAME tilt the renderer applies to the globe (the node
+ *  rotation in render/bodyViews), so physics and graphics share one pole. */
+export function spinAxis(body: BodyDef): Vec3 {
+  const e = (body.obliquityDeg ?? 0) * DEG;
+  return { x: 0, y: -Math.sin(e), z: Math.cos(e) };
+}
+
+/** The body's surface angular-velocity vector ω = Ω·n̂ (n̂ = spin axis). A point at
+ *  parent-relative position r co-rotates with the surface at v = ω × r. */
+export function surfaceAngularVelocity(body: BodyDef): Vec3 {
+  return scale(spinAxis(body), bodySpinRate(body));
+}
+
+/** Map a BODY-FIXED surface direction to its inertial (parent-relative) unit direction
+ *  at time t: spin it by θ=Ω·t about the pole, then tilt the equator into the ecliptic
+ *  by the obliquity (about +X). The inverse is `inertialDirToSurface`. */
+export function surfaceDirToInertial(body: BodyDef, d: Vec3, t: number): Vec3 {
+  const th = bodySpinRate(body) * t;
+  const c = Math.cos(th), s = Math.sin(th);
+  // Diurnal spin about the (untilted) pole.
+  const ax = d.x * c - d.y * s, ay = d.x * s + d.y * c, az = d.z;
+  // Tilt the equatorial frame into the ecliptic by the obliquity (about +X).
+  const e = (body.obliquityDeg ?? 0) * DEG;
+  const ce = Math.cos(e), se = Math.sin(e);
+  return { x: ax, y: ay * ce - az * se, z: ay * se + az * ce };
+}
+
+/** Inverse of `surfaceDirToInertial`: recover the BODY-FIXED surface direction from an
+ *  inertial (parent-relative) unit direction at time t — untilt by the obliquity, then
+ *  de-spin by θ=Ω·t. Used when a touchdown/impact site is captured and stored. */
+export function inertialDirToSurface(body: BodyDef, u: Vec3, t: number): Vec3 {
+  // Untilt the ecliptic into the equatorial frame (about +X).
+  const e = (body.obliquityDeg ?? 0) * DEG;
+  const ce = Math.cos(e), se = Math.sin(e);
+  const ax = u.x, ay = u.y * ce + u.z * se, az = -u.y * se + u.z * ce;
+  // De-spin by the body's rotation angle so the site is stored body-fixed.
+  const th = bodySpinRate(body) * t;
+  const c = Math.cos(th), s = Math.sin(th);
+  return { x: ax * c + ay * s, y: -ax * s + ay * c, z: az };
+}
+
+/** Parent-relative state of a ship sitting on the surface, co-rotating with the body:
+ *  the landing-site body-fixed direction is carried to its inertial position about the
+ *  body's TILTED pole (matching the rendered globe) and the velocity is ω×r, so the ship
+ *  moves at SURFACE speed, not orbital speed — and stays put on the turning surface. */
 export function landedRelativeState(ship: Ship, t: number): State {
   const leg = ship.landed!;
   const body = BODY_BY_ID.get(leg.bodyId);
   if (!body) return { r: { x: 0, y: 0, z: 0 }, v: { x: 0, y: 0, z: 0 } };
-  const T = body.rotationPeriod ?? 0;
-  const om = T !== 0 ? (2 * Math.PI) / T : 0; // signed angular rate (retrograde T < 0)
-  const th = om * t;
-  const c = Math.cos(th), s = Math.sin(th);
-  const d = leg.surfaceDir;
-  const r = {
-    x: (d.x * c - d.y * s) * body.radius,
-    y: (d.x * s + d.y * c) * body.radius,
-    z: d.z * body.radius,
-  };
-  return { r, v: { x: -om * r.y, y: om * r.x, z: 0 } }; // ω × r
+  const r = scale(surfaceDirToInertial(body, leg.surfaceDir, t), body.radius);
+  return { r, v: cross(surfaceAngularVelocity(body), r) }; // ω × r
 }
 
 /**
@@ -324,9 +364,7 @@ export function buildDescentLeg(
   const { er0, et0 } = planeBasis(r0, v0);
   const { dir } = arcEndFrame(er0, et0, samples[samples.length - 1]!.theta);
   const exitR = scale(dir, body.radius); // touchdown on the surface
-  const T = body.rotationPeriod ?? 0;
-  const om = T !== 0 ? (2 * Math.PI) / T : 0;
-  const exitV = { x: -om * exitR.y, y: om * exitR.x, z: 0 }; // ω × r — surface co-rotation
+  const exitV = cross(surfaceAngularVelocity(body), exitR); // ω × r — surface co-rotation
   return { bodyId: body.id, tStart, tEnd: tStart + burnTime, r0, v0, samples, exitR, exitV };
 }
 

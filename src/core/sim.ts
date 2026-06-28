@@ -26,7 +26,7 @@ import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius, visVivaSpeed, j2Rates } from "./orbit.ts";
 import {
   activeStage, applyImpulsiveDv, dvRemaining, primaryMu, shipOsculatingElements, shipRelativeState, shipWorldState,
-  interstellarProperTime, spiralElements, buildEntryLeg, NOMINAL_ENTRY_VEHICLE,
+  interstellarProperTime, spiralElements, buildEntryLeg, inertialDirToSurface, NOMINAL_ENTRY_VEHICLE,
 } from "./ships.ts";
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
@@ -689,10 +689,7 @@ export class Simulation {
     let surfaceDir: Vec3 | undefined;
     if (body) {
       const dir = normalize(shipRelativeState(ship, t).r);
-      const T = body.rotationPeriod ?? 0;
-      const om = T !== 0 ? (2 * Math.PI) / T : 0;
-      const c = Math.cos(-om * t), s = Math.sin(-om * t);
-      surfaceDir = { x: dir.x * c - dir.y * s, y: dir.x * s + dir.y * c, z: dir.z };
+      surfaceDir = inertialDirToSurface(body, dir, t); // body-fixed impact site (co-rotates)
     }
     ship.status = "lost";
     ship.mode = "coast";
@@ -1388,13 +1385,10 @@ export class Simulation {
       return;
     }
     if (leg.outcome === "landed") {
-      // Store the touchdown site as a body-fixed direction (de-rotate by Ω·t), so the
-      // ship co-rotates with the surface — identical to landShip.
+      // Store the touchdown site as a body-fixed direction (un-tilt + de-rotate by Ω·t),
+      // so the ship co-rotates with the surface — identical to landShip.
       const dir = normalize(leg.exitR);
-      const T = body.rotationPeriod ?? 0;
-      const om = T !== 0 ? (2 * Math.PI) / T : 0;
-      const c = Math.cos(-om * t), s = Math.sin(-om * t);
-      ship.landed = { bodyId: body.id, surfaceDir: { x: dir.x * c - dir.y * s, y: dir.x * s + dir.y * c, z: dir.z } };
+      ship.landed = { bodyId: body.id, surfaceDir: inertialDirToSurface(body, dir, t) };
       ship.mode = "coast";
       ship.elements = undefined;
       ship.r = undefined;
@@ -1455,10 +1449,7 @@ export class Simulation {
     if (!body) return;
     const t = this.world.t;
     const dir = normalize(leg.exitR);
-    const T = body.rotationPeriod ?? 0;
-    const om = T !== 0 ? (2 * Math.PI) / T : 0;
-    const c = Math.cos(-om * t), s = Math.sin(-om * t);
-    ship.landed = { bodyId: body.id, surfaceDir: { x: dir.x * c - dir.y * s, y: dir.x * s + dir.y * c, z: dir.z } };
+    ship.landed = { bodyId: body.id, surfaceDir: inertialDirToSurface(body, dir, t) };
     ship.mode = "coast";
     ship.elements = undefined;
     ship.r = undefined;

@@ -70,8 +70,9 @@ flyable, to-scale 3D Solar System.
 - **Launch vehicles fly the ascent**: a preset's `role` says where it starts. A **launch
   vehicle** (Saturn V, Falcon 9/Heavy, Shuttle, Soyuz, Ariane, Starship…) stands on the Earth
   pad and must climb to LEO — its boost/lower stages are **expended in the ascent**, so only the
-  surviving payload + orbital stage reaches orbit (a Saturn V leaves the S-IVB + ~45 t Apollo
-  stack with ~3 km/s of trans-lunar-injection Δv in hand). Roll it out and fly the gravity turn,
+  surviving payload + orbital stage reaches orbit (a Saturn V leaves the S-IVB **plus the Apollo
+  CSM's own engine** in orbit — the S-IVB throws the stack to the Moon and the CSM inserts into
+  lunar orbit, ~5 km/s in hand, with the Command + Lunar Modules as inert cargo). Roll it out and fly the gravity turn,
   or **express to LEO** to resolve the ascent instantly. An **in-space craft** (upper/kick stages,
   probes, nuclear/electric tugs) is delivered to LEO as payload, so it deploys directly into orbit
   with full propellant. The designer shows the live ascent budget and the projected orbital

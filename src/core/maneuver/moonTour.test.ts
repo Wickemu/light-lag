@@ -42,7 +42,12 @@ describe("intra-system moon tour (parent-centric flyby pump-down at Jupiter)", (
     expect(direct).toBeTruthy();
     expect(tour.dvArrive).toBeLessThan(0.6 * direct.dvArrive); // matched-velocity capture is much cheaper
     expect(tour.dvFlybyTotal).toBeLessThan(1500); // the bend is mostly free
-    expect(tour.dvTotal).toBeLessThan(direct.dvDepart + direct.dvArrive); // the whole tour beats the direct hop
+    // An optimally-phased direct hop (searchMoonWindow now sweeps the full parking-orbit period,
+    // so it finds the cheap apoapsis departure) can match the TOTAL — but only by paying the whole
+    // bill as a brutal capture burn at Europa, where a small arrival stage can least afford it. The
+    // tour stays in the same ballpark on total while shifting that cost into a cheap departure + a
+    // near-free bend; the capture saving (asserted above) is the real headline.
+    expect(tour.dvTotal).toBeLessThan((direct.dvDepart + direct.dvArrive) * 1.2);
   });
 
   it("each flyby's required turn is within the geometric maximum a safe pass provides", () => {

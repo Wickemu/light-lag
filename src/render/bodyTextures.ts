@@ -180,17 +180,6 @@ const TEX_W_OVERRIDE: Record<string, number> = {
   saturn: 1024,
 };
 
-/** Cosmetic axial tilt (deg) for the bodies whose flat-pole look would read
- *  wrong. Render-only — the engine never sees this; it just orients the texture
- *  poles and (for Saturn) the ring plane. Default 0 ⇒ poles align to ecliptic Z. */
-const OBLIQUITY_DEG: Record<string, number> = {
-  earth: 23.44,
-  mars: 25.19,
-  saturn: 26.73,
-  jupiter: 3.13,
-  neptune: 28.32,
-  uranus: 97.77, // ring/pole nearly in the orbital plane — the iconic "rolling" giant
-};
 
 // ── Public shape ─────────────────────────────────────────────────────────────
 
@@ -898,7 +887,10 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
   const fbm = makeFbm(rng);
   const w = TEX_W_OVERRIDE[def.id] ?? TEX_W[def.kind];
   const h = w / 2;
-  const obliquityRad = (OBLIQUITY_DEG[def.id] ?? 0) * (Math.PI / 180);
+  // Obliquity now lives in the body data (core/constants), so the engine and the
+  // renderer tilt the spin axis by the SAME angle — a landed pad co-rotates with the
+  // visibly tilted globe instead of drifting across it.
+  const obliquityRad = (def.obliquityDeg ?? 0) * (Math.PI / 180);
 
   // Surface + (where relevant) bump.
   let surface: THREE.Texture;

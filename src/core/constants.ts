@@ -134,6 +134,12 @@ export interface BodyDef {
   /** Sidereal rotation period (s); negative ⇒ retrograde. Drives the equatorial
    *  surface speed a launch inherits / a landing must cancel (surface.ts). */
   rotationPeriod?: number;
+  /** Axial tilt of the spin axis from the ecliptic +Z, in degrees. The diurnal
+   *  rotation — and anything co-rotating with the surface (a landed ship, a launch
+   *  pad) — turns about THIS tilted pole, which is also the pole the rendered globe
+   *  spins about (render/bodyViews node tilt), so a pad stays fixed on the surface
+   *  instead of drifting across it. Absent ⇒ 0 (pole along ecliptic +Z). */
+  obliquityDeg?: number;
   /** Present only for bodies with a real atmosphere (ascent drag / aerobraking). */
   atmosphere?: Atmosphere;
   /** True for bodies with a solid surface to land on. The Sun and the gas giants
@@ -183,7 +189,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "earth", name: "Earth", parent: "sun", mu: 3.986004418e14, radius: 6.371e6,
     kind: "planet", color: 0x4a90d9,
-    rotationPeriod: 86164.0905, hasSurface: true, J2: 1.08263e-3, equatorialRadius: 6378137, // sidereal day; eq radius WGS84
+    rotationPeriod: 86164.0905, obliquityDeg: 23.44, hasSurface: true, J2: 1.08263e-3, equatorialRadius: 6378137, // sidereal day; eq radius WGS84
     atmosphere: { surfacePressure: 101325, surfaceDensity: 1.225, scaleHeight: 8500 },
     // Standish "EM Bary" row; we treat it as Earth (the Earth–barycentre offset
     // of ~4670 km is far below visual relevance at 1 AU).
@@ -209,7 +215,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "mars", name: "Mars", parent: "sun", mu: 4.282837e13, radius: 3.3895e6,
     kind: "planet", color: 0xc1440e,
-    rotationPeriod: 88642.66, hasSurface: true, J2: 1.96045e-3, equatorialRadius: 3396200, // 24.6229 h
+    rotationPeriod: 88642.66, obliquityDeg: 25.19, hasSurface: true, J2: 1.96045e-3, equatorialRadius: 3396200, // 24.6229 h
     atmosphere: { surfacePressure: 610, surfaceDensity: 0.020, scaleHeight: 11100 },
     standish: {
       a: 1.52371034, aDot: 0.00001847, e: 0.09339410, eDot: 0.00007882,
@@ -220,7 +226,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "jupiter", name: "Jupiter", parent: "sun", mu: 1.26686534e17, radius: 6.9911e7,
     kind: "planet", color: 0xd8a878,
-    rotationPeriod: 35730, hasSurface: false, J2: 0.0146965, equatorialRadius: 71492000, // 9.925 h; no solid surface. J2 from Juno (Iess et al. 2018), referenced to eq radius 71492 km
+    rotationPeriod: 35730, obliquityDeg: 3.13, hasSurface: false, J2: 0.0146965, equatorialRadius: 71492000, // 9.925 h; no solid surface. J2 from Juno (Iess et al. 2018), referenced to eq radius 71492 km
     standish: {
       a: 5.20288700, aDot: -0.00011607, e: 0.04838624, eDot: -0.00013253,
       i: 1.30439695, iDot: -0.00183714, L: 34.39644051, LDot: 3034.74612775,
@@ -230,7 +236,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "saturn", name: "Saturn", parent: "sun", mu: 3.7931187e16, radius: 5.8232e7,
     kind: "planet", color: 0xead6a8,
-    rotationPeriod: 38362, hasSurface: false, J2: 0.016298, equatorialRadius: 60268000, // 10.656 h; no solid surface; J2 ref eq radius 60268 km
+    rotationPeriod: 38362, obliquityDeg: 26.73, hasSurface: false, J2: 0.016298, equatorialRadius: 60268000, // 10.656 h; no solid surface; J2 ref eq radius 60268 km
     standish: {
       a: 9.53667594, aDot: -0.00125060, e: 0.05386179, eDot: -0.00050991,
       i: 2.48599187, iDot: 0.00193609, L: 49.95424423, LDot: 1222.49362201,
@@ -240,7 +246,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "uranus", name: "Uranus", parent: "sun", mu: 5.793939e15, radius: 2.5362e7,
     kind: "planet", color: 0x9fd8e0,
-    rotationPeriod: -62064, hasSurface: false, J2: 0.003343, equatorialRadius: 25559000, // retrograde, 17.24 h; no solid surface
+    rotationPeriod: -62064, obliquityDeg: 97.77, hasSurface: false, J2: 0.003343, equatorialRadius: 25559000, // retrograde, 17.24 h; no solid surface
     standish: {
       a: 19.18916464, aDot: -0.00196176, e: 0.04725744, eDot: -0.00004397,
       i: 0.77263783, iDot: -0.00242939, L: 313.23810451, LDot: 428.48202785,
@@ -250,7 +256,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "neptune", name: "Neptune", parent: "sun", mu: 6.836529e15, radius: 2.4622e7,
     kind: "planet", color: 0x4f7cdb,
-    rotationPeriod: 57996, hasSurface: false, J2: 0.003411, equatorialRadius: 24764000, // 16.11 h; no solid surface
+    rotationPeriod: 57996, obliquityDeg: 28.32, hasSurface: false, J2: 0.003411, equatorialRadius: 24764000, // 16.11 h; no solid surface
     standish: {
       a: 30.06992276, aDot: 0.00026291, e: 0.00859048, eDot: 0.00005105,
       i: 1.77004347, iDot: 0.00035372, L: -55.12002969, LDot: 218.45945325,

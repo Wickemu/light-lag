@@ -12,7 +12,7 @@ import { type Ship, type BurnDir, type BurnGoal, type ShipTransfer, type Powered
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone, stageLiftoffThrust, stageLiftoffExhaust } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "../core/orbit.ts";
 import { hohmann } from "../core/maneuver/hohmann.ts";
-import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
+import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, inertialDirToSurface, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
 import { dockState, isDockable, transferProp, mergeStacks, shipPropAvailable, shipPropHeadroom } from "../core/refuel.ts";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "../core/maneuver/entry.ts";
 import { aimMoonArrival } from "../core/maneuver/arrival.ts";
@@ -895,13 +895,10 @@ export function landShip(sim: Simulation, shipId: string): SurfaceOp | null {
   }
 
   // Snap fallback (atmosphere / degenerate): land directly below the current orbital
-  // position; store the site as a body-fixed direction (de-rotate the inertial direction by
+  // position; store the site as a body-fixed direction (un-tilt the obliquity + de-rotate by
   // the body's rotation angle) so the ship co-rotates with the surface from here on.
   const dir = normalize(shipRelativeState(ship, t).r);
-  const T = body.rotationPeriod ?? 0;
-  const om = T !== 0 ? (2 * Math.PI) / T : 0;
-  const c = Math.cos(-om * t), s = Math.sin(-om * t);
-  const surfaceDir = { x: dir.x * c - dir.y * s, y: dir.x * s + dir.y * c, z: dir.z };
+  const surfaceDir = inertialDirToSurface(body, dir, t);
   ship.mode = "coast";
   ship.r = undefined;
   ship.v = undefined;
