@@ -28,6 +28,17 @@ const LABEL_MAG = 2.0;
 const FILL_FAINT = 4.0;
 const FILL_MIN_PX = 1.3;
 const FILL_MAX_PX = 3.4;
+/** Backdrop stars are CONTEXT, not the subject. Cap the bright sprites' colour at
+ *  the raw blackbody value (no HDR over-drive — the same level as the nearby /
+ *  navigable stars) and shrink them slightly, so they bloom no more than the
+ *  foreground. At full HDR gain ~125 of them bloomed into boxy halos that
+ *  overpowered the nearby stars. */
+const BACKDROP_GAIN_CAP = 1.0;
+const BACKDROP_SCALE = 0.8;
+/** Fill points stay below the dark theme's bloom threshold (0.85) so the faint
+ *  majority never glow — just crisp points. */
+const FILL_MIN_INTENSITY = 0.4;
+const FILL_MAX_INTENSITY = 0.8;
 
 interface Promoted {
   dir: THREE.Vector3; // unit Sun→star direction (ecliptic-J2000)
@@ -91,10 +102,10 @@ export class SkyBackdrop {
       const s = fill[i]!;
       const d = dirOf(s);
       pos[i * 3] = d.x * radius; pos[i * 3 + 1] = d.y * radius; pos[i * 3 + 2] = d.z * radius;
-      // Brightness 0 (mag 4) → 1 (mag PROMOTE_MAG); intensity stays ≤ 1 so the fill
-      // never crosses the bloom threshold — only the promoted sprites glow.
+      // Brightness 0 (mag 4) → 1 (mag PROMOTE_MAG); intensity stays below the bloom
+      // threshold so the faint fill never glows — just crisp points.
       const f = Math.min(1, Math.max(0, (FILL_FAINT - s.appMag) / (FILL_FAINT - PROMOTE_MAG)));
-      const intensity = 0.45 + 0.55 * f;
+      const intensity = FILL_MIN_INTENSITY + f * (FILL_MAX_INTENSITY - FILL_MIN_INTENSITY);
       const c = blackbodyRGB(spectralTeff(s.spectralType));
       col[i * 3] = c.r * intensity; col[i * 3 + 1] = c.g * intensity; col[i * 3 + 2] = c.b * intensity;
       siz[i] = FILL_MIN_PX + f * (FILL_MAX_PX - FILL_MIN_PX);
@@ -121,15 +132,16 @@ export class SkyBackdrop {
       if (s.appMag > PROMOTE_MAG) continue;
       const d = dirOf(s);
       const { scale, gain } = starSpriteStyle(s.appMag);
+      const g = Math.min(gain, BACKDROP_GAIN_CAP); // context, not HDR-overdriven
       const c = blackbodyRGB(spectralTeff(s.spectralType));
       const mat = new THREE.SpriteMaterial({
         map: this.tex,
-        color: new THREE.Color().setRGB(c.r * gain, c.g * gain, c.b * gain),
+        color: new THREE.Color().setRGB(c.r * g, c.g * g, c.b * g),
         sizeAttenuation: false, depthWrite: false, transparent: true,
         blending: THREE.AdditiveBlending,
       });
       const sprite = new THREE.Sprite(mat);
-      sprite.scale.setScalar(scale);
+      sprite.scale.setScalar(scale * BACKDROP_SCALE);
       sprite.position.set(d.x * radius, d.y * radius, d.z * radius);
       sprite.frustumCulled = false;
       this.group.add(sprite);
