@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is `src/core/` (see
-[ARCHITECTURE.md](ARCHITECTURE.md)); 557 passing physics/sim tests — including a
+[ARCHITECTURE.md](ARCHITECTURE.md)); 575 passing physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
 golden-state determinism hash.

@@ -32,6 +32,7 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 | `math/vec3.ts` | f64 vector ops (plain `{x,y,z}`, serializable). |
 | `math/kepler.ts` | Kepler solvers (elliptic + hyperbolic), coe↔rv, propagation, orbit sampling. |
 | `math/integrators.ts` | RK4 integrator for powered flight. |
+| `math/relativity.ts` | Special-relativistic coordinate acceleration from a proper-frame force (Rindler decomposition along/across velocity, clamped below `c`) — the relativistic powered-flight derivative. |
 
 ### Core simulation
 
@@ -43,6 +44,9 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 | `propulsion.ts` | Rocket equation, staging, Δv budget, electric power law (`F = min(F_rated, 2ηP/vₑ)`), variable-Isp constant-power throttle (`variableIspBurn`: thrust↔Isp↔time trade at `F·vₑ = 2ηP`). |
 | `ships.ts` | Ship mass/state/orbit helpers; impulsive Δv (with affordability check); thermal state readout. |
 | `surface.ts` | Landing/takeoff Δv budgets: calibrated gravity-turn ascent through real exponential atmospheres, aerobraking fraction on descent. |
+| `forces.ts` | Read-only force/momentum breakdown for the overlay: dominant gravitational pull, secondary tidal perturbation, and primary-relative velocity for a body or ship (`bodyForceBreakdown`, `shipForceBreakdown`). |
+| `trajectory.ts` | Live ship forecast path sampled from osculating elements — a continuous, snap-free bound ellipse or unbound arc with a trailing past arc (`shipForecastPath`). |
+| `route.ts` | Heliocentric Lambert transfer geometry for visualization: single- or multi-leg paths with optional gravity-assist bends and context rings (`planRoute`). |
 | `thermal.ts` | Stefan-Boltzmann heat budget, solar flux (1/r²), detection range — the "no stealth in space" pillar. |
 | `stars.ts` | Nearest ~24 star systems in ecliptic-J2000 frame (interstellar destinations). |
 | `comms.ts` | Light-time, signal propagation at `c`, retarded (delayed) state of a moving target. |
@@ -62,6 +66,10 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 | `maneuver/arrival.ts` | B-plane arrival targeting: hyperbolic approach to a requested periapsis altitude. |
 | `maneuver/flyby.ts` | Patched-conic gravity-flyby geometry (vₓ in/out rotation, turn angle, periapsis) + B-plane aim (`bPlaneAim`: free-bend hyperbola e/rp, impact parameter, B-vector/plane-normal). |
 | `maneuver/assist.ts` | Gravity-assist solver: a two-leg single-flyby plan (`assistTransfer`) with grid search for the cheapest window, and an N-body multi-flyby chain (`chainAssist`, e.g. V-E-E-G-A) over a fixed schedule. |
+| `maneuver/moon.ts` | Parent-centric Lambert transfer-window search from a parking orbit to a moon (J2-aware arrival aiming) — the LEO→Moon / planet-orbit→moon leg (`searchMoonWindow`). |
+| `maneuver/moonTour.ts` | Parent-centric gravity-assist moon-flyby chains: planet orbit → free/paid moon flybys → capture (`searchMoonTour`, `moonTour`). |
+| `maneuver/suggest.ts` | Auto-route suggester: ranks a direct transfer, single-flyby assists, and VEEGA-style two-flyby chains by the chosen criterion (`suggestRoutes`, `bestAssist`, `bestChain`). |
+| `maneuver/criteria.ts` | Trajectory scoring layer — least-Δv / shortest-flight / balanced criterion with a strict total-order comparator (`score`, `better`, `Criterion`). |
 | `maneuver/lowThrust.ts` | Edelbaum analytic spiral: exact Δv/time/propellant for a power-limited electric transfer between near-circular orbits (and coplanar inclination change), plus capture/escape spirals about a single body's well (the r→∞ limit, Δv = local circular speed). |
 | `maneuver/entry.ts` | Ballistic atmospheric-entry trajectory (RK4 through the exponential atmosphere): peak deceleration, Sutton-Graves convective stagnation heat flux, radiative-equilibrium wall temperature, integrated heat load, and land/capture/skip-out outcome; plus single-pass aerocapture (bisection on the entry corridor) with the Δv saved vs a propulsive capture burn. |
 | `maneuver/interstellar.ts` | Relativistic brachistochrone (flip-and-burn): rapidity rocket equation, coordinate/proper time, peak Lorentz factor, mass ratio, light-lag. |
@@ -87,7 +95,13 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 |---|---|
 | `SceneManager.ts` | Three.js scene, camera, WebGL renderer, OrbitControls, floating origin (re-centred every frame on the focused body), theme (dark/light). |
 | `bodyViews.ts` | Body sphere meshes, ecliptic orbit lines (eccentric-anomaly sampled and phased so the loop passes through the marker), label anchor NDC coordinates. |
+| `bodyTextures.ts` | Procedural, seeded (deterministic, zero image assets) surface textures generated at startup — granulation, bands, oceans, craters, atmosphere shells, rings (`createBodyTextures`). |
+| `bodyFeatures.ts` | Real IAU-gazetteer surface-feature tables (maria, canyons, mountains, polar caps) drawn over the procedural base (`BODY_FEATURES`). |
+| `earthLand.ts` | Simplified real Earth coastline polygons (Natural Earth 1:110m) rasterised into a land/sea mask (`LAND_POLYS`). |
 | `shipViews.ts` | Ship marker meshes + floating name labels in screen space. |
+| `trajectoryViews.ts` | Ship trajectory overlays — the live forecast arc, committed planned routes, and the transfer-planner preview ghost (`TrajectoryViews`). |
+| `forceViews.ts` | Gravity/momentum vector overlay for the focused object — dominant gravity arrow, velocity arrow, faint tidal perturbation (`ForceViews`). |
+| `overlayUtil.ts` | Shared render-space primitives for overlays (trajectories, routes, forces): polylines, arrows, floating-origin transforms, theme-aware palette. |
 | `starViews.ts` | The in-system sky: point markers for the nearby real star systems on an unzoomable camera-locked backdrop, in their true Sun→star direction (no procedural starfield). |
 | `interstellarView.ts` | The interstellar map: the ~24 nearby systems at real relative distances about Sol (its own scale), plus ships in transit. The second of the two views — toggled via the HUD switch / `M`. |
 | `commsViews.ts` | Light-cone / signal-in-flight visualizations (outbound commands, inbound telemetry). |
@@ -100,16 +114,23 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 |---|---|
 | `hud.ts` | Clock, time-warp controls, body focus list (grouped by kind, scrollable) with per-body / per-kind show-hide eyes and a layer-chip row (orbits, labels, stars, ships, comms), a system⇄interstellar view switch, per-body physics readouts (distance, speed, period, surface gravity, light-time), floating body labels, theme toggle. |
 | `shipPanel.ts` | Ship designer (staged stack editor, live Δv budget, preset fleet picker) + flight console (osculating orbit, mass, Δv remaining, burn orders, transfer status, J2 precession, surface ops, electric spiral, thermal/detection readouts). |
-| `transferPanel.ts` | Transfer planner: porkchop plot (Lambert grid, blue/red Δv colour scale), optional gravity-assist via-flyby-body mode, cell selection, commit to `planTransfer` / `planAssist`. |
+| `transferPanel.ts` | Transfer planner: grouped destination list (planets / dwarfs / asteroids / comets / moons), porkchop plot (Lambert grid, blue/red Δv colour scale), an **Optimize for** selector (least Δv / shortest / balanced) and a **Suggest** auto-route search, optional gravity-assist via-flyby-body mode, capture-mode choice (circular / loose ellipse / aerocapture), cell selection, commit to `planTransfer` / `planAssist` / `planMoonTransfer` / `planMoonMission`. |
 | `interstellarPanel.ts` | Interstellar planner: star selector (sorted by distance), torchship selector, transit estimator (coordinate/proper time, mass ratio, light-lag), dispatch to `dispatchInterstellar`. |
-| `keyboard.ts` | Central keyboard input: one-shot shortcuts (Space, `,` `.`, `1`–`8`, Tab, `F`, `V`, `R`, Escape) + smooth per-frame camera orbit (WASD/arrows) and zoom (`+`/`-`). |
+| `keyboard.ts` | Central keyboard input: one-shot shortcuts (Space, `,` `.`, `1`–`8`, Tab, `F`, `V`, `M`, `R`, `?`, Escape) + smooth per-frame camera orbit (WASD/arrows) and zoom (`+`/`-`). |
+| `dom.ts` | Shared DOM helpers for the panels — element/button/row/number-field builders that auto-tag glossary terms for tooltips (`el`, `button`, `kv`, `numberField`, `formatDur`). |
+| `collapsible.ts` | Disclosure section (clickable header + toggleable body) whose open/closed state persists via `uiState` (`collapsible`). |
+| `popover.ts` | Anchored flyout panel (trigger + floating content), repositioned on open, closes on escape/outside-click — used for the Layers menu (`popover`). |
+| `tooltip.ts` | Hover/focus definition cards for glossary terms — one reused card, term-keyed, clamped to the viewport (`installTermTooltips`, `markTerm`). |
+| `glossary.ts` | Physics-true term definitions (Δv, periapsis, aerocapture, …) — the single source for the hover cards (`defineTerm`, `hasTerm`). |
+| `scaleBar.ts` | Cartographic scale-bar overlay on the canvas — auto unit selection (m → parsecs), {1,2,5}×10ⁿ rounding (`ScaleBar`). |
+| `uiState.ts` | Persisted UI layout state (localStorage wrapper, fail-soft, namespaced) — panel docks, disclosure sections, layer toggles (`getFlag`, `setFlag`). |
 
 ### `app/` — wiring and command semantics
 
 | Module | Provides |
 |---|---|
 | `main.ts` | Entry point: constructs all layers and runs the one-way frame loop (sim advance → render read). |
-| `commands.ts` | Player intents → validated world mutations: `spawnShip`, `sendBurn` (via light-lag `sim.sendCommand`), `planTransfer`, `planAssist`, `landShip`, `launchShip`, `planSpiral`, `dispatchInterstellar`. |
+| `commands.ts` | Player intents → validated world mutations: `spawnShip` / `deleteShip`, `sendBurn` (via light-lag `sim.sendCommand`), `planTransfer` / `cancelTransfer`, `planAssist` / `planChainAssist`, `planMoonTransfer` / `planMoonTour` / `planMoonMission` (auto-chained two-stage), `landShip`, `launchShip`, `flyEntry`, `planSpiral`, `dispatchInterstellar`, plus capture/aerocapture preview helpers. |
 | `shipCatalog.ts` | 30+ preset ship designs (Historical / Current / Prototype / Sci-Fi), every number from published data. Includes classical staged presets and `INTERSTELLAR_CRAFT` for the relativistic layer. |
 
 ## Building another game on the engine
