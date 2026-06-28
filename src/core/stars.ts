@@ -29,6 +29,7 @@
 
 import { type Vec3, addScaled, length } from "./math/vec3.ts";
 import { AU, C, JULIAN_YEAR } from "./constants.ts";
+import { NAVIGABLE_ADDITION_SEEDS, BACKDROP_SEEDS } from "./brightStars.generated.ts";
 
 /** One light-year in metres (derived, exact): c · one Julian year. */
 export const LIGHT_YEAR = C * JULIAN_YEAR;
@@ -76,9 +77,33 @@ export interface StarDef {
   luminosity: number; // L_sun
   massSun: number; // M_sun
   parentId?: string; // for binary/multiple components
+  appMag?: number; // real catalog apparent (visual) magnitude — preferred for sizing
+  con?: string; // IAU 3-letter constellation (e.g. "Aql")
+  bayer?: string; // Bayer / Flamsteed designation, for labels
+  hip?: number; // Hipparcos id (provenance)
 }
 
-type StarSeed = Omit<StarDef, "pos" | "vel">;
+export type StarSeed = Omit<StarDef, "pos" | "vel">;
+
+/** A distant backdrop star: a point on the unzoomable sky, never simulated and
+ *  never a travel target — so it carries only what the renderer needs (no mass,
+ *  no proper motion: at >25 ly the drift is sub-pixel over the simulated span).
+ *  `pos` is derived at module load; `vel` is zero. */
+export interface BackdropStar {
+  id: string;
+  name: string;
+  ra: number; // J2000 right ascension (rad)
+  dec: number; // J2000 declination (rad)
+  distanceLy: number;
+  spectralType: string;
+  appMag: number; // real catalog apparent (visual) magnitude
+  con?: string;
+  bayer?: string;
+  pos: Vec3; // ecliptic-J2000 Cartesian metres at J2000 (DERIVED)
+  vel: Vec3; // zero (DERIVED) — kept for a uniform shape with StarDef
+}
+
+export type BackdropSeed = Omit<BackdropStar, "pos" | "vel">;
 
 /**
  * The ecliptic-J2000 space velocity (m/s) from proper motion + radial velocity.
@@ -136,13 +161,27 @@ const SEEDS: StarSeed[] = [
   { id: "tau-ceti", name: "Tau Ceti", ra: 0.4540837659, dec: -0.2781618495, distanceLy: 11.912, pmRA: -1721.05, pmDec: 854.16, rv: -16.40, spectralType: "G8.5V", luminosity: 0.52, massSun: 0.783 },
 ];
 
-export const STARS: StarDef[] = SEEDS.map((s) => ({
+/** The navigable catalogue: the hand-curated nearest systems (≤ 12 ly) plus the
+ *  generated notable additions out to ~26 ly (Altair, Vega, Fomalhaut, 40 Eridani,
+ *  …). These are the only stars that are interstellar travel targets and the only
+ *  ones in STAR_BY_ID — so flight code can never aim at a backdrop star. */
+export const STARS: StarDef[] = [...SEEDS, ...NAVIGABLE_ADDITION_SEEDS].map((s) => ({
   ...s,
   pos: radecToEcliptic(s.ra, s.dec, s.distanceLy * LIGHT_YEAR),
   vel: starSpaceVelocity(s),
 }));
 
 export const STAR_BY_ID: Map<string, StarDef> = new Map(STARS.map((s) => [s.id, s]));
+
+/** The distant backdrop: bright stars beyond ~26 ly down to mag ~4.0 (Betelgeuse,
+ *  Rigel, the constellation-filling stars). A fixed celestial sphere in both the
+ *  in-system and interstellar views — never simulated, never a travel target, so
+ *  deliberately NOT in STAR_BY_ID. Velocity is zero (negligible drift at this range). */
+export const BACKDROP_STARS: BackdropStar[] = BACKDROP_SEEDS.map((s) => ({
+  ...s,
+  pos: radecToEcliptic(s.ra, s.dec, s.distanceLy * LIGHT_YEAR),
+  vel: { x: 0, y: 0, z: 0 },
+}));
 
 /** A star's analytic state at coordinate time t (seconds since J2000): the J2000
  *  position carried forward along its constant space velocity. Exact (a free star

@@ -15,10 +15,12 @@
  */
 
 import * as THREE from "three";
-import { STARS, type StarDef, starPosition } from "../core/stars.ts";
+import { STARS, BACKDROP_STARS, type StarDef, starPosition } from "../core/stars.ts";
 import { length } from "../core/math/vec3.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
+import { SkyBackdrop } from "./skyBackdrop.ts";
+import { ConstellationLines } from "./constellationLines.ts";
 
 /** Render-unit distance of the sky sprites from the camera. Far enough that the
  *  whole orrery (Neptune ≈ 4488 units, camera pull-out ≤ 5e6) always sits in
@@ -121,6 +123,22 @@ export function apparentMagnitude(luminositySun: number, distanceLy: number): nu
   return absMag + 5 * Math.log10(dPc) - 5;
 }
 
+/** A star's apparent magnitude for sizing: the real catalogued value when present
+ *  (the bright backdrop stars carry it), else the derived bolometric estimate. */
+export function starApparentMag(def: { appMag?: number; luminosity?: number; distanceLy: number }): number {
+  return def.appMag ?? apparentMagnitude(def.luminosity ?? 1e-9, def.distanceLy);
+}
+
+/** Sprite scale + HDR colour gain from apparent magnitude — shared by the curated
+ *  in-system stars and the promoted bright backdrop stars so they read as one sky.
+ *  Brighter (more negative m) → bigger and pushed over 1.0 to bloom. */
+export function starSpriteStyle(m: number): { scale: number; gain: number } {
+  const M_BRIGHT = -2, M_FAINT = 8;
+  const f = Math.min(1, Math.max(0, (M_FAINT - m) / (M_FAINT - M_BRIGHT)));
+  const SMIN = 0.007, SMAX = 0.03;
+  return { scale: SMIN + f * (SMAX - SMIN), gain: 0.6 + f * 1.7 };
+}
+
 interface StarVisual {
   def: StarDef;
   marker: THREE.Sprite;
@@ -131,12 +149,18 @@ export class StarViews {
   private tex = makeStarTexture();
   private visuals: StarVisual[] = [];
   private labelLayer: HTMLElement;
+  private backdrop: SkyBackdrop;
+  private constellations: ConstellationLines;
 
   constructor(private sm: SceneManager, uiRoot: HTMLElement, private vis: Visibility) {
     this.labelLayer = document.createElement("div");
     this.labelLayer.className = "star-label-layer";
     uiRoot.appendChild(this.labelLayer);
     for (const s of STARS) this.build(s);
+    // The distant bright stars (Betelgeuse, Rigel, the constellation-filling stars)
+    // sit on the same unzoomable sky shell as the curated nearby stars.
+    this.backdrop = new SkyBackdrop(this.sm, uiRoot, BACKDROP_STARS, SKY_RADIUS, "star-label backdrop");
+    this.constellations = new ConstellationLines(this.sm, SKY_RADIUS);
   }
 
   private build(def: StarDef): void {
@@ -144,16 +168,12 @@ export class StarViews {
     // (more negative m) → a bigger, hotter sprite. Magnitude is already a log of
     // flux, so we map it linearly between a bright and a faint reference and floor
     // it so even the faint red/brown dwarfs stay visible as navigation targets.
-    const m = apparentMagnitude(def.luminosity, def.distanceLy);
-    const M_BRIGHT = -2, M_FAINT = 8;
-    const f = Math.min(1, Math.max(0, (M_FAINT - m) / (M_FAINT - M_BRIGHT)));
-    const SMIN = 0.007, SMAX = 0.03;
-    const scale = (SMIN + f * (SMAX - SMIN)) * (def.parentId ? 0.82 : 1);
+    const { scale: baseScale, gain } = starSpriteStyle(starApparentMag(def));
+    const scale = baseScale * (def.parentId ? 0.82 : 1);
     // HDR colour: the blackbody tint lifted by an intensity that rises with
     // brightness, so the luminous primaries (Sirius, α Cen) push over 1.0 and
     // bloom while the dwarfs stay dim.
     const c = blackbodyRGB(spectralTeff(def.spectralType));
-    const gain = 0.6 + f * 1.7;
     const mat = new THREE.SpriteMaterial({
       map: this.tex,
       color: new THREE.Color().setRGB(c.r * gain, c.g * gain, c.b * gain),
@@ -189,8 +209,12 @@ export class StarViews {
   update(t = 0): void {
     // The interstellar view owns the stars at that scale; the in-system sky is
     // only for the orrery mode.
-    if (this.sm.viewMode !== "system" || !this.vis.layer("stars")) {
+    const isSystem = this.sm.viewMode === "system";
+    // Constellation figures have their own toggle, independent of the star layer.
+    this.constellations.update(isSystem && this.vis.layer("constellations"));
+    if (!isSystem || !this.vis.layer("stars")) {
       this.hideAll();
+      this.backdrop.update(false, false);
       return;
     }
 
@@ -198,6 +222,7 @@ export class StarViews {
     const h = window.innerHeight;
     const cam = this.sm.camera.position; // render space, relative to the focus
     const labelsOn = this.vis.layer("starLabels");
+    this.backdrop.update(true, labelsOn);
 
     for (const vis of this.visuals) {
       vis.marker.visible = true;

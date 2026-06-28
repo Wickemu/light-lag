@@ -29,12 +29,13 @@ export type LayerKey =
   | "doppler_tint"
   | "stars"
   | "starLabels"
+  | "constellations"
   | "forces";
 
 /** All layer keys, for iterating (e.g. hydrating/persisting saved toggles). */
 export const LAYER_KEYS: LayerKey[] = [
   "orbits", "trajectory", "route", "labels", "ships",
-  "comms", "doppler_tint", "stars", "starLabels", "forces",
+  "comms", "doppler_tint", "stars", "starLabels", "constellations", "forces",
 ];
 
 export class Visibility {
@@ -43,7 +44,8 @@ export class Visibility {
   };
   private layers: Record<LayerKey, boolean> = {
     orbits: true, trajectory: true, route: false, labels: true, ships: true,
-    comms: true, doppler_tint: false, stars: true, starLabels: true, forces: false,
+    comms: true, doppler_tint: false, stars: true, starLabels: true,
+    constellations: false, forces: false,
   };
   private hidden = new Set<string>();
   private listeners = new Set<() => void>();

@@ -17,10 +17,12 @@
  */
 
 import * as THREE from "three";
-import { STARS, STAR_BY_ID, starPosition, LIGHT_YEAR, type StarDef } from "../core/stars.ts";
+import { STARS, STAR_BY_ID, BACKDROP_STARS, starPosition, LIGHT_YEAR, type StarDef } from "../core/stars.ts";
 import { type WorldState } from "../core/world.ts";
 import { shipWorldState, shipTelemetryDoppler } from "../core/ships.ts";
 import { spectralColor, makeStarTexture } from "./starViews.ts";
+import { SkyBackdrop } from "./skyBackdrop.ts";
+import { ConstellationLines } from "./constellationLines.ts";
 import { makeGlowTexture } from "./bodyTextures.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
@@ -32,6 +34,10 @@ import { overlayPalette, dopplerTint } from "./overlayUtil.ts";
 export const UNITS_PER_LY = 40;
 /** Metres per render unit at interstellar scale (the bridge, like SCENE_SCALE). */
 export const INTERSTELLAR_M_PER_UNIT = LIGHT_YEAR / UNITS_PER_LY;
+/** Radius of the distant-star backdrop shell, in render units. Far beyond the
+ *  navigable systems (~26 ly ≈ 1040 units) and the camera's maxDistance (5000), so
+ *  it always sits "outside" and reads as a fixed sky; well inside the far plane (1e9). */
+export const INTERSTELLAR_SKY_RADIUS = 2e5;
 
 const COAST_COLOR = 0x6fe0ff;
 const THRUST_COLOR = 0xff8a30;
@@ -59,6 +65,8 @@ export class InterstellarView {
   private tintBase = new THREE.Color(); // reused scratch — no per-frame alloc
   private tintEnd = new THREE.Color();
   private labelLayer: HTMLElement;
+  private backdrop: SkyBackdrop;
+  private constellations: ConstellationLines;
 
   constructor(private sm: SceneManager, uiRoot: HTMLElement, private vis: Visibility) {
     this.sm.scene.add(this.root);
@@ -70,6 +78,10 @@ export class InterstellarView {
     for (const s of STARS) this.buildStar(s);
     this.solLabel = this.makeLabel("Sol", "interstellar-label sol");
     this.root.visible = false;
+    // The unreachable distant stars as a camera-anchored sky shell (NOT in `root`,
+    // so it never zooms/parallaxes while the near systems in `root` do).
+    this.backdrop = new SkyBackdrop(this.sm, uiRoot, BACKDROP_STARS, INTERSTELLAR_SKY_RADIUS, "interstellar-label backdrop");
+    this.constellations = new ConstellationLines(this.sm, INTERSTELLAR_SKY_RADIUS);
   }
 
   /** Sol sits at the origin: a warm point with a soft corona, the one place every
@@ -125,6 +137,8 @@ export class InterstellarView {
   update(world: WorldState, t: number): void {
     const active = this.sm.viewMode === "interstellar";
     this.root.visible = active;
+    this.backdrop.update(active && this.vis.layer("stars"), active && this.vis.layer("starLabels"));
+    this.constellations.update(active && this.vis.layer("constellations"));
     if (!active) {
       this.hideLabels();
       return;

@@ -1020,6 +1020,20 @@ button.danger:hover {
   color: #8fe6ff;
 }
 
+/* Distant backdrop stars (Betelgeuse, Rigel, …): dimmer and smaller than the
+   nearby/navigable stars, and theme-aware (var(--label-star)) so they stay legible
+   on the light background where the base .star-label colour is too pale. */
+.star-label.backdrop {
+  font-size: 8px;
+  opacity: 0.55;
+  color: var(--label-star);
+}
+.interstellar-label.backdrop {
+  font-size: 9px;
+  opacity: 0.6;
+  color: var(--label-star);
+}
+
 /* Two-state map switch (in-system orrery ⇄ interstellar neighbourhood), nested
    in the top-right cluster. */
 .view-switch {
