@@ -20,6 +20,7 @@ import { period as orbitalPeriod } from "../core/math/kepler.ts";
 import { length, distance } from "../core/math/vec3.ts";
 import { formatDate } from "../core/time.ts";
 import { el, button, kv } from "./dom.ts";
+import { markTerm } from "./tooltip.ts";
 import { popover, type Popover } from "./popover.ts";
 import { getFlag, setFlag } from "./uiState.ts";
 
@@ -61,6 +62,7 @@ const LAYER_CHIPS: { key: LayerKey; label: string }[] = [
   { key: "starLabels", label: "Star names" },
   { key: "ships", label: "Ships" },
   { key: "comms", label: "Comms" },
+  { key: "doppler_tint", label: "Doppler" },
   { key: "forces", label: "Forces" },
 ];
 
@@ -335,6 +337,7 @@ export class Hud {
     for (const { key, label } of LAYER_CHIPS) {
       const chip = button(label, () => this.vis.toggleLayer(key));
       chip.classList.add("layer-chip");
+      markTerm(chip, label, { decorate: false }); // glossary hover for any defined chip
       this.layerChips.set(key, chip);
       row.appendChild(chip);
     }
