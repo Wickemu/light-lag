@@ -24,6 +24,10 @@ import {
   planSpiral,
   deleteShip,
   shipSurfaceParams,
+  dockCandidates,
+  transferPropellant,
+  assembleShips,
+  shipPropStatus,
 } from "../app/commands.ts";
 import {
   ascentBudget,
@@ -113,6 +117,17 @@ export class ShipPanel {
   private electricEl!: HTMLElement;
   private spiralAltInput!: HTMLInputElement;
   private spiralBtn!: HTMLButtonElement;
+  private dockEl!: HTMLElement;
+  private dockReadout!: HTMLElement;
+  private dockSelect!: HTMLSelectElement;
+  private dockAmountInput!: HTMLInputElement;
+  private sendBtn!: HTMLButtonElement;
+  private receiveBtn!: HTMLButtonElement;
+  private assembleBtn!: HTMLButtonElement;
+  /** The currently-chosen dock partner, kept across per-frame refreshes. */
+  private dockPartnerId: string | null = null;
+  /** Signature of the last candidate set, so the <select> is rebuilt only on change. */
+  private lastDockSig = "";
   private designerSection!: Collapsible;
   private fleetSection!: Collapsible;
   /** Collapse the designer once, the first time a ship is selected, to surface
@@ -272,6 +287,34 @@ export class ShipPanel {
     elRow.append(el("span", "dv-label", "to (km)"), this.spiralAltInput, this.spiralBtn);
     this.electricEl.appendChild(elRow);
     flt.appendChild(this.electricEl);
+
+    // Dock / transfer — propellant transfer and in-orbit assembly between two
+    // docked craft (shown only when another free-coasting ship is at rendezvous in
+    // the same SOI). The receiver's m₀ — and so its Δv — rises by exactly what the
+    // donor gives; assembly stacks two vehicles into one.
+    this.dockEl = el("div", "surface-ops");
+    this.dockEl.appendChild(sectionLabel("DOCK / TRANSFER"));
+    this.dockReadout = el("div", "surface-readout");
+    this.dockEl.appendChild(this.dockReadout);
+    this.dockSelect = document.createElement("select");
+    this.dockSelect.className = "preset-sel";
+    this.dockSelect.onchange = () => { this.dockPartnerId = this.dockSelect.value || null; };
+    this.dockEl.appendChild(this.dockSelect);
+    const dockRow = el("div", "dv-row");
+    this.dockAmountInput = document.createElement("input");
+    this.dockAmountInput.type = "number";
+    this.dockAmountInput.placeholder = "max";
+    this.dockAmountInput.min = "0";
+    this.dockAmountInput.className = "dv-input";
+    this.receiveBtn = button("⛽ Receive", () => this.doTransfer("receive"));
+    this.sendBtn = button("⛽ Send", () => this.doTransfer("send"));
+    dockRow.append(el("span", "dv-label", "prop (t)"), this.dockAmountInput, this.receiveBtn, this.sendBtn);
+    this.dockEl.appendChild(dockRow);
+    this.assembleBtn = button("⊕ Assemble (merge)", () => this.doAssemble());
+    this.assembleBtn.className = "wide-btn";
+    this.assembleBtn.title = "Dock-merge the selected ship into this one — its stages and payload join this vehicle and it is consumed. In-orbit construction; cannot be undone.";
+    this.dockEl.appendChild(this.assembleBtn);
+    flt.appendChild(this.dockEl);
 
     this.flightEl.appendChild(flightSection.root);
 
@@ -682,7 +725,80 @@ export class ShipPanel {
     }
 
     this.updateSurfaceOps(ship);
+    this.updateDocking(ship);
     this.readoutEl.innerHTML = lines.join("");
+  }
+
+  /** Propellant-transfer / assembly controls for the selected ship, shown only when
+   *  another free-coasting ship is docked with it (same SOI, at rendezvous). Donor →
+   *  receiver raises the receiver's m₀ → Δv; Assemble merges the partner into this ship. */
+  private updateDocking(ship: Ship): void {
+    const candidates = dockCandidates(this.sim, ship.id);
+    if (candidates.length === 0) {
+      this.dockEl.style.display = "none";
+      this.dockPartnerId = null;
+      this.lastDockSig = "";
+      return;
+    }
+    this.dockEl.style.display = "block";
+
+    // Rebuild the partner <select> only when the candidate set actually changes, so
+    // a per-frame refresh doesn't fight the user's selection.
+    const sig = candidates.map((c) => c.id).join(",");
+    if (sig !== this.lastDockSig) {
+      this.lastDockSig = sig;
+      this.dockSelect.innerHTML = "";
+      for (const c of candidates) {
+        const opt = document.createElement("option");
+        opt.value = c.id;
+        opt.textContent = c.name;
+        this.dockSelect.appendChild(opt);
+      }
+    }
+    if (!this.dockPartnerId || !candidates.some((c) => c.id === this.dockPartnerId)) {
+      this.dockPartnerId = candidates[0]!.id;
+    }
+    this.dockSelect.value = this.dockPartnerId;
+
+    const partner = candidates.find((c) => c.id === this.dockPartnerId)!;
+    const me = shipPropStatus(this.sim, ship.id)!;
+    const them = shipPropStatus(this.sim, partner.id)!;
+    this.dockReadout.innerHTML =
+      kv("Docked with", `${partner.name} · ${partner.distance.toFixed(0)} m, ${partner.relSpeed.toFixed(2)} m/s`) +
+      kv("This ship", `prop ${(me.available / 1000).toFixed(1)} t · room ${(me.headroom / 1000).toFixed(1)} t`) +
+      kv(partner.name, `prop ${(them.available / 1000).toFixed(1)} t · room ${(them.headroom / 1000).toFixed(1)} t`);
+
+    // Receive needs propellant on the partner and room on this ship; Send is the reverse.
+    setDisabled(this.receiveBtn, !(them.available > 1 && me.headroom > 1),
+      "Partner has no propellant to give, or this ship's tanks are full.");
+    setDisabled(this.sendBtn, !(me.available > 1 && them.headroom > 1),
+      "This ship has no propellant to give, or the partner's tanks are full.");
+  }
+
+  /** Transfer propellant between the selected ship and its dock partner. The amount
+   *  field is tonnes; blank ⇒ fill the receiver as much as the pair allows. */
+  private doTransfer(dir: "send" | "receive"): void {
+    if (!this.selectedId || !this.dockPartnerId) return;
+    const raw = this.dockAmountInput.value.trim();
+    const amountKg = raw === "" ? undefined : Math.max(0, Number(raw) * 1000) || undefined;
+    const [from, to] = dir === "send"
+      ? [this.selectedId, this.dockPartnerId]
+      : [this.dockPartnerId, this.selectedId];
+    transferPropellant(this.sim, from, to, amountKg);
+  }
+
+  /** Assemble (dock-merge) the dock partner into the selected ship — the partner is
+   *  consumed. In-orbit construction; the merged vehicle keeps this ship's identity. */
+  private doAssemble(): void {
+    if (!this.selectedId || !this.dockPartnerId) return;
+    const partnerId = this.dockPartnerId;
+    const wasFocused = this.sm.focusId === partnerId;
+    if (assembleShips(this.sim, this.selectedId, partnerId)) {
+      this.dockPartnerId = null;
+      this.lastDockSig = "";
+      if (wasFocused) this.frameShip(this.selectedId);
+      this.refreshShipList();
+    }
   }
 
   /** Landing/takeoff Δv budget for the selected ship, shown only when it is
@@ -807,6 +923,7 @@ export class ShipPanel {
       `<div class="warn">✗ ${ship.name} was destroyed — impact with ${where}.</div>`;
     this.surfaceEl.style.display = "none";
     this.electricEl.style.display = "none";
+    this.dockEl.style.display = "none";
     this.warpDepartBtn.style.display = "none";
     setDisabled(this.planBtn, true, "Ship lost.");
     setDisabled(this.interstellarBtn, true, "Ship lost.");
