@@ -209,11 +209,13 @@ describe("B4 — end-to-end Mars ledger", () => {
 describe("B5 — golden-state determinism", () => {
   // Re-baseline ONLY when a physics change legitimately moves the state, and say
   // so in the commit. A surprise change here means an unintended regression.
-  // Re-baselined: spawnShip now records each stage's tank capacity (propCapacity,
-  // = its as-built full load) for the orbital-refuelling model — a new serialized
-  // field on the scenario's spawned ships. Determinism is unchanged (chunk-invariance,
-  // round-trip, and the negative control above still hold); only the recorded value moved.
-  const GOLDEN_HASH = "0058e70b45c3ef";
+  // Re-baselined: the Mars arrival hyperbola now carries the planet's J2 SINGLE-PASS
+  // periapsis perturbation (maneuver/approach.ts, flown as an ApproachLeg and aimed by
+  // the same integrator), so the captured orbit's periapsis moves by O(km) at Mars
+  // (hundreds of km at a giant). Determinism is unchanged — chunk-invariance (one-step ≡
+  // chunked, above), the serialize round-trip, and the negative control all still hold;
+  // only the recorded physical value moved.
+  const GOLDEN_HASH = "11f2c9fc7a5876";
 
   it("the same scenario hashes identically whether run in one step or irregular chunks", () => {
     const oneStep = buildGoldenScenario((sim, tEnd) => sim.step(tEnd - sim.world.t));
