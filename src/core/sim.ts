@@ -20,12 +20,12 @@
  *    chunkings only by the per-step truncation (~sub-metre, see serialize.ts).
  */
 
-import { type WorldState, type Ship, type ShipBurn, type ShipCommand, type BurnDir } from "./world.ts";
+import { type WorldState, type Ship, type ShipBurn, type ShipCommand, type BurnDir, type BurnGoal } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius, visVivaSpeed, j2Rates } from "./orbit.ts";
 import {
-  activeStage, applyImpulsiveDv, dvRemaining, shipOsculatingElements, shipRelativeState, shipWorldState,
+  activeStage, applyImpulsiveDv, dvRemaining, primaryMu, shipOsculatingElements, shipRelativeState, shipWorldState,
   interstellarProperTime, spiralElements, buildEntryLeg, NOMINAL_ENTRY_VEHICLE,
 } from "./ships.ts";
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
@@ -38,6 +38,7 @@ import { searchMoonWindow, outboundClearsParent } from "./maneuver/moon.ts";
 import { lambert } from "./maneuver/lambert.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
 import { entryInterfaceAlt, entryInterfaceCrossing } from "./maneuver/entry.ts";
+import { solveBurnMagnitude } from "./maneuver/guidance.ts";
 import { type BodyDef, BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT, j2RefRadius } from "./constants.ts";
 import { type Vec3, add, sub, scale, normalize, length, cross, dot, addScaled } from "./math/vec3.ts";
 
@@ -779,7 +780,11 @@ export class Simulation {
   }
 
   private applyCommand(ship: Ship, command: ShipCommand): boolean {
-    if (command.type === "burn") return this.applyBurn(ship, command.dv, command.dir);
+    if (command.type === "burn") {
+      return command.goal
+        ? this.applyClosedBurn(ship, command.dv, command.dir, command.goal, command.goalPrimary)
+        : this.applyBurn(ship, command.dv, command.dir);
+    }
     return false;
   }
 
@@ -794,6 +799,45 @@ export class Simulation {
     ship.r = state.r;
     ship.v = state.v;
     ship.epoch = this.world.t; // r,v are valid now (used to extrapolate during thrust)
+    ship.mode = "thrust";
+    ship.burn = { dir, dvTarget: dv, dvDone: 0 };
+    return true;
+  }
+
+  /** Begin a CLOSED-LOOP burn: at delivery, re-derive the Δv magnitude (the
+   *  player picked `dir`) so the resulting conic meets `goal`, spending no more
+   *  than the correction cap `dvCap`. The autonomous counter-pole to the
+   *  open-loop bargain. Refused (→ NACK) if already mid-burn, in a powered/landed
+   *  leg with no osculating conic to trim, if the ship has since crossed into a
+   *  different SOI than the goal assumes, or if the goal is unreachable/already
+   *  met within the affordable budget. */
+  private applyClosedBurn(
+    ship: Ship,
+    dvCap: number,
+    dir: BurnDir,
+    goal: BurnGoal,
+    goalPrimary?: string,
+  ): boolean {
+    if (dvCap <= 0 || ship.mode === "thrust") return false;
+    // No clean osculating conic to trim against in these states.
+    if (
+      ship.interstellarLeg || ship.spiral || ship.entryLeg ||
+      ship.launchLeg || ship.descentLeg || ship.landed
+    ) {
+      return false;
+    }
+    // The goal's radii are measured about goalPrimary; if the light delay let the
+    // ship cross into a different SOI, the frame is invalid — refuse honestly.
+    if (goalPrimary && ship.primary !== goalPrimary) return false;
+    // Only ever search within what the ship can actually afford.
+    const cap = Math.min(dvCap, dvRemaining(ship));
+    if (!(cap > 0)) return false;
+    const state = shipRelativeState(ship, this.world.t);
+    const dv = solveBurnMagnitude(state.r, state.v, primaryMu(ship), dir, goal, cap);
+    if (dv === null || dv <= 1e-9) return false; // unreachable, or already at goal
+    ship.r = state.r;
+    ship.v = state.v;
+    ship.epoch = this.world.t;
     ship.mode = "thrust";
     ship.burn = { dir, dvTarget: dv, dvDone: 0 };
     return true;

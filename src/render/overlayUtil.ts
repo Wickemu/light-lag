@@ -204,6 +204,8 @@ export interface OverlayPalette {
   momentum: number; // velocity / inertia arrow
   faintOpacity: number; // secondary (Sun) gravity arrow opacity
   tailFloor: number; // comet-tail brightness floor (0..1) at the far end
+  redshift: number; // Doppler tint endpoint, receding (z > 0)
+  blueshift: number; // Doppler tint endpoint, approaching (z < 0)
 }
 // Saturated enough to read on dark #05070d.
 const DARK: OverlayPalette = {
@@ -213,6 +215,8 @@ const DARK: OverlayPalette = {
   momentum: 0x7cffb2,
   faintOpacity: 0.4,
   tailFloor: 0.12,
+  redshift: 0xff4d4d,
+  blueshift: 0x4d9bff,
 };
 // Darker hues + a higher tail floor so thin lines survive the light #dfe6ef bg.
 const LIGHT: OverlayPalette = {
@@ -222,7 +226,33 @@ const LIGHT: OverlayPalette = {
   momentum: 0x0f8a4d,
   faintOpacity: 0.55,
   tailFloor: 0.34,
+  redshift: 0xd02020,
+  blueshift: 0x1668d0,
 };
 export function overlayPalette(theme: Theme): OverlayPalette {
   return theme === "light" ? LIGHT : DARK;
+}
+
+// ── Relativistic Doppler tint ────────────────────────────────────────────────
+// Map a redshift z (signed: z>0 receding ⇒ red, z<0 approaching ⇒ blue) onto a
+// tint of a base marker colour. Log-compressed so planetary orbital Doppler
+// (z ~ 1e-6) is invisible and a β≈0.95 torchship (z ≈ 5.25) reads fully. Pure
+// and allocation-free given caller-owned scratch Colors.
+const Z_MAX = 5; // z at which the tint saturates (β ≈ 0.95)
+const Z_MIN = 1e-3; // below this the base colour is returned unchanged (dead-zone)
+const LOG_DEN = Math.log10(1 + Z_MAX);
+
+export function dopplerTint(
+  baseHex: number,
+  z: number,
+  pal: OverlayPalette,
+  scratch?: THREE.Color,
+  endpointScratch?: THREE.Color,
+): number {
+  if (!Number.isFinite(z) || Math.abs(z) < Z_MIN) return baseHex;
+  const mag = Math.min(Math.log10(1 + Math.abs(z)) / LOG_DEN, 1); // 0..1 strength
+  const base = (scratch ?? new THREE.Color()).setHex(baseHex);
+  const endpoint = (endpointScratch ?? new THREE.Color()).setHex(z > 0 ? pal.redshift : pal.blueshift);
+  base.lerp(endpoint, mag); // hue slide toward red/blue, brightness preserved
+  return base.getHex();
 }

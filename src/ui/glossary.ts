@@ -48,6 +48,24 @@ const ENTRIES: Entry[] = [
     def: "Spend Δv in a chosen direction. The order travels to the ship at the speed of light, so it only takes effect after the one-way signal delay.",
   },
   {
+    terms: ["Guidance"],
+    def: "How a burn order is governed once it arrives. Open-loop fires the exact Δv you set, wherever the light-lag delay leaves the ship. Closed-loop carries a goal and the ship trims its own Δv at delivery to hit it, within a correction budget.",
+  },
+  {
+    terms: ["Open-loop", "Open"],
+    title: "Open-loop burn",
+    def: "Fire the exact Δv you set, in the chosen direction, against whatever orbit the ship occupies when the order arrives — so it may land mis-sized. The cheap, predictable default: the light-lag bargain in its purest form.",
+  },
+  {
+    terms: ["Closed-loop", "Closed"],
+    title: "Closed-loop burn",
+    def: "The order carries a goal (a target periapsis/apoapsis, or to circularize). At delivery the ship re-derives its Δv magnitude — spending no more than the correction budget you set — to meet the goal against its own live state, or refuses (NACK) if it can't.",
+  },
+  {
+    terms: ["Circularize"],
+    def: "A closed-loop goal: trim the orbit to a circle at the ship's radius when the order arrives. Refused (NACK) if the geometry can't reach a near-circular orbit within budget — e.g. burning away from an apsis.",
+  },
+  {
     terms: ["SURFACE OPS", "Surface ops"],
     def: "Landing and takeoff Δv budgeting for the body you're orbiting — descent, ascent, aerobraking, and entry heating.",
   },
@@ -70,6 +88,11 @@ const ENTRIES: Entry[] = [
     terms: ["CAPTURE MODE"],
     title: "Capture mode",
     def: "How to arrive: brake into a low circular orbit, into a cheap loose ellipse, or aerocapture through the atmosphere.",
+  },
+  {
+    terms: ["Doppler"],
+    title: "Doppler tint",
+    def: "Tints each ship by the relativistic Doppler shift of its telemetry seen from the control node — red receding, blue approaching. Invisible at planetary speeds; deep red on a near-c torchship (it recedes the whole way out, strongest near mid-flight). Render-only; it changes nothing in the sim.",
   },
 
   // ── The rocket equation & the design ────────────────────────────────────────

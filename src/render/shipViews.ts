@@ -11,12 +11,13 @@
 
 import * as THREE from "three";
 import { type WorldState } from "../core/world.ts";
-import { shipWorldState } from "../core/ships.ts";
+import { shipWorldState, shipTelemetryDoppler } from "../core/ships.ts";
 import { STAR_BY_ID } from "../core/stars.ts";
 import { length } from "../core/math/vec3.ts";
 import { SKY_RADIUS, starDirection } from "./starViews.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
+import { overlayPalette, dopplerTint } from "./overlayUtil.ts";
 
 const COAST_COLOR = 0x6fe0ff;
 const THRUST_COLOR = 0xff8a30;
@@ -47,6 +48,8 @@ export class ShipViews {
   private dot = makeDotTexture();
   private visuals = new Map<string, ShipVisual>();
   private labelLayer: HTMLElement;
+  private tintBase = new THREE.Color(); // reused scratch — no per-frame alloc
+  private tintEnd = new THREE.Color();
 
   constructor(private sm: SceneManager, uiRoot: HTMLElement, private vis: Visibility) {
     this.labelLayer = document.createElement("div");
@@ -106,7 +109,14 @@ export class ShipViews {
       vis.marker.visible = true; // may have been parked while the layer was off
       const thrusting = ship.mode === "thrust";
       const lost = ship.status === "lost";
-      const color = lost ? LOST_COLOR : thrusting ? THRUST_COLOR : COAST_COLOR;
+      const base = lost ? LOST_COLOR : thrusting ? THRUST_COLOR : COAST_COLOR;
+      // Doppler tint (opt-in layer): red receding / blue approaching, from the
+      // control node's vantage. Render-only; invisible at planetary speeds.
+      let color = base;
+      if (!lost && this.vis.layer("doppler_tint")) {
+        const dop = shipTelemetryDoppler(ship, world.controlNode, t);
+        if (dop) color = dopplerTint(base, dop.z, overlayPalette(this.sm.theme), this.tintBase, this.tintEnd);
+      }
       (vis.marker.material as THREE.SpriteMaterial).color.setHex(color);
       // Enlarge the focused ship's marker so it stands out among the bodies.
       vis.marker.scale.setScalar(this.sm.focusId === ship.id ? 0.018 * 1.6 : 0.018);

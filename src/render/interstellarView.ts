@@ -19,11 +19,12 @@
 import * as THREE from "three";
 import { STARS, STAR_BY_ID, starPosition, LIGHT_YEAR, type StarDef } from "../core/stars.ts";
 import { type WorldState } from "../core/world.ts";
-import { shipWorldState } from "../core/ships.ts";
+import { shipWorldState, shipTelemetryDoppler } from "../core/ships.ts";
 import { spectralColor, makeStarTexture } from "./starViews.ts";
 import { makeGlowTexture } from "./bodyTextures.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
+import { overlayPalette, dopplerTint } from "./overlayUtil.ts";
 
 /** Render units per light-year. 1 ly = 40 units puts the farthest system (~12 ly)
  *  at ~480 units — a comfortable framing distance, well inside float32 and the
@@ -55,6 +56,8 @@ export class InterstellarView {
   private sol!: THREE.Sprite;
   private solLabel: HTMLElement;
   private ships = new Map<string, ShipVisual>();
+  private tintBase = new THREE.Color(); // reused scratch — no per-frame alloc
+  private tintEnd = new THREE.Color();
   private labelLayer: HTMLElement;
 
   constructor(private sm: SceneManager, uiRoot: HTMLElement, private vis: Visibility) {
@@ -165,8 +168,17 @@ export class InterstellarView {
         // Mark it as thrusting throughout; ▲ while accelerating, ▼ after the flip
         // at the leg's midpoint.
         const accelerating = t < (leg.tDepart + leg.tArrive) / 2;
-        (vis.marker.material as THREE.SpriteMaterial).color.setHex(THRUST_COLOR);
-        (vis.path.material as THREE.LineBasicMaterial).color.setHex(THRUST_COLOR);
+        // Doppler tint (opt-in): a near-c torchship reddens hard — it recedes from
+        // the control node the whole leg (even decelerating after the flip it is
+        // still outbound), so the shift stays red, deepest near mid-flight where β
+        // peaks. (Blue would need a ship moving toward the control node.)
+        let shipColor = THRUST_COLOR;
+        if (this.vis.layer("doppler_tint")) {
+          const dop = shipTelemetryDoppler(ship, world.controlNode, t);
+          if (dop) shipColor = dopplerTint(THRUST_COLOR, dop.z, overlayPalette(this.sm.theme), this.tintBase, this.tintEnd);
+        }
+        (vis.marker.material as THREE.SpriteMaterial).color.setHex(shipColor);
+        (vis.path.material as THREE.LineBasicMaterial).color.setHex(shipColor);
 
         // Marker at the ship's true heliocentric position, scaled.
         this.toUnits(shipWorldState(ship, t).r, tmp);

@@ -250,8 +250,39 @@ export interface Maneuver {
   executed: boolean;
 }
 
-/** A command a control node sends to a ship (delivered at light-lag). */
-export type ShipCommand = { type: "burn"; dv: number; dir: BurnDir };
+/**
+ * The orbital goal a CLOSED-LOOP burn command carries. At delivery the ship
+ * trims its Δv MAGNITUDE (the player still picks `dir`) so the resulting
+ * osculating conic meets this goal — within the command's correction budget.
+ * Radii are measured about the ship's primary at delivery (SI metres); the UI
+ * converts an altitude to a radius using that primary's surface radius.
+ */
+export type BurnGoal =
+  | { kind: "periapsis"; rTarget: number } // target periapsis radius (m)
+  | { kind: "apoapsis"; rTarget: number } // target apoapsis radius (m)
+  | { kind: "circular" } // circularize at the delivery radius
+  | { kind: "sma"; aTarget: number }; // target semi-major axis (m)
+
+/**
+ * A command a control node sends to a ship (delivered at light-lag).
+ *
+ * Open-loop (no `goal`): `dv` is the exact engine Δv to deliver — today's
+ * behavior, the cheap default. The burn fires that magnitude against whatever
+ * live state the ship occupies at delivery (it may land mis-sized: the light-lag
+ * bargain).
+ *
+ * Closed-loop (`goal` present): `dv` is reinterpreted as the correction CAP — the
+ * most the ship may spend trimming to hit `goal`. `goalPrimary` is the primary
+ * the goal's radii are measured about; if the ship has since crossed into a
+ * different SOI the order is refused (NACK).
+ */
+export type ShipCommand = {
+  type: "burn";
+  dv: number;
+  dir: BurnDir;
+  goal?: BurnGoal;
+  goalPrimary?: string;
+};
 
 /** A signal propagating at c — a command outbound, or telemetry/ack inbound. */
 export interface MessageInFlight {
