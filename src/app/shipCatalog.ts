@@ -120,17 +120,21 @@ export const SHIP_PRESETS: ShipPreset[] = [
     role: "launcher",
     era: "1967–1973",
     blurb:
-      "The Apollo Moon rocket. Three serial stages pushing a ~45 t lunar payload; first stage at a trajectory-averaged Isp. Fly it off the pad (or express to LEO) and the S-IC/S-II are expended in the climb — what reaches orbit is the S-IVB + Apollo stack, ~3 km/s of trans-lunar-injection Δv in hand.",
-    // Saturn V (Apollo Saturn V Flight Manual / NASA SP-4029). S-IVB doubles as
-    // the trans-lunar injection stage.
+      "The Apollo Moon rocket. Fly it off the pad (or express to LEO) and the S-IC/S-II are expended in the climb; what reaches orbit is the propulsive Apollo stack — the S-IVB throws it to the Moon (trans-lunar injection) and the CSM's own Service Propulsion System inserts into lunar orbit (and burns home), with the Command Module + Lunar Module riding as the ~20 t inert cargo. So it carries its own ~5 km/s in orbit: enough to actually reach lunar orbit, not just LEO.",
+    // Saturn V (Apollo Saturn V Flight Manual / NASA SP-4029). The Apollo spacecraft's own
+    // propulsion is modeled explicitly: the S-IVB is the TLI stage, and the Service Module's SPS
+    // (the same engine as the apollo-csm preset) is the lunar-orbit-insertion stage — so the stack
+    // delivered to LEO flies the rest of the mission on its own Δv, instead of the spent S-IVB
+    // having to (impossibly) pay for the whole trip with the rest of the Apollo stack as dead mass.
     design: design("Saturn V", {
-      payloadMass: 45_000, // Apollo CSM+LM+adapter to TLI
+      payloadMass: 20_480, // Command Module (5.56 t) + Lunar Module (~14.85 t) — inert cargo on the CSM
       altitudeKm: 185,
       inclinationDeg: 32.5,
       stages: [
         S("S-IC", 137_000, 2_149_500, 290, 35_100e3), // 5× F-1, trajectory-avg Isp (SL 263 / vac 304)
         S("S-II", 40_100, 451_800, 421, 5_141e3), // 5× J-2, vac
-        S("S-IVB", 13_500, 107_100, 421, 1_033e3), // 1× J-2, vac (TLI burn)
+        S("S-IVB", 13_500, 107_100, 421, 1_033e3), // 1× J-2, vac — ascent finish + trans-lunar injection
+        S("CSM SPS", 6_110, 18_410, 314, 91_200), // Service Module engine — lunar-orbit insertion (+ trans-Earth return)
       ],
     }),
   },
