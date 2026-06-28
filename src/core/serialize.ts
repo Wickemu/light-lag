@@ -29,7 +29,7 @@ import {
   type WorldState, type Ship, type Station, type Maneuver,
   type MessageInFlight, type ShipBurn, type ShipTransfer, type ShipCommand, type BurnGoal,
   type InterstellarLeg, type SpiralLeg, type EntryLeg,
-  type LaunchLeg, type DescentLeg, type PoweredSample,
+  type LaunchLeg, type DescentLeg, type PoweredSample, type ApproachLeg,
 } from "./world.ts";
 import { type Stage, type Booster } from "./propulsion.ts";
 import { type Vec3 } from "./math/vec3.ts";
@@ -134,6 +134,14 @@ function qPoweredLeg(l: LaunchLeg | DescentLeg) {
   };
 }
 
+function qApproachLeg(l: ApproachLeg) {
+  return {
+    bodyId: l.bodyId, tStart: q(l.tStart), tEnd: q(l.tEnd), r0: qv(l.r0), v0: qv(l.v0),
+    samples: l.samples.map((s) => ({ t: q(s.t), r: qv(s.r), v: qv(s.v) })),
+    exitR: qv(l.exitR), exitV: qv(l.exitV),
+  };
+}
+
 function qShip(s: Ship): Record<string, unknown> {
   // Build in a FIXED field order; omit absent optionals entirely so two ships in
   // the same logical state serialize identically.
@@ -152,6 +160,7 @@ function qShip(s: Ship): Record<string, unknown> {
   if (s.entryLeg) o.entryLeg = qEntryLeg(s.entryLeg);
   if (s.launchLeg) o.launchLeg = qPoweredLeg(s.launchLeg);
   if (s.descentLeg) o.descentLeg = qPoweredLeg(s.descentLeg);
+  if (s.approachLeg) o.approachLeg = qApproachLeg(s.approachLeg);
   if (s.landed) o.landed = { bodyId: s.landed.bodyId, surfaceDir: qv(s.landed.surfaceDir) };
   if (s.status) o.status = s.status;
   o.stages = s.stages.map(qStage);

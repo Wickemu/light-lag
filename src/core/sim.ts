@@ -26,7 +26,7 @@ import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius, visVivaSpeed, j2Rates } from "./orbit.ts";
 import {
   activeStage, applyImpulsiveDv, dvRemaining, primaryMu, shipOsculatingElements, shipRelativeState, shipWorldState,
-  interstellarProperTime, spiralElements, buildEntryLeg, inertialDirToSurface, NOMINAL_ENTRY_VEHICLE,
+  interstellarProperTime, spiralElements, buildEntryLeg, buildApproachLeg, inertialDirToSurface, NOMINAL_ENTRY_VEHICLE,
 } from "./ships.ts";
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
@@ -1225,6 +1225,19 @@ export class Simulation {
       // propulsive capture so the arrival still completes.
     }
 
+    // An OBLATE body bends the inbound hyperbola enough (hundreds of km of periapsis at a
+    // giant) that the periapsis a capture actually reaches differs from the two-body a(1−e).
+    // Secular J2 is identically zero on a hyperbola, so fly the J2-perturbed approach as a
+    // once-sampled read-time leg (the SAME j2Approach the arrival aim uses ⇒ the flown
+    // periapsis matches the planned one). Capture fires at the perturbed periapsis instant.
+    // A spherical body (no J2) returns null and stays a pure-Kepler coast.
+    const approach = buildApproachLeg(target, rRel, vRel, t);
+    if (approach) {
+      ship.approachLeg = approach;
+      this.events.push({ t: approach.tEnd, kind: "capture", entityId: ship.id });
+      return;
+    }
+
     // Schedule the capture at periapsis (time-to-periapsis = −M/n for M < 0).
     const n = meanMotion(el.a, target.mu);
     const tPeri = t + -el.M / n;
@@ -1312,6 +1325,7 @@ export class Simulation {
     ship.elements = stateToElements(st.r, targetV, body.mu);
     ship.epoch = t;
     ship.mode = "coast";
+    ship.approachLeg = undefined; // the J2 approach ends at this periapsis; coast the bound orbit now
     tr.arrived = true;
     tr.dvArrive = captureDv;
     this.maybeChainMoonLeg(ship, tr);

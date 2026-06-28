@@ -157,6 +157,29 @@ export interface DescentLeg {
   exitV: Vec3; // pinned landed-site velocity at tEnd (m/s, surface co-rotation)
 }
 
+/**
+ * An in-progress in-sim J2-perturbed PLANETARY APPROACH — the inbound hyperbolic arc
+ * from SOI entry to periapsis at an OBLATE body, integrated under the body's J2 zonal
+ * term referenced to its spin pole (see maneuver/approach.ts). Unlike a spherical
+ * arrival (a pure-Kepler conic the sim coasts), an oblate giant bends the pass enough
+ * to move the periapsis a capture targets by hundreds of km, in a way the secular J2
+ * model (bound-only, zero on a hyperbola) cannot express — so the arc is integrated
+ * ONCE at SOI entry and carried as a read-time leg (the LaunchLeg/EntryLeg pattern): a
+ * 3D sample spline plus the pinned periapsis state `exitR,exitV` the capture fires at.
+ * Read-time interpolation is exact at any time-warp (chunk-invariant); the field is
+ * optional (absent from a spherical-body arrival and the golden scenario until wired).
+ * Cleared at capture. */
+export interface ApproachLeg {
+  bodyId: string;
+  tStart: number; // s since J2000 — SOI entry
+  tEnd: number; // s — periapsis (closest approach), where capture fires
+  r0: Vec3; // body-relative state at SOI entry (m)
+  v0: Vec3; // body-relative velocity at SOI entry (m/s)
+  samples: { t: number; r: Vec3; v: Vec3 }[]; // J2-perturbed arc; t relative to tStart
+  exitR: Vec3; // body-relative periapsis position (m) — the capture point
+  exitV: Vec3; // body-relative periapsis velocity (m/s)
+}
+
 /** A planned/active interplanetary transfer (Lambert leg to another body). */
 export interface ShipTransfer {
   targetId: string;
@@ -228,6 +251,11 @@ export interface Ship {
    *  cleared at tEnd). Mutually exclusive with `landed` — the leg owns the ship's state
    *  until the `land-arrive` finalize marks it landed. */
   descentLeg?: DescentLeg;
+  /** An in-progress in-sim J2-perturbed approach to an OBLATE body's periapsis (the
+   *  inbound hyperbola integrated under J2; the leg owns the ship's state from SOI entry
+   *  until the capture finalize). Absent at a spherical body — that arrival stays a
+   *  pure-Kepler coast. */
+  approachLeg?: ApproachLeg;
   /** Set when the ship has touched down on a body's surface (after paying the
    *  descent Δv). `surfaceDir` is the landing site as a BODY-FIXED unit vector, so
    *  the ship co-rotates with the surface (moving at surface speed, not orbital

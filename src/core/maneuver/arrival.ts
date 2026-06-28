@@ -18,6 +18,8 @@ import { lambert, type LambertSolution } from "./lambert.ts";
 import { stateToElements, elementsToState, propagate, wrapPi } from "../math/kepler.ts";
 import { bodyState, bodyStateRelative, bodyElements } from "../ephemeris.ts";
 import { soiRadius, j2Rates } from "../orbit.ts";
+import { j2Approach } from "./approach.ts";
+import { spinAxis } from "../ships.ts";
 import { type BodyDef, BODY_BY_ID, MU_SUN, j2RefRadius } from "../constants.ts";
 
 export interface AimResult {
@@ -81,8 +83,15 @@ export function aimArrival(
     const tSoi = hi;
     const sh = elementsToState(propagate(shipEl, MU_SUN, tSoi - tDepart), MU_SUN);
     const tg = bodyState(target, tSoi);
-    const el = stateToElements(sub(sh.r, tg.r), sub(sh.v, tg.v), target.mu);
-    return { peri: el.a * (1 - el.e), sol, tSoi, vInf: length(sub(sh.v, tg.v)) };
+    const rRel = sub(sh.r, tg.r), vRel = sub(sh.v, tg.v);
+    // Aim at the periapsis the FLIGHT actually reaches. At an OBLATE body the inbound
+    // hyperbola is J2-perturbed (hundreds of km at a giant); integrate the SAME j2Approach
+    // buildApproachLeg flies so the planned periapsis equals the flown one (the aim-must-
+    // match-flight rule). A spherical body keeps the two-body periapsis a(1−e).
+    const peri = target.J2
+      ? j2Approach({ mu: target.mu, J2: target.J2, Req: j2RefRadius(target), pole: spinAxis(target), r0: rRel, v0: vRel }).periR
+      : (() => { const el = stateToElements(rRel, vRel, target.mu); return el.a * (1 - el.e); })();
+    return { peri, sol, tSoi, vInf: length(vRel) };
   };
 
   // Bisection on the offset: periapsis grows with d.
