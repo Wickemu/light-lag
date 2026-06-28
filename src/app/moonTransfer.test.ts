@@ -87,6 +87,39 @@ describe("intra-system (moon) transfers", () => {
     expect(hashWorld(deserializeWorld(ser))).toBe(hashWorld(sim.world));
   });
 
+  it("never picks a window whose outbound conic dives into Earth (no departure crash)", () => {
+    // Regression: a moon transfer is flown about Earth, and an injection solved only against the
+    // moon-relative arrival could — for an unfavourable parking-orbit phase — put the Earth-relative
+    // outbound conic's periapsis BELOW Earth's surface, so the ship flew straight into Earth at
+    // departure. searchMoonWindow must now reject those, picking only windows that clear the surface.
+    // This 400 km / 28.5° parking orbit is exactly the geometry that used to crash (Falcon-Heavy-class).
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, design());
+    const ship = sim.world.ships.get(id)!;
+    ship.primary = "earth";
+    ship.elements = circularOrbit(EARTH.radius + 400e3, 28.5 * (Math.PI / 180), 0, 0);
+    ship.epoch = sim.world.t;
+
+    const win = searchMoonWindow("earth", "moon", 0, (t) => shipRelativeState(ship, t), shipOsculatingElements(ship, 0).a)!;
+    expect(win).not.toBeNull();
+
+    const plan = planMoonTransfer(sim, id, "moon", win.tDepart, win.tArrive);
+    expect(plan).not.toBeNull();
+
+    // Just after departure the ship is on the outbound conic — its Earth-relative periapsis must
+    // clear the surface (else the sim's impact guard destroys it).
+    sim.step(win.tDepart + 60 - sim.world.t);
+    const elOut = shipOsculatingElements(ship, sim.world.t);
+    expect(ship.status ?? "ok").toBe("ok");
+    expect(elOut.a * (1 - elOut.e)).toBeGreaterThanOrEqual(EARTH.radius);
+
+    // And it completes the transfer: captured at the Moon, never lost.
+    sim.step(win.tArrive + 3 * DAY - sim.world.t);
+    expect(ship.status ?? "ok").toBe("ok");
+    expect(ship.primary).toBe("moon");
+    expect(ship.transfer!.arrived).toBe(true);
+  });
+
   it("rejects a moon whose parent isn't the ship's current primary", () => {
     const sim = new Simulation(createWorld(1, 0));
     const id = leoShip(sim); // at Earth
