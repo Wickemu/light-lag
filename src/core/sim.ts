@@ -949,6 +949,12 @@ export class Simulation {
     const moonR = bodyStateRelative(firstMoon, first.tFlyby).r;
     const leg1 = lambert(shipDep.r, moonR, first.tFlyby - t, central.mu, true);
     if (!leg1) return; // degenerate; leave un-departed for re-planning
+    // Safety net: never fly the ship into the parent. The leg-1 Lambert to the first flyby moon
+    // can — for an unfavourable parking-orbit phase — put the parent-relative outbound conic's
+    // periapsis below the surface (searchMoonTour already filters these, but a directly-specified
+    // schedule might not). Leave the transfer un-departed so it re-plans rather than committing a
+    // powered burn straight into the planet.
+    if (!outboundClearsParent(shipDep.r, leg1.v1, central.mu, central.radius)) return;
     const dv = length(sub(leg1.v1, shipDep.v));
     if (!applyImpulsiveDv(ship, dv)) return; // can't afford the injection — stay parked
 
