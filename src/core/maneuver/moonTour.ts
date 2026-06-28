@@ -139,8 +139,10 @@ function flybyLedger(
  * `flybyMoonIds` at `times[1..N]`, and captures at `targetMoonId` at `times[N+1]`. The final
  * leg is aimed with the J2-aware `aimMoonArrival` so the approach actually enters the moon's
  * SOI and the capture sits above the surface. Returns null on any degenerate leg / out-of-order
- * time / unknown body. Generalizes `assistTransfer`/`chainAssist` to the parent frame, but with
- * a direct (non-escape) departure and a moon capture.
+ * time / unknown body, or a leg-1 whose outbound conic dives below the parent's surface (a tour
+ * that would crash the ship at departure — rejected up front so a committed launch isn't doomed).
+ * Generalizes `assistTransfer`/`chainAssist` to the parent frame, but with a direct (non-escape)
+ * departure and a moon capture.
  */
 export function moonTour(
   parentId: string,
@@ -156,6 +158,10 @@ export function moonTour(
   const built = tourArcs(parent, dep.r, flybyMoons, times);
   if (!built) return null;
   const { arcs, moonR, moonV } = built;
+  // A tour whose leg-1 injection dives below the parent's surface is doomed at departure (the sim's
+  // surface-impact guard destroys the ship the instant it burns); reject it up front so a committed
+  // launch is never already lost. Same absolute surface-clearance test as the single-moon transfer.
+  if (!outboundClearsParent(dep.r, arcs[0]!.v1, parent.mu, parent.radius)) return null;
   const N = flybyMoons.length;
   const tArrive = times[times.length - 1]!;
 

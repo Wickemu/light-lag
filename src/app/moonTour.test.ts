@@ -179,12 +179,13 @@ describe("intra-system moon tour — parent-surface clearance at departure", () 
     expect(ship.transfer!.arrived).toBe(true);
   });
 
-  it("aborts a directly-specified tour whose leg-1 would crash into the parent (safety net)", () => {
-    // A directly-specified schedule (not from searchMoonTour) can carry an unsafe first leg.
-    // executeMoonTourDeparture must refuse the injection and leave the transfer un-departed —
-    // re-plannable — rather than committing a powered burn straight into Jupiter. This schedule's
-    // leg-1 conic passes through Jupiter (periapsis ≈ 0); its injection (~9 km/s) is well within
-    // the ship's budget, so only the surface guard — not affordability — prevents departure.
+  it("rejects a directly-specified tour whose leg-1 would crash into the parent (no doomed launch)", () => {
+    // A directly-specified schedule (not from searchMoonTour) can carry an unsafe first leg whose
+    // outbound conic dives below Jupiter's surface. planMoonTour must reject it up front — never
+    // committing a transfer that is doomed to crash at departure — rather than leaving a launch
+    // the player has committed to already lost. This schedule's leg-1 conic passes through Jupiter
+    // (periapsis ≈ 0); its ~9 km/s injection is well within budget, so only the surface guard —
+    // not affordability — rejects it.
     const sim = new Simulation(createWorld(1, 0));
     const id = spawnShip(sim, bigDesign());
     parkLowEllipse(sim, id, 0);
@@ -196,15 +197,31 @@ describe("intra-system moon tour — parent-surface clearance at departure", () 
     // Sanity: this schedule's leg-1 outbound conic really does dive below Jupiter's surface.
     expect(leg1ClearsJupiter(sim, id, times)).toBe(false);
 
-    // planMoonTour accepts the structurally-valid schedule (it doesn't fly it)…
-    expect(planMoonTour(sim, id, ["ganymede"], "europa", times)).toBeTruthy();
-    expect(ship.transfer!.departed).toBe(false);
+    expect(planMoonTour(sim, id, ["ganymede"], "europa", times)).toBeNull();
+    expect(ship.transfer).toBeUndefined(); // nothing committed
+  });
 
-    // …but stepping past the departure epoch, the executor refuses the burn: the ship stays parked
-    // about Jupiter, un-departed and intact, instead of crashing.
+  it("safety net: the executor still refuses an unsafe tour transfer reached by other means", () => {
+    // Defense-in-depth behind planMoonTour's up-front reject: should an unsafe tour transfer arise
+    // by other means (a hand-built / deserialized transfer), executeMoonTourDeparture must still
+    // refuse the injection and leave it un-departed rather than burning into the parent. Build the
+    // transfer planMoonTour now rejects, to exercise the in-flight guard directly.
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, bigDesign());
+    parkLowEllipse(sim, id, 0);
+    const ship = sim.world.ships.get(id)!;
+
+    const tDep = 1861823, tof1 = 447311, tof2 = 225558;
+    ship.transfer = {
+      targetId: "europa", tDepart: tDep, tArrive: tDep + tof1 + tof2,
+      dvDepart: 0, dvArrive: 0, departed: false, inSoi: false, arrived: false, central: "jupiter",
+      flybys: [{ bodyId: "ganymede", tFlyby: tDep + tof1, dvBurn: 0, done: false }],
+    };
+    sim.events.push({ t: tDep, kind: "transfer-depart", entityId: id });
+
     sim.step(tDep + 5 * DAY - sim.world.t);
     expect(ship.status ?? "ok").toBe("ok");
     expect(ship.primary).toBe("jupiter");
-    expect(ship.transfer!.departed).toBe(false);
+    expect(ship.transfer!.departed).toBe(false); // refused — never burned into Jupiter
   });
 });
