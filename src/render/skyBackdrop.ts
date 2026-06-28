@@ -80,6 +80,7 @@ export class SkyBackdrop {
     stars: BackdropStar[],
     private radius: number,
     labelClass: string,
+    gainCap: number = BACKDROP_GAIN_CAP,
   ) {
     this.group.frustumCulled = false;
     this.sm.scene.add(this.group);
@@ -132,7 +133,7 @@ export class SkyBackdrop {
       if (s.appMag > PROMOTE_MAG) continue;
       const d = dirOf(s);
       const { scale, gain } = starSpriteStyle(s.appMag);
-      const g = Math.min(gain, BACKDROP_GAIN_CAP); // context, not HDR-overdriven
+      const g = Math.min(gain, gainCap); // context, not HDR-overdriven
       const c = blackbodyRGB(spectralTeff(s.spectralType));
       const mat = new THREE.SpriteMaterial({
         map: this.tex,

@@ -28,6 +28,11 @@ import { ConstellationLines } from "./constellationLines.ts";
  *  distance float32 angular jitter is sub-pixel. */
 export const SKY_RADIUS = 2e7;
 
+/** In-system sky: cap every star sprite's additive colour below the dark theme's
+ *  bloom threshold (0.85) so the stars are crisp points, never boxy bloom halos.
+ *  The interstellar view keeps its gentle glow (it isn't crowded the same way). */
+const SYSTEM_STAR_GAIN_CAP = 0.8;
+
 /** Legacy compressed-shell radius from the Sun, retained for the interstellar
  *  in-transit streak in `shipViews` until that moves to the interstellar view.
  *  Neptune sits at ~4488 units; the nearest stars start just beyond. */
@@ -156,10 +161,16 @@ export class StarViews {
     this.labelLayer = document.createElement("div");
     this.labelLayer.className = "star-label-layer";
     uiRoot.appendChild(this.labelLayer);
-    for (const s of STARS) this.build(s);
+    // One sprite per system: a multiple's components sit on the same sky pixel, so
+    // rendering each (additively) stacked their brightness back over the bloom
+    // threshold and boxed (e.g. α Cen A+B+Proxima). The companions only ever piled
+    // on top of the primary anyway — their labels were already suppressed — so
+    // drawing just the primary is visually identical and keeps each point a crisp,
+    // sub-threshold star instead of a bloom-boxed blob.
+    for (const s of STARS) if (!s.parentId) this.build(s);
     // The distant bright stars (Betelgeuse, Rigel, the constellation-filling stars)
     // sit on the same unzoomable sky shell as the curated nearby stars.
-    this.backdrop = new SkyBackdrop(this.sm, uiRoot, BACKDROP_STARS, SKY_RADIUS, "star-label backdrop");
+    this.backdrop = new SkyBackdrop(this.sm, uiRoot, BACKDROP_STARS, SKY_RADIUS, "star-label backdrop", SYSTEM_STAR_GAIN_CAP);
     this.constellations = new ConstellationLines(this.sm, SKY_RADIUS);
   }
 
@@ -168,11 +179,13 @@ export class StarViews {
     // (more negative m) → a bigger, hotter sprite. Magnitude is already a log of
     // flux, so we map it linearly between a bright and a faint reference and floor
     // it so even the faint red/brown dwarfs stay visible as navigation targets.
-    const { scale: baseScale, gain } = starSpriteStyle(starApparentMag(def));
+    const { scale: baseScale, gain: rawGain } = starSpriteStyle(starApparentMag(def));
     const scale = baseScale * (def.parentId ? 0.82 : 1);
-    // HDR colour: the blackbody tint lifted by an intensity that rises with
-    // brightness, so the luminous primaries (Sirius, α Cen) push over 1.0 and
-    // bloom while the dwarfs stay dim.
+    // Colour from the blackbody tint, but the gain is capped below the bloom
+    // threshold so even the brightest nearby stars (Sirius, α Cen) read as crisp
+    // points rather than the boxy halos UnrealBloom produces for tiny over-bright
+    // sprites. Brightness is carried by sprite SIZE instead. (Sol still blooms.)
+    const gain = Math.min(rawGain, SYSTEM_STAR_GAIN_CAP);
     const c = blackbodyRGB(spectralTeff(def.spectralType));
     const mat = new THREE.SpriteMaterial({
       map: this.tex,
