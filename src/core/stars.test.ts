@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { STARS, STAR_BY_ID, radecToEcliptic, LIGHT_YEAR, starDistanceAU, starState, starPosition } from "./stars.ts";
+import { STARS, STAR_BY_ID, BACKDROP_STARS, radecToEcliptic, LIGHT_YEAR, starDistanceAU, starState, starPosition } from "./stars.ts";
+import { CONSTELLATION_LINES } from "./constellationLines.generated.ts";
 import { C, JULIAN_YEAR } from "./constants.ts";
 import { length, sub } from "./math/vec3.ts";
 
@@ -48,6 +49,64 @@ describe("the nearby-star catalog", () => {
   it("binary components reference a present parent", () => {
     for (const s of STARS) {
       if (s.parentId) expect(STAR_BY_ID.has(s.parentId)).toBe(true);
+    }
+  });
+
+  it("navigable additions are notable systems in (12, 26] ly", () => {
+    const additions = STARS.filter((s) => s.distanceLy > 12);
+    expect(additions.length).toBeGreaterThanOrEqual(8);
+    for (const s of additions) {
+      expect(s.distanceLy).toBeGreaterThan(12);
+      expect(s.distanceLy).toBeLessThanOrEqual(26);
+    }
+    // The user's named examples became real travel destinations.
+    for (const id of ["altair", "vega", "fomalhaut", "keid"]) {
+      expect(STAR_BY_ID.has(id)).toBe(true);
+    }
+  });
+});
+
+describe("the bright-star backdrop", () => {
+  it("has roughly the requested ~500 stars", () => {
+    expect(BACKDROP_STARS.length).toBeGreaterThanOrEqual(400);
+    expect(BACKDROP_STARS.length).toBeLessThanOrEqual(700);
+  });
+
+  it("is entirely beyond interstellar reach and within the magnitude limit", () => {
+    for (const s of BACKDROP_STARS) {
+      expect(s.distanceLy).toBeGreaterThan(25);
+      expect(s.appMag).toBeLessThanOrEqual(4.01);
+    }
+  });
+
+  it("positions reproduce the catalog distance and carry zero velocity", () => {
+    for (const s of BACKDROP_STARS) {
+      expect(length(s.pos) / LIGHT_YEAR).toBeCloseTo(s.distanceLy, 3);
+      expect(length(s.vel)).toBe(0);
+    }
+  });
+
+  it("includes the famous distant stars but never a navigable id", () => {
+    const ids = new Set(BACKDROP_STARS.map((s) => s.id));
+    for (const id of ["betelgeuse", "rigel", "arcturus", "aldebaran"]) expect(ids.has(id)).toBe(true);
+    // No id collision between the navigable catalog and the backdrop.
+    for (const id of STAR_BY_ID.keys()) expect(ids.has(id)).toBe(false);
+  });
+});
+
+describe("constellation figures", () => {
+  it("covers the sky with valid unit-direction polylines", () => {
+    expect(CONSTELLATION_LINES.length).toBeGreaterThanOrEqual(80);
+    for (const fig of CONSTELLATION_LINES) {
+      expect(fig.polylines.length).toBeGreaterThan(0);
+      for (const poly of fig.polylines) {
+        expect(poly.length % 3).toBe(0);
+        expect(poly.length).toBeGreaterThanOrEqual(6); // ≥ 2 points = ≥ 1 segment
+        for (let i = 0; i < poly.length; i += 3) {
+          const r = Math.hypot(poly[i]!, poly[i + 1]!, poly[i + 2]!);
+          expect(r).toBeCloseTo(1, 3); // every vertex is a unit sky direction
+        }
+      }
     }
   });
 });
