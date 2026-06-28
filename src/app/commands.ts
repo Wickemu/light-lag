@@ -701,7 +701,7 @@ export function landShip(sim: Simulation, shipId: string): SurfaceOp | null {
 /** The predicted budget of an entry pass committed by flyEntry, for the UI. */
 export interface EntryPlan {
   tStart: number; // s since J2000 — when the pass begins (the interface crossing)
-  outcome: "landed" | "captured" | "skip-out";
+  outcome: "landed" | "captured" | "skip-out" | "crashed";
   peakDecelG: number;
   peakHeatFlux: number;
   peakWallTemp: number;
@@ -713,7 +713,7 @@ export interface EntryPlan {
  * down: schedule an entry pass at the next atmospheric-interface crossing. The ship
  * keeps coasting until then; at the interface it flies a ballistic (no-propellant)
  * drag trajectory you can watch at any time-warp, ending in landed / captured /
- * skip-out. Returns the predicted budget, or null if the ship isn't a coasting ship
+ * skip-out / crashed. Returns the predicted budget, or null if the ship isn't a coasting ship
  * in an atmosphere's SOI whose orbit actually dips into the atmosphere.
  */
 export function flyEntry(sim: Simulation, shipId: string): EntryPlan | null {

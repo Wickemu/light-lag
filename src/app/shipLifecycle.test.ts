@@ -73,6 +73,33 @@ describe("surface impact — ships crash and are lost (#6)", () => {
     expect(hashWorld(small.world)).toBe(hashWorld(big.world));
   });
 
+  it("a ship thrusting INTO the surface is destroyed mid-burn (not only on the next coast)", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+    const R = EARTH.radius;
+    // Poised just above the surface (apoapsis 10 km up) on a plunging arc, then a hard
+    // radial-IN burn drives it straight down through the surface. It meets the ground
+    // ~30 s in, long before this large burn (well within the ship's Δv budget) could
+    // finish — so the loss can only come from the in-burn surface check, since the
+    // coast-only impactTime never runs while thrusting.
+    const ra = R + 10e3, rp = R - 1000e3;
+    ship.elements = { a: (ra + rp) / 2, e: (ra - rp) / (ra + rp), i: 0, Omega: 0, omega: 0, M: Math.PI + 0.05 };
+    ship.epoch = 0;
+    sendBurn(sim, id, 5000, "radial-in"); // within the ~7.85 km/s budget, so not NACKed
+
+    // Step a window far shorter than a 5 km/s burn takes; while it lasts the ship is
+    // continuously thrusting, so being lost here proves the powered-impact path.
+    let guard = 0;
+    while (ship.status === undefined && guard++ < 200) sim.step(1);
+    expect(guard).toBeLessThan(120); // died quickly, mid-burn — not after a long coast
+    expect(ship.status).toBe("lost");
+    expect(ship.landed?.bodyId).toBe("earth");
+    expect(ship.burn).toBeUndefined();
+    expect(ship.mode).toBe("coast");
+    expect(length(shipRelativeState(ship, sim.world.t).r) / R).toBeCloseTo(1, 1);
+  });
+
   it("a lost ship survives a serialize round-trip", () => {
     const sim = new Simulation(createWorld(1, 0));
     const id = spawnShip(sim, defaultDesign());

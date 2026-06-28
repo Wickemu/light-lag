@@ -39,7 +39,7 @@ import { lambert } from "./maneuver/lambert.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
 import { entryInterfaceAlt, entryInterfaceCrossing } from "./maneuver/entry.ts";
 import { type BodyDef, BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT, j2RefRadius } from "./constants.ts";
-import { type Vec3, add, sub, scale, normalize, length, cross } from "./math/vec3.ts";
+import { type Vec3, add, sub, scale, normalize, length, cross, dot, addScaled } from "./math/vec3.ts";
 
 /** Sub-step grid spacing during powered flight (s). LEO period is ~5500 s, so a
  *  2 s grid keeps RK4 trajectory error negligible. */
@@ -345,9 +345,14 @@ export class Simulation {
       };
 
       const y0 = [ship.r.x, ship.r.y, ship.r.z, ship.v.x, ship.v.y, ship.v.z, stage.propMass];
+      const r0: Vec3 = { x: ship.r.x, y: ship.r.y, z: ship.r.z };
+      const v0: Vec3 = { x: ship.v.x, y: ship.v.y, z: ship.v.z };
       const y1 = rk4(y0, t0 + elapsed, seg, deriv);
       ship.r = { x: y1[0]!, y: y1[1]!, z: y1[2]! };
       ship.v = { x: y1[3]!, y: y1[4]!, z: y1[5]! };
+
+      // Flew into the primary mid-burn? Freeze the wreck and stop.
+      if (this.poweredImpact(ship, r0, v0, ship.r, ship.v, t0 + elapsed + seg)) return;
 
       // Propellant comes from the RK4 itself (rate −ṁ/γ): the consumed mass is the
       // integral ∫ṁ/γ dt = ṁ·Δτ_true, exact to truncation and — crucially —
@@ -514,6 +519,11 @@ export class Simulation {
     ship.r = { x: y1[0]!, y: y1[1]!, z: y1[2]! };
     ship.v = { x: y1[3]!, y: y1[4]!, z: y1[5]! };
 
+    // Flew into the primary mid-burn (boosters still firing)? Freeze the wreck and stop.
+    if (this.poweredImpact(ship, r0, v0, ship.r, ship.v, t0 + elapsed + seg)) {
+      return { elapsed, ended: true };
+    }
+
     let propAfterSum = 0;
     for (let i = 0; i < burners.length; i++) {
       const after = Math.max(y1[6 + i]!, 0);
@@ -618,6 +628,51 @@ export class Simulation {
     const Mcross = el.e * Math.sinh(F) - F;
     const dt = (-Mcross - el.M) / n;
     return dt >= 0 ? t + dt : t;
+  }
+
+  /**
+   * Surface impact DURING a powered burn. The coasting impact path (`impactTime`)
+   * fires only between burns, so a ship thrusting its vector into the primary —
+   * a botched powered descent, or a burn aimed inward — would otherwise fly clean
+   * through the body and survive until it next coasts. Called after each RK4
+   * segment integrates a new `(r1,v1)`: if the segment ended at or below the
+   * surface on a DESCENDING crossing, freeze the ship at the impact point and
+   * destroy it. A ship climbing out through the surface (a launch) has r·v ≥ 0 and
+   * is left alone. The crossing fraction is a LINEAR interpolation of the segment
+   * endpoints — the powered regime is RK4-integrated (already not chunk-invariant
+   * per docs/physics-audit.md §3.4), so an interpolated wreck site is in keeping
+   * with the regime. Returns true if the ship was crashed (caller must stop it).
+   */
+  private poweredImpact(ship: Ship, r0: Vec3, v0: Vec3, r1: Vec3, v1: Vec3, t1: number): boolean {
+    const body = BODY_BY_ID.get(ship.primary);
+    if (!body) return false;
+    const R = body.radius;
+    if (length(r1) > R) return false; // ended above the surface — fine
+    if (dot(r1, v1) >= 0) return false; // ascending through R (a launch climbing out) — not a crash
+    // Fraction α∈[0,1] along the segment chord where |r0 + α·(r1−r0)| = R, i.e. the
+    // first (entering) root of the quadratic A·α² + B·α + C = 0.
+    const d = sub(r1, r0);
+    const A = dot(d, d);
+    const B = 2 * dot(r0, d);
+    const C = dot(r0, r0) - R * R;
+    let alpha = 1; // default: the whole segment is at/under the surface
+    if (A > 1e-9) {
+      const disc = B * B - 4 * A * C;
+      if (disc >= 0) {
+        const r1Root = (-B - Math.sqrt(disc)) / (2 * A);
+        const r2Root = (-B + Math.sqrt(disc)) / (2 * A);
+        if (r1Root >= 0 && r1Root <= 1) alpha = r1Root;
+        else if (r2Root >= 0 && r2Root <= 1) alpha = r2Root;
+        else alpha = 0; // started at/under the surface
+      }
+    }
+    // Seat the impact state (still thrust-mode) so crashShip reads the impact point
+    // off shipRelativeState (the thrust branch extrapolates from epoch; dt = 0 here).
+    ship.r = addScaled(r0, d, alpha);
+    ship.v = addScaled(v0, sub(v1, v0), alpha);
+    ship.epoch = t1;
+    this.crashShip(ship, t1);
+    return true;
   }
 
   /**
@@ -1264,6 +1319,18 @@ export class Simulation {
     if (!body) { ship.entryLeg = undefined; return; }
     const t = this.world.t;
     ship.entryLeg = undefined;
+    if (leg.outcome === "crashed") {
+      // A lethal lithobraking impact (too steep / too thin an atmosphere to brake to a
+      // survivable touchdown). Seat the body-relative impact state so crashShip reads
+      // the site off the osculating conic, then destroy the ship at the surface.
+      ship.mode = "coast";
+      ship.elements = stateToElements(leg.exitR, leg.exitV, body.mu);
+      ship.r = undefined;
+      ship.v = undefined;
+      ship.epoch = t;
+      this.crashShip(ship, t);
+      return;
+    }
     if (leg.outcome === "landed") {
       // Store the touchdown site as a body-fixed direction (de-rotate by Ω·t), so the
       // ship co-rotates with the surface — identical to landShip.

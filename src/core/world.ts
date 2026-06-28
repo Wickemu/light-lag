@@ -92,7 +92,7 @@ export interface EntryLeg {
   ballisticCoef: number; // β = m/(Cd·A) (kg/m²)
   noseRadius: number; // R_n (m)
   emissivity: number; // TPS ε
-  outcome: "landed" | "captured" | "skip-out";
+  outcome: "landed" | "captured" | "skip-out" | "crashed";
   exitR: Vec3; // body-relative position at tEnd (m)
   exitV: Vec3; // body-relative velocity at tEnd (m/s)
   peakDecelG: number; // budget summary for the HUD
