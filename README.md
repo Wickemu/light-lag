@@ -92,6 +92,17 @@ flyable, to-scale 3D Solar System.
   wreck, with the flight console reporting CONTACT LOST. Ships can be **deleted** outright, and a
   planned transfer offers **Warp to departure** — jump the clock to just before a delayed departure
   instead of fast-forwarding by hand.
+- **Orbital logistics — propellant transfer & in-orbit construction**: the SpaceX-tanker / depot
+  architecture, gated on a **true rendezvous** (two craft sharing a primary, co-located in position
+  and matched in velocity — co-orbital ships qualify exactly). A **propellant transfer** moves mass
+  between docked hulls, conserving it exactly and capped at the receiver's as-built tank capacity, so
+  it raises the receiver's m₀ → Δv = vₑ·ln(m₀/m_f) and lowers the donor's — Δv is *moved*, never
+  conjured. **In-orbit assembly** dock-merges two craft into one: the added ship's stages stack on
+  top and its payload sums in (mass conserved), so you build a deep-space vehicle in orbit instead of
+  launching it whole out of a gravity well. Both are driven from the flight console's **DOCK /
+  TRANSFER** panel. (Note: every ship already *spawns* fully fuelled in LEO — launch-to-orbit is the
+  optional part — so refuelling is about topping a ship back up or aggregating propellant from
+  tankers, not paying a launch tax.)
 - **Thermal & detection** — there is no stealth in space: hull temperature (Stefan-Boltzmann),
   IR signature, and a defensible **SNR-vs-range** detection curve are live readouts. The
   detection model is the radiometer equation — a real detector noise-equivalent power,
@@ -180,8 +191,9 @@ src/
     constants.ts         physical constants + body catalog (JPL elements, μ, radii)
     ephemeris.ts         analytic body state at any t
     orbit.ts             vis-viva, maneuver frame, SOI, Oberth, J2 precession rates
-    propulsion.ts        rocket equation, staging, Δv budget, electric power law
+    propulsion.ts        rocket equation, staging, Δv budget, electric power law, tank capacity
     ships.ts             ship helpers: state, mass, Δv, thermal readout
+    refuel.ts            rendezvous-gated propellant transfer + in-orbit assembly
     surface.ts           landing/takeoff Δv: gravity-turn, atmospheres, aerobraking
     thermal.ts           Stefan-Boltzmann, solar flux, detection range
     forces.ts            force/momentum breakdown for the overlay (gravity, tidal, velocity)

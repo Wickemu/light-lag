@@ -13,6 +13,7 @@ import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/
 import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "../core/orbit.ts";
 import { hohmann } from "../core/maneuver/hohmann.ts";
 import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
+import { dockState, isDockable, transferProp, mergeStacks, shipPropAvailable, shipPropHeadroom } from "../core/refuel.ts";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "../core/maneuver/entry.ts";
 import { aimMoonArrival } from "../core/maneuver/arrival.ts";
 export { searchMoonWindow, type MoonWindow } from "../core/maneuver/moon.ts";
@@ -70,7 +71,13 @@ export function spawnShip(sim: Simulation, design: ShipDesign): string {
     payloadMass: design.payloadMass,
     // Deep-copy stages (and their boosters) so the live ship and the design
     // template don't alias — the sim mutates propMass and splices spent boosters.
-    stages: design.stages.map((s) => ({ ...s, boosters: s.boosters?.map((b) => ({ ...b })) })),
+    // Record each stage's tank capacity (= its as-built full load) so an in-orbit
+    // refuelling can later top it back up but never over-fill it.
+    stages: design.stages.map((s) => ({
+      ...s,
+      propCapacity: s.propCapacity ?? s.propMass,
+      boosters: s.boosters?.map((b) => ({ ...b })),
+    })),
     activeStage: 0,
     tau: 0,
   };
@@ -95,6 +102,95 @@ export function deleteShip(sim: Simulation, shipId: string): boolean {
   for (const [id, m] of sim.world.maneuvers) if (m.shipId === shipId) sim.world.maneuvers.delete(id);
   sim.events.removeByEntity(shipId);
   return true;
+}
+
+// ── Orbital propellant transfer & in-orbit construction ──────────────────────
+
+export interface DockCandidate {
+  id: string;
+  name: string;
+  distance: number; // m — relative range in the shared primary's frame
+  relSpeed: number; // m/s — closing speed
+}
+
+/**
+ * Ships currently DOCKED with `shipId` — sharing its primary, both free-coasting,
+ * and within rendezvous tolerance (see refuel.ts `dockState`). These are the valid
+ * partners for a propellant transfer or an assembly. Returns [] if the ship itself
+ * can't dock (lost, landed, thrusting, or committed to a leg).
+ */
+export function dockCandidates(sim: Simulation, shipId: string): DockCandidate[] {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || !isDockable(ship)) return [];
+  const out: DockCandidate[] = [];
+  for (const other of sim.world.ships.values()) {
+    if (other.id === shipId || other.primary !== ship.primary || !isDockable(other)) continue;
+    const d = dockState(ship, other, sim.world.t);
+    if (d.docked) out.push({ id: other.id, name: other.name, distance: d.distance, relSpeed: d.relSpeed });
+  }
+  return out;
+}
+
+export interface TransferResult {
+  moved: number; // kg of propellant transferred
+  donorDvAfter: number; // m/s Δv left on the donor
+  receiverDvAfter: number; // m/s Δv now available to the receiver
+}
+
+/**
+ * Transfer propellant from `fromId` to `toId` — the depot / tanker refuelling move.
+ * Both ships must share a primary, be free-coasting, and be docked (within
+ * rendezvous tolerance). `amountKg` omitted ⇒ fill the receiver as much as the donor
+ * and the receiver's tank capacity allow. Conserves mass (the donor loses exactly
+ * what the receiver gains), so it raises the receiver's m₀ → Δv and lowers the
+ * donor's. Returns what moved + both new Δv budgets, or null if the pair can't dock
+ * or nothing can move.
+ */
+export function transferPropellant(sim: Simulation, fromId: string, toId: string, amountKg?: number): TransferResult | null {
+  if (fromId === toId) return null;
+  const donor = sim.world.ships.get(fromId);
+  const receiver = sim.world.ships.get(toId);
+  if (!donor || !receiver) return null;
+  if (donor.primary !== receiver.primary || !isDockable(donor) || !isDockable(receiver)) return null;
+  if (!dockState(donor, receiver, sim.world.t).docked) return null;
+  const amount = amountKg ?? shipPropHeadroom(receiver);
+  const moved = transferProp(donor, receiver, amount);
+  if (moved <= 0) return null;
+  return { moved, donorDvAfter: dvRemaining(donor), receiverDvAfter: dvRemaining(receiver) };
+}
+
+export interface AssemblyResult {
+  dvAfter: number; // m/s Δv of the merged vehicle
+  wetMass: number; // kg total mass of the merged vehicle
+}
+
+/**
+ * Assemble (dock-merge) `addId` into `baseId` — in-orbit construction. The base keeps
+ * its identity and orbit; the added ship's remaining stages stack on top of the base's
+ * (the base fires first) and its payload adds to the base's. The added ship is consumed
+ * (deleted, with its in-flight orders/events purged). Both must share a primary, be
+ * free-coasting, and be docked. Mass is conserved — the merged wet mass is the sum of
+ * the two — and Δv is recomputed from the combined stack. Returns the merged ship's new
+ * Δv/mass, or null if the pair can't dock.
+ */
+export function assembleShips(sim: Simulation, baseId: string, addId: string): AssemblyResult | null {
+  if (baseId === addId) return null;
+  const base = sim.world.ships.get(baseId);
+  const add = sim.world.ships.get(addId);
+  if (!base || !add) return null;
+  if (base.primary !== add.primary || !isDockable(base) || !isDockable(add)) return null;
+  if (!dockState(base, add, sim.world.t).docked) return null;
+  mergeStacks(base, add);
+  deleteShip(sim, addId);
+  return { dvAfter: dvRemaining(base), wetMass: totalMass(base) };
+}
+
+/** Read-only: a ship's propellant available to give and the headroom it can accept,
+ *  for the dock/transfer UI. */
+export function shipPropStatus(sim: Simulation, shipId: string): { available: number; headroom: number } | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship) return null;
+  return { available: shipPropAvailable(ship), headroom: shipPropHeadroom(ship) };
 }
 
 /**

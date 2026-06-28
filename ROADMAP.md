@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is `src/core/` (see
-[ARCHITECTURE.md](ARCHITECTURE.md)); 575 passing physics/sim tests — including a
+[ARCHITECTURE.md](ARCHITECTURE.md)); 588 passing physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
 golden-state determinism hash.
@@ -47,7 +47,11 @@ findings fixed. **The physics core is locked.**
 
 ### Phase 7 — Mass economy · resources · depots · colonization
 - Wealth is **mass, energy, Δv, heat** — never abstract money.
-- **Propellant depots + refueling**: docking transfers propellant, raising m₀ → Δv.
+- **Propellant depots + refueling — DONE (first cut):** rendezvous-gated ship-to-ship
+  propellant transfer + in-orbit assembly (`core/refuel.ts`); docking raises m₀ → Δv,
+  mass-conserving and capacity-capped. Still to do here: persistent depot *stations*
+  (transfer is ship↔ship today), propellant boil-off, and a rendezvous-targeting planner
+  (you fly craft co-orbital by hand; identical orbits dock exactly).
 - **ISRU**: mine volatiles (water ice from comets/moons/regolith) → propellant +
   life support; everything traces back to energy.
 - A **colony/base** with supply requirements that must be resupplied within a
@@ -88,11 +92,32 @@ read-time analytic, suite green, golden hash documented if it moves.
    `interstellarView.update` drive `setFocusTarget` from the scaled ship position when one is
    selected, and surface ship selection in the HUD. Respect the view-mode isolation invariant
    (the interstellar view computes its own positions about Sol). *(Observation #2.)*
-4. **ISRU / depots (Phase 7)** — mass economy: propellant depots + refueling, ISRU from
-   moon/comet/regolith volatiles, and a colony supplied within a transfer window. *(see Phase 7.)*
+4. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
+   DONE (a first cut — `core/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
+   persistent depot stations, propellant boil-off, and a colony supplied within a transfer window.
+   *(see Phase 7.)*
 
 *(**Animated launch / landing trajectories** — candidate #3 last round — is now DONE; see the
 "Done since last round" note below.)*
+
+*(Done since last round: **orbital propellant transfer + in-orbit construction** (Phase-7 first cut) —
+the SpaceX-tanker / depot mechanic and dock-merge assembly, both gated on a TRUE RENDEZVOUS (shared
+primary + co-located in position and matched in velocity; co-orbital craft pass exactly). A new pure
+`core/refuel.ts` adds the rendezvous gate (`dockState`/`isDockable`), a mass-conserving,
+capacity-capped propellant move (`transferProp` — drains donor core stages, fills receiver stages to
+their as-built `stageCapacity`), and `mergeStacks` (the added ship's remaining stages stack atop the
+base's and its payload sums in — in-orbit construction). `Stage.propCapacity` (optional, set at spawn
+= the design's full load) records the tank ceiling so a ship can be topped back up but never
+over-filled; it serializes only when tracked. `app/commands.ts` wraps these as `dockCandidates`,
+`transferPropellant`, `assembleShips`, `shipPropStatus`, and the flight console gains a **DOCK /
+TRANSFER** section (partner list, prop/headroom readouts, Receive/Send, Assemble). Instantaneous
+local-SOI ops (like land/launch/spiral — not light-lag-routed). +13 tests (`app/refuel.test.ts`):
+capacity, the rendezvous gate, mass conservation, over-fill / overdraw caps, assembly mass+Δv,
+serialize round-trip. **Golden hash re-baselined** (`03539f9fb1ffcd` → `0058e70b45c3ef`): spawned
+ships now carry `propCapacity` — determinism is otherwise unchanged (chunk-invariance, round-trip,
+and the negative control all still pass; only the recorded value moved). Still to do: persistent
+depot *stations* (ship↔ship today), boil-off, a rendezvous-targeting planner, and a B-plane/relative
+proximity-ops nav aid.)*
 
 *(Done since last round: **animated launch / landing trajectories (no more snapping)** —
 `launchShip`/`landShip` no longer teleport the ship between the surface and its parking orbit; the

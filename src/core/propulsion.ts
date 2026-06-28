@@ -62,6 +62,12 @@ export interface Stage {
   thrust: number; // N — rated/max thrust (at full power for an electric stage)
   electric?: ElectricSource;
   boosters?: Booster[]; // strap-ons igniting with this stage (parallel staging)
+  /** Tank capacity (kg): the as-built full propellant load, the structural ceiling
+   *  an orbital REFUELLING (see refuel.ts) may fill this stage back up to. Set at
+   *  spawn (= the design's propMass); absent ⇒ the stage was never tracked, so its
+   *  capacity is taken as the current propMass (it cannot be over-filled). Burns and
+   *  staging only ever lower propMass; capacity is fixed once set. */
+  propCapacity?: number;
 }
 
 /** Effective exhaust velocity vₑ = Isp · g₀ (g₀ defines Isp; it is not gravity). */
@@ -167,6 +173,19 @@ export function variableIspBurn(
 export function boosterCount(b: Booster): number {
   const n = b.count ?? 1;
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+}
+
+/** A stage's propellant CAPACITY (kg) — the as-built full load it may be refuelled
+ *  back up to. Falls back to the current propMass when untracked, so a stage with no
+ *  recorded capacity can never be over-filled. */
+export function stageCapacity(stage: Stage): number {
+  return stage.propCapacity ?? stage.propMass;
+}
+
+/** Free tank headroom (kg) a stage can still accept on a refuelling — capacity minus
+ *  the propellant already aboard, never negative. */
+export function stageHeadroom(stage: Stage): number {
+  return Math.max(0, stageCapacity(stage) - stage.propMass);
 }
 
 /** Wet mass of one stage, including any strap-on boosters (count-aggregated). */
