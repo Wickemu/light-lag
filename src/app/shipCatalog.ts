@@ -12,15 +12,21 @@
  *    INTERSTELLAR_CRAFT at the bottom — flyable on a flip-and-burn to the nearby
  *    stars via the relativistic-propulsion layer (the old PENDING_RELATIVISTIC
  *    list is kept as a record of what was waiting).
- *  - The sim places ships directly in LEO and never simulates ascent, so two
- *    kinds of preset coexist: full LAUNCH VEHICLES (rocket-equation showcases —
- *    their lower stages are gameplay-irrelevant once you're in orbit) and
- *    IN-SPACE craft (spacecraft, upper/kick stages, deep-space probes, nuclear
- *    and electric tugs) — the things you actually fly from LEO.
+ *  - The `role` tells the sim WHERE a design starts. A LAUNCH VEHICLE (role
+ *    "launcher") stands on the Earth pad and flies the ascent to LEO — its
+ *    boost/lower stages are expended in the climb (`spawnOnPad` / `expressToOrbit`
+ *    in commands.ts), so only the surviving payload + orbital stage reaches orbit.
+ *    An IN-SPACE craft (role "in-space" — spacecraft, upper/kick stages, deep-space
+ *    probes, nuclear and electric tugs) is delivered to LEO as payload (or assembled
+ *    there), so it deploys directly into orbit with full propellant.
  *
- * Atmospheric first stages are listed at a representative sea-level-ish Isp and
- * upper/vacuum stages at vacuum Isp, so a launcher's total Δv reflects its real
- * total impulse rather than an all-vacuum overstatement. Electric craft now carry
+ * Atmospheric first stages are listed somewhere between their sea-level and vacuum Isp —
+ * usually a vacuum-weighted TRAJECTORY AVERAGE (a first stage burns most of its impulse at
+ * altitude), occasionally the plain vacuum figure (Titan's LR-87) or the sea-level figure
+ * (Super Heavy's Raptor) where that matches the engine better — and upper/vacuum stages at
+ * vacuum Isp, so a launcher's total Δv reflects its real total impulse, enough to reach its
+ * historical LEO. A pure sea-level figure for every stage understates it and would strand
+ * real launchers below orbit. Electric craft now carry
  * a real power model (E() derives rated power from thrust): their thrust derates
  * as 1/r² for solar arrays, and a low-thrust transfer is planned via the Edelbaum
  * spiral (maneuver/lowThrust.ts) rather than flown as a weeks-long stepped burn.
@@ -114,7 +120,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
     role: "launcher",
     era: "1967–1973",
     blurb:
-      "The Apollo Moon rocket. Three serial stages pushing a ~45 t lunar payload; first stage shown at sea-level Isp. A pure rocket-equation showcase — you begin in LEO, so its boost stages don't fly in-game.",
+      "The Apollo Moon rocket. Three serial stages pushing a ~45 t lunar payload; first stage at a trajectory-averaged Isp. Fly it off the pad (or express to LEO) and the S-IC/S-II are expended in the climb — what reaches orbit is the S-IVB + Apollo stack, ~3 km/s of trans-lunar-injection Δv in hand.",
     // Saturn V (Apollo Saturn V Flight Manual / NASA SP-4029). S-IVB doubles as
     // the trans-lunar injection stage.
     design: design("Saturn V", {
@@ -122,7 +128,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
       altitudeKm: 185,
       inclinationDeg: 32.5,
       stages: [
-        S("S-IC", 137_000, 2_149_500, 263, 35_100e3), // 5× F-1, SL Isp
+        S("S-IC", 137_000, 2_149_500, 290, 35_100e3), // 5× F-1, trajectory-avg Isp (SL 263 / vac 304)
         S("S-II", 40_100, 451_800, 421, 5_141e3), // 5× J-2, vac
         S("S-IVB", 13_500, 107_100, 421, 1_033e3), // 1× J-2, vac (TLI burn)
       ],
@@ -136,12 +142,14 @@ export const SHIP_PRESETS: ShipPreset[] = [
     era: "1966–1975",
     blurb:
       "Apollo's LEO workhorse (Apollo 7, Skylab crews, ASTP). S-IB booster + S-IVB upper stage; ~21 t to low orbit. Serial two-stage showcase.",
-    // S-IB: 8× H-1. S-IVB-200 variant (NASA Saturn IB data).
+    // S-IB: 8× H-1 (SL 263 / vac 289 s — first-stage Isp is the trajectory-averaged ~280 s).
+    // S-IVB-200 variant (NASA Saturn IB data). Payload is the representative Apollo/Skylab-ferry
+    // CSM-to-LEO mass (~18.6 t); the oft-quoted ~21 t is the absolute max to the lowest orbit.
     design: design("Saturn IB", {
-      payloadMass: 21_000,
+      payloadMass: 18_600,
       altitudeKm: 185,
       stages: [
-        S("S-IB", 41_600, 407_100, 289, 7_582e3), // 8× H-1, SL Isp
+        S("S-IB", 41_600, 407_100, 283, 7_582e3), // 8× H-1, trajectory-avg Isp (SL 263 / vac 289)
         S("S-IVB", 12_900, 104_300, 421, 1_000e3), // 1× J-2, vac
       ],
     }),
@@ -153,13 +161,16 @@ export const SHIP_PRESETS: ShipPreset[] = [
     role: "launcher",
     era: "1964–1966",
     blurb:
-      "The Gemini launch vehicle: a two-stage hypergolic ICBM derivative carrying a 3.8 t capsule. Storable Aerozine-50/N₂O₄ — no cryogenics, instant ignition.",
+      "The Gemini launch vehicle: a two-stage hypergolic ICBM derivative lofting a ~3.1 t capsule into a low orbit. Storable Aerozine-50/N₂O₄ — no cryogenics, instant ignition. A famously low-margin launcher (an ICBM pressed into orbital service), so it reaches LEO with almost nothing to spare.",
+    // LR-87 (SL 258 / vac ~302) and LR-91 (vac ~318) at their vacuum Isp — both stages
+    // burn almost entirely at altitude. Gemini-Titan inserted into a low ~160 km orbit.
+    // Payload is a representative lighter-Gemini mass (~3.1 t; the fleet ran ~3.1–3.85 t).
     design: design("Titan II GLV", {
-      payloadMass: 3_810,
+      payloadMass: 3_100,
       altitudeKm: 160,
       stages: [
-        S("Stage 1", 6_736, 117_910, 296, 1_913e3), // LR-87, ~vac
-        S("Stage 2", 2_719, 27_700, 316, 445e3), // LR-91, vac
+        S("Stage 1", 6_736, 117_910, 302, 1_913e3), // LR-87, vac
+        S("Stage 2", 2_719, 27_700, 318, 445e3), // LR-91, vac
       ],
     }),
   },
@@ -193,18 +204,21 @@ export const SHIP_PRESETS: ShipPreset[] = [
     era: "1966–present",
     blurb:
       "Korolev's R-7 lineage and the most-flown launcher in history. Four conical strap-on boosters (the 'Korolev cross') and the core all ignite on the pad; the boosters drop at ~2 min while the core burns on to ~5 min, then a third stage finishes the job. ~7 t to LEO.",
-    // 4× Blok B/V/G/D: RD-107A, ~838 kN SL, Isp ~263 s, ~39 t propellant, ~3.8 t dry.
-    // Core Blok A: RD-108A, ~792 kN SL, Isp ~258 s, ~90 t prop. 3rd stage Blok I: RD-0110.
+    // 4× Blok B/V/G/D: RD-107A, ~838 kN SL, Isp SL ~263 / vac ~320 s, ~39 t prop, ~3.8 t dry.
+    // Core Blok A: RD-108A, ~792 kN SL, Isp SL ~258 / vac ~321 s, ~90 t prop. 3rd: Blok I RD-0110.
+    // First-stage Isp is the TRAJECTORY-AVERAGED value (~295 s) — these engines burn most of
+    // their impulse at altitude near vacuum Isp, so a pure sea-level figure understates the real
+    // total impulse (and would leave the R-7 unable to make its own historical LEO).
     design: design("Soyuz (R-7)", {
       payloadMass: 7_200,
       altitudeKm: 200,
       inclinationDeg: 51.6,
       stages: [
         {
-          ...S("Core (Blok A)", 6_545, 90_100, 258, 792e3),
-          boosters: [B("Strap-on", 3_784, 39_160, 263, 838_500, 4)],
+          ...S("Core (Blok A)", 6_545, 90_100, 295, 792e3),
+          boosters: [B("Strap-on", 3_784, 39_160, 295, 838_500, 4)],
         },
-        S("Blok I", 2_355, 21_400, 326, 298e3), // 3rd stage, RD-0110
+        S("Blok I", 2_355, 21_400, 326, 298e3), // 3rd stage, RD-0110 (vac)
       ],
     }),
   },
@@ -337,11 +351,13 @@ export const SHIP_PRESETS: ShipPreset[] = [
     role: "launcher",
     era: "2018–present",
     blurb:
-      "Three Falcon 9 cores: two side boosters strapped to a center core, all 27 Merlins lit at liftoff. The side boosters burn out and separate first; the throttled center core flies on, then the upper stage takes over. ~63.8 t to LEO expendable. Center core shown at a representative throttle so it outlives the boosters, as it does in flight.",
+      "Three Falcon 9 cores: two side boosters strapped to a center core, all 27 Merlins lit at liftoff. The side boosters burn out and separate first; the throttled center core flies on, then the upper stage takes over. The headline ~63.8 t to LEO assumes propellant CROSSFEED (side boosters topping up the center core), which isn't modeled here (see ROADMAP) — so the payload is set to a no-crossfeed-feasible ~45 t. Center core shown at a representative throttle so it outlives the boosters, as it does in flight.",
     // Side boosters: full-thrust Falcon 9 first stages (~7.6 MN, Isp ~282 s SL).
     // Center core throttled to ~70% average so it burns longer than the boosters.
+    // Payload: without modeled crossfeed the three parallel cores carry less than the
+    // crossfeed-assumed 63.8 t headline — ~45 t reaches LEO here.
     design: design("Falcon Heavy", {
-      payloadMass: 63_800,
+      payloadMass: 45_000,
       stages: [
         {
           // Representative ascent Isp (300 s), matching the Falcon 9 preset.
@@ -383,12 +399,14 @@ export const SHIP_PRESETS: ShipPreset[] = [
     era: "2017–present",
     blurb:
       "Rocket Lab's small-sat launcher and the first orbital rocket with electric-pump-fed engines. ~300 kg to LEO from a two-stage carbon-composite airframe.",
+    // The ~300 kg headline is to the lowest LEO; a 250 km orbit gets ~250 kg, and a
+    // 500 km SSO noticeably less. Pair a representative ~250 kg with a ~250 km low orbit.
     design: design("Electron", {
-      payloadMass: 300,
-      altitudeKm: 500,
+      payloadMass: 250,
+      altitudeKm: 250,
       inclinationDeg: 45,
       stages: [
-        S("Stage 1", 950, 9_250, 311, 162e3), // 9× Rutherford
+        S("Stage 1", 950, 9_250, 337, 162e3), // 9× Rutherford (SL 311 / vac 343 → trajectory-avg)
         S("Stage 2", 250, 2_150, 343, 25_800), // 1× Rutherford Vac
       ],
     }),
@@ -674,6 +692,9 @@ export function presetToDesign(preset: ShipPreset): ShipDesign {
     // Deep-copy stages AND their boosters so editing the loaded design never
     // mutates the shared catalog entry.
     stages: d.stages.map((s) => ({ ...s, boosters: s.boosters?.map((b) => ({ ...b })) })),
+    // A launch vehicle starts on the pad and flies the ascent; an in-space craft
+    // deploys directly in LEO. (Drives the designer's launch controls.)
+    fromSurface: preset.role === "launcher",
   };
 }
 

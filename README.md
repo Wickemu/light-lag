@@ -67,6 +67,15 @@ flyable, to-scale 3D Solar System.
 - **Landing & takeoff** Δv/propellant budgeting: a calibrated gravity-turn ascent through real
   exponential atmospheres (Earth→LEO ≈ 9.3 km/s, Moon ≈ 1.9, Mars ≈ 4.0), aerobraking on
   descent, and ships that sit on the surface co-rotating with the body.
+- **Launch vehicles fly the ascent**: a preset's `role` says where it starts. A **launch
+  vehicle** (Saturn V, Falcon 9/Heavy, Shuttle, Soyuz, Ariane, Starship…) stands on the Earth
+  pad and must climb to LEO — its boost/lower stages are **expended in the ascent**, so only the
+  surviving payload + orbital stage reaches orbit (a Saturn V leaves the S-IVB + ~45 t Apollo
+  stack with ~3 km/s of trans-lunar-injection Δv in hand). Roll it out and fly the gravity turn,
+  or **express to LEO** to resolve the ascent instantly. An **in-space craft** (upper/kick stages,
+  probes, nuclear/electric tugs) is delivered to LEO as payload, so it deploys directly into orbit
+  with full propellant. The designer shows the live ascent budget and the projected orbital
+  survivor, and gates launch on it — a launcher carrying more than it can lift is told so.
 - **Atmospheric-entry heating & aerocapture**: a real ballistic entry trajectory integrated
   through the exponential atmosphere — peak deceleration (cross-checked against Allen-Eggers),
   Sutton-Graves convective stagnation heat flux, radiative-equilibrium wall temperature, and
@@ -100,9 +109,9 @@ flyable, to-scale 3D Solar System.
   conjured. **In-orbit assembly** dock-merges two craft into one: the added ship's stages stack on
   top and its payload sums in (mass conserved), so you build a deep-space vehicle in orbit instead of
   launching it whole out of a gravity well. Both are driven from the flight console's **DOCK /
-  TRANSFER** panel. (Note: every ship already *spawns* fully fuelled in LEO — launch-to-orbit is the
-  optional part — so refuelling is about topping a ship back up or aggregating propellant from
-  tankers, not paying a launch tax.)
+  TRANSFER** panel. (The natural partner to the launch model above: lift payloads/modules to LEO —
+  launchers expending their boost stages in the climb — then fuel and assemble them into a deep-space
+  vehicle in orbit.)
 - **Thermal & detection** — there is no stealth in space: hull temperature (Stefan-Boltzmann),
   IR signature, and a defensible **SNR-vs-range** detection curve are live readouts. The
   detection model is the radiometer equation — a real detector noise-equivalent power,
