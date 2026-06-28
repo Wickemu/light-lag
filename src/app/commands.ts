@@ -9,7 +9,7 @@
 
 import { type Simulation } from "../core/sim.ts";
 import { type Ship, type BurnDir, type ShipTransfer, type PoweredSample } from "../core/world.ts";
-import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/propulsion.ts";
+import { type Stage, exhaustVelocity, thrustAt, brachistochrone, stageLiftoffThrust, stageLiftoffExhaust } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "../core/orbit.ts";
 import { hohmann } from "../core/maneuver/hohmann.ts";
 import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
@@ -39,6 +39,11 @@ export interface ShipDesign {
   altitudeKm: number; // circular insertion altitude
   inclinationDeg: number;
   stages: Stage[]; // firing order, index 0 first
+  /** True for a LAUNCH VEHICLE that starts on an Earth launch pad and must fly the
+   *  ascent to LEO (its boost stages are expended in the climb — see `spawnOnPad` /
+   *  `expressToOrbit`). Absent/false ⇒ an IN-SPACE craft deployed directly in LEO with
+   *  full propellant (delivered as payload, or assembled in orbit). */
+  fromSurface?: boolean;
 }
 
 /** A reasonable two-stage chemical ship: ~7.9 km/s of Δv, T/W ≈ 1.6. */
@@ -55,24 +60,19 @@ export function defaultDesign(): ShipDesign {
   };
 }
 
-/** Place a freshly built ship into a circular orbit about Earth. Returns its id. */
-export function spawnShip(sim: Simulation, design: ShipDesign): string {
-  const earth = BODY_BY_ID.get("earth")!;
-  const radius = earth.radius + design.altitudeKm * 1000;
-  const id = `ship-${sim.world.ships.size + 1}`;
-
-  const ship: Ship = {
+/** Build the staged ship record from a design (full tanks; each stage's as-built tank
+ *  capacity recorded so a later refuelling can top it up but never over-fill it). The
+ *  caller PLACES it — on a LEO conic (`spawnShip`) or landed on a launch pad
+ *  (`spawnOnPad`). Stages (and boosters) are deep-copied so the live ship never aliases
+ *  the design template (the sim mutates propMass and splices spent boosters). */
+function buildShipRecord(id: string, design: ShipDesign, t: number): Ship {
+  return {
     id,
     name: design.name,
     primary: "earth",
     mode: "coast",
-    elements: circularOrbit(radius, design.inclinationDeg * DEG, 0, 0),
-    epoch: sim.world.t,
+    epoch: t,
     payloadMass: design.payloadMass,
-    // Deep-copy stages (and their boosters) so the live ship and the design
-    // template don't alias — the sim mutates propMass and splices spent boosters.
-    // Record each stage's tank capacity (= its as-built full load) so an in-orbit
-    // refuelling can later top it back up but never over-fill it.
     stages: design.stages.map((s) => ({
       ...s,
       propCapacity: s.propCapacity ?? s.propMass,
@@ -81,8 +81,97 @@ export function spawnShip(sim: Simulation, design: ShipDesign): string {
     activeStage: 0,
     tau: 0,
   };
+}
+
+/**
+ * Deploy a ship directly into a circular orbit about Earth, fully fuelled — the
+ * IN-SPACE case: the craft is delivered to LEO as payload (or assembled there), so
+ * its full Δv is its in-space budget. A LAUNCH VEHICLE instead stands on the pad
+ * (`spawnOnPad`) and pays the ascent. Returns its id.
+ */
+export function spawnShip(sim: Simulation, design: ShipDesign): string {
+  const earth = BODY_BY_ID.get("earth")!;
+  const radius = earth.radius + design.altitudeKm * 1000;
+  const id = `ship-${sim.world.ships.size + 1}`;
+  const ship = buildShipRecord(id, design, sim.world.t);
+  ship.elements = circularOrbit(radius, design.inclinationDeg * DEG, 0, 0);
   sim.world.ships.set(id, ship);
   return id;
+}
+
+/** Body-fixed launch-site direction at latitude φ = the design's target inclination
+ *  (the minimum inclination a pad can reach is its latitude; `launchShip` recovers it
+ *  as asin(surfaceDir.z)). Longitude is arbitrary — the body rotates under the pad — so
+ *  we seat it on the +x meridian. */
+function launchSiteDir(inclinationDeg: number): { x: number; y: number; z: number } {
+  const phi = Math.min(Math.abs(inclinationDeg), 90) * DEG;
+  return { x: Math.cos(phi), y: 0, z: Math.sin(phi) };
+}
+
+/**
+ * Stand a LAUNCH VEHICLE on the Earth launch pad (landed at a pad whose latitude is the
+ * design's target inclination, full propellant). The player then flies the ascent with
+ * `launchShip` — the gravity-turn budget expends the boost/lower stages and only the
+ * surviving stack reaches LEO. Returns its id.
+ */
+export function spawnOnPad(sim: Simulation, design: ShipDesign): string {
+  const id = `ship-${sim.world.ships.size + 1}`;
+  const ship = buildShipRecord(id, design, sim.world.t);
+  ship.landed = { bodyId: "earth", surfaceDir: launchSiteDir(design.inclinationDeg) };
+  sim.world.ships.set(id, ship);
+  return id;
+}
+
+export interface ExpressResult {
+  id: string | null; // the new ship's id, or null if it cannot reach orbit
+  op: SurfaceOp; // the ascent cost (feasible:false ⇒ the design's Δv < the ascent budget)
+}
+
+/**
+ * "Express to LEO": stand a launch vehicle on the pad and immediately resolve its
+ * ascent — charging the gravity-turn Δv, expending the boost/lower stages — and seat
+ * the surviving stack in a circular LEO parking orbit at the design's altitude. The
+ * no-flying convenience; the resulting LEO state is identical to flying the ascent
+ * (the Δv is charged up front either way). Returns the new id + the ascent cost, or
+ * `{ id: null, … }` (and spawns nothing) if the design can't reach orbit.
+ */
+export function expressToOrbit(sim: Simulation, design: ShipDesign): ExpressResult {
+  const id = spawnOnPad(sim, design);
+  const op = launchShip(sim, id, design.altitudeKm, { instant: true });
+  if (!op || !op.feasible) {
+    deleteShip(sim, id); // couldn't reach orbit — leave the world untouched
+    return { id: null, op: op ?? { dv: 0, propellant: 0, burnTime: 0, feasible: false } };
+  }
+  return { id, op };
+}
+
+export interface AscentPreview {
+  ascentDv: number; // the Earth→LEO gravity-turn budget (m/s)
+  stackDv: number; // the full ground stack's Δv (m/s)
+  reachesOrbit: boolean; // stack Δv ≥ ascent budget (and the climb converges)
+  survivorMass: number; // mass that reaches LEO after the ascent (kg)
+  survivorDv: number; // Δv left in LEO after the ascent (m/s)
+}
+
+/**
+ * Read-only projection of launching a design from the Earth pad to LEO: the ascent
+ * Δv it must pay, its full-stack Δv, whether it makes orbit, and — if so — the mass
+ * and Δv that SURVIVE into LEO once the boost stages are expended. Builds and charges
+ * a throwaway ship; mutates nothing in the world. Lets the designer show the honest
+ * ascent budget and orbital survivor for a launch vehicle. null for the Sun/gas giants.
+ */
+export function ascentPreview(design: ShipDesign): AscentPreview | null {
+  const earth = BODY_BY_ID.get("earth")!;
+  const ship = buildShipRecord("preview", design, 0); // detached — never added to the world
+  const asc = ascentBudget(earth, shipSurfaceParams(ship, earth, design.altitudeKm * 1000));
+  if (!asc) return null;
+  const stackDv = dvRemaining(ship);
+  const reachesOrbit = asc.converged && stackDv >= asc.dvTotal;
+  if (reachesOrbit) applyImpulsiveDv(ship, asc.dvTotal); // expend the ascent off the copy
+  return {
+    ascentDv: asc.dvTotal, stackDv, reachesOrbit,
+    survivorMass: totalMass(ship), survivorDv: dvRemaining(ship),
+  };
 }
 
 /**
@@ -231,7 +320,9 @@ export function planTransfer(
   captureApoAlt?: number, // propulsive only: capture into an ellipse reaching this apoapsis alt
 ): TransferPlan | null {
   const ship = sim.world.ships.get(shipId);
-  if (!ship || tArrive <= tDepart) return null;
+  // A landed ship has no parking orbit to inject from (its osculating "orbit" is the
+  // surface) — launch to LEO first. Mirrors the guard on the moon/spiral planners.
+  if (!ship || ship.landed || tArrive <= tDepart) return null;
   const depBody = BODY_BY_ID.get(ship.primary);
   const target = BODY_BY_ID.get(targetId);
   if (!depBody || !target) return null;
@@ -555,7 +646,7 @@ export function planAssist(
   captureApoAlt?: number,
 ): AssistResult | null {
   const ship = sim.world.ships.get(shipId);
-  if (!ship || tFlyby <= tDepart || tArrive <= tFlyby) return null;
+  if (!ship || ship.landed || tFlyby <= tDepart || tArrive <= tFlyby) return null; // launch to LEO first
   const depBody = BODY_BY_ID.get(ship.primary);
   const target = BODY_BY_ID.get(targetId);
   if (!depBody || !target) return null;
@@ -593,7 +684,7 @@ export function planChainAssist(
   captureApoAlt?: number,
 ): ChainAssistResult | null {
   const ship = sim.world.ships.get(shipId);
-  if (!ship || bodyIds.length < 3 || bodyIds.length !== times.length) return null;
+  if (!ship || ship.landed || bodyIds.length < 3 || bodyIds.length !== times.length) return null; // launch to LEO first
   if (bodyIds[0] !== ship.primary) return null; // the chain must start where the ship is
   const targetId = bodyIds[bodyIds.length - 1]!;
   const target = BODY_BY_ID.get(targetId);
@@ -624,9 +715,18 @@ export function planChainAssist(
  *  budget with the same numbers the land/launch commands will charge. */
 export function shipSurfaceParams(ship: Ship, body: { mu: number; radius: number }, parkingAlt: number): AscentParams {
   const stage = activeStage(ship);
-  const ve = stage ? exhaustVelocity(stage.isp) : undefined;
+  // Liftoff thrust AND exhaust velocity count every strap-on booster igniting with the
+  // core (a serial stage reduces to its own thrust/Isp exactly). Using core-only figures
+  // understates a boostered launcher's liftoff T/W — a Shuttle/Soyuz/Falcon Heavy/Ariane
+  // would read T/W < 1 and "fail" to lift off in the budget integrator.
+  // Only forward a POSITIVE exhaust velocity; a degenerate Isp≤0 stage (a corrupt save
+  // or hand-built design) would otherwise drive ṁ = T/0 = ∞ in the budget integrator. A
+  // non-positive ve falls through to ascentBudget's documented default. (The designer
+  // clamps Isp ≥ 1; this is the load-bearing engine-side guard.)
+  const veRaw = stage ? stageLiftoffExhaust(stage) : 0;
+  const ve = veRaw > 0 ? veRaw : undefined;
   const gSurf = body.mu / (body.radius * body.radius);
-  const twr = stage ? stage.thrust / (totalMass(ship) * gSurf) : 1;
+  const twr = stage ? stageLiftoffThrust(stage) / (totalMass(ship) * gSurf) : 1;
   return { parkingAlt, twr, ...(ve !== undefined ? { exhaustVelocity: ve } : {}) };
 }
 
@@ -845,7 +945,9 @@ export function flyEntry(sim: Simulation, shipId: string): EntryPlan | null {
  * before. Returns the cost, or null if the ship isn't landed. feasible:false (nothing spent)
  * if it can't afford the climb.
  */
-export function launchShip(sim: Simulation, shipId: string, altitudeKm: number): SurfaceOp | null {
+export function launchShip(
+  sim: Simulation, shipId: string, altitudeKm: number, opts: { instant?: boolean } = {},
+): SurfaceOp | null {
   const ship = sim.world.ships.get(shipId);
   if (!ship || !ship.landed) return null;
   const body = BODY_BY_ID.get(ship.landed.bodyId);
@@ -856,7 +958,12 @@ export function launchShip(sim: Simulation, shipId: string, altitudeKm: number):
   const asc = ascentBudget(body, shipSurfaceParams(ship, body, alt), samples);
   if (!asc) return null;
   const cost = surfaceManeuverCost(ship.stages.slice(ship.activeStage), ship.payloadMass, asc.dvTotal);
-  if (cost.feasible < 0 || !applyImpulsiveDv(ship, asc.dvTotal)) {
+  // A NON-CONVERGED ascent (the vehicle drag-stalled below orbital velocity within the
+  // ~16 km/s integrator cap — e.g. a thick lower atmosphere) reports a LOWER-BOUND dvTotal;
+  // it has not reached orbit, so treat it as infeasible and charge nothing. Guarding it
+  // before applyImpulsiveDv keeps launchShip in step with ascentPreview's reachesOrbit and
+  // never teleports a stalled vehicle into a parking orbit on a fictitious budget.
+  if (!asc.converged || cost.feasible < 0 || !applyImpulsiveDv(ship, asc.dvTotal)) {
     return { dv: asc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: false };
   }
   const t = sim.world.t;
@@ -865,8 +972,9 @@ export function launchShip(sim: Simulation, shipId: string, altitudeKm: number):
   const incl = Math.asin(Math.max(-1, Math.min(1, ship.landed.surfaceDir.z)));
 
   // Fly the ascent arc in-sim unless the climb is degenerate (drag-stalled, or an absurd
-  // multi-hour integration) — then fall back to the instant snap.
-  if (asc.converged && asc.burnTime > 0 && asc.burnTime < MAX_POWERED_LEG_S && samples.length >= 2) {
+  // multi-hour integration) — then fall back to the instant snap. `opts.instant` (the
+  // express-to-LEO path) always snaps: same Δv charge, no animated leg.
+  if (!opts.instant && asc.converged && asc.burnTime > 0 && asc.burnTime < MAX_POWERED_LEG_S && samples.length >= 2) {
     const liftoff = landedRelativeState(ship, t); // capture the surface state before clearing landed
     const leg = buildLaunchLeg(body, liftoff.r, liftoff.v, alt, t, asc.burnTime, samples);
     ship.launchLeg = leg;
