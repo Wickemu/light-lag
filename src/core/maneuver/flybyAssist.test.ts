@@ -4,6 +4,7 @@ import {
   impactParameter, bPlaneAim,
 } from "./flyby.ts";
 import { assistTransfer, chainAssist, searchAssist, minFlybyRadius, flybyManeuver } from "./assist.ts";
+import { entryInterfaceAlt } from "./entry.ts";
 import { BODY_BY_ID, JULIAN_YEAR } from "../constants.ts";
 import { type Vec3, length, sub, dot } from "../math/vec3.ts";
 
@@ -39,6 +40,25 @@ describe("flyby physics", () => {
   it("the max turn is the closest safe pass", () => {
     expect(maxTurnAngle(6000, JUP.mu, minFlybyRadius(JUP)))
       .toBeCloseTo(flybyTurnAngle(6000, JUP.mu, minFlybyRadius(JUP)), 9);
+  });
+
+  it("the closest safe pass is a 10% margin for airless bodies and clears any modeled atmosphere", () => {
+    // Airless ⇒ the pure 10% altitude margin.
+    for (const id of ["moon", "ceres", "europa", "ganymede", "callisto"]) {
+      const b = BODY_BY_ID.get(id)!;
+      expect(b.atmosphere).toBeUndefined();
+      expect(minFlybyRadius(b)).toBeCloseTo(b.radius * 1.1, 6);
+    }
+    // With an atmosphere ⇒ the safe pass is never below the atmospheric interface (a clean
+    // slingshot isn't braking). For every body modeled today the 10% margin already exceeds
+    // the interface, so the honest floor is a no-op and minFlybyRadius is still 1.1·radius —
+    // the assertion that would flag a future thick-atmosphere body where it no longer is.
+    for (const id of ["venus", "earth", "mars", "titan"]) {
+      const b = BODY_BY_ID.get(id)!;
+      expect(b.atmosphere).toBeDefined();
+      expect(minFlybyRadius(b)).toBeGreaterThanOrEqual(b.radius + entryInterfaceAlt(b));
+      expect(minFlybyRadius(b)).toBeCloseTo(b.radius * 1.1, 6);
+    }
   });
 });
 
