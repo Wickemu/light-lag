@@ -5,7 +5,7 @@
  * currently on — coasting or mid-burn.
  */
 
-import { type Ship, type InterstellarLeg, type EntryLeg, type LaunchLeg, type DescentLeg, type PoweredSample } from "./world.ts";
+import { type Ship, type InterstellarLeg, type EntryLeg, type LaunchLeg, type DescentLeg, type PoweredSample, type ApproachLeg } from "./world.ts";
 import { type Stage, deltaVBudget, exhaustVelocity, stageWetMass, consumeStageDv, boosterCount } from "./propulsion.ts";
 import {
   type State,
@@ -22,6 +22,7 @@ import { STAR_BY_ID, starPosition } from "./stars.ts";
 import { BODY_BY_ID, C, DEG, j2RefRadius, type BodyDef } from "./constants.ts";
 import { type Vec3, add, addScaled, sub, scale, dot, cross, normalize, length, distance } from "./math/vec3.ts";
 import { integrateEntryPlanar, entryTrajectory } from "./maneuver/entry.ts";
+import { j2Approach, approachSampleAt } from "./maneuver/approach.ts";
 import { DEFAULT_ENTRY_BETA } from "./surface.ts";
 import {
   solarFlux, hullArea, equilibriumTemp, detectionRange, minDetectablePowerW, radiatorArea,
@@ -295,6 +296,30 @@ export function poweredLegState(leg: LaunchLeg | DescentLeg, t: number): State {
   return reconstructEntry(er0, et0, body.radius, s);
 }
 
+/** Body-relative state of a ship flying an in-sim J2-perturbed approach (ApproachLeg) at
+ *  time t. Interpolates the precomputed 3D arc spline (sampled once at SOI entry); at/after
+ *  tEnd it returns the PINNED periapsis state (the capture finalize takes over). Read-time
+ *  deterministic and exact at any time-warp — the spline is fixed at commit, so the read at
+ *  t is independent of how the sim was stepped there. */
+export function approachLegState(leg: ApproachLeg, t: number): State {
+  if (t >= leg.tEnd) return { r: leg.exitR, v: leg.exitV };
+  return approachSampleAt(leg.samples, Math.max(0, t - leg.tStart));
+}
+
+/** Build a J2-perturbed approach leg from the SOI-entry state `r0,v0` (body-relative) at
+ *  `tStart`: integrate the inbound hyperbola ONCE under the body's J2 (referenced to its
+ *  spin pole) to periapsis, and carry the 3D arc spline + pinned periapsis state. Returns
+ *  null for a spherical body (no J2) — that arrival stays a pure-Kepler coast. The SAME
+ *  `j2Approach` integrator backs the arrival aim, so the flown periapsis matches the aim. */
+export function buildApproachLeg(body: BodyDef, r0: Vec3, v0: Vec3, tStart: number): ApproachLeg | null {
+  if (!body.J2) return null;
+  const res = j2Approach({ mu: body.mu, J2: body.J2, Req: j2RefRadius(body), pole: spinAxis(body), r0, v0 });
+  return {
+    bodyId: body.id, tStart, tEnd: tStart + res.tPeri, r0, v0,
+    samples: res.samples, exitR: res.peri.r, exitV: res.peri.v,
+  };
+}
+
 /** Build a complete entry leg from the interface-crossing state `r0,v0` at `tStart`:
  *  run the fine entry pass for the outcome/duration/peak budget, integrate to the
  *  terminal planar state, and reconstruct the body-relative exit state the finalize
@@ -409,6 +434,7 @@ export function shipRelativeState(ship: Ship, t: number): State {
   if (ship.descentLeg) return poweredLegState(ship.descentLeg, t);
   if (ship.landed) return landedRelativeState(ship, t);
   if (ship.entryLeg) return entryLegState(ship.entryLeg, t);
+  if (ship.approachLeg) return approachLegState(ship.approachLeg, t);
   if (ship.interstellarLeg) return interstellarLegState(ship.interstellarLeg, t);
   if (ship.spiral) return elementsToState(spiralElements(ship, t), primaryMu(ship));
   if (ship.mode === "thrust" && ship.r && ship.v) {
@@ -513,6 +539,10 @@ export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
   if (ship.spiral) return spiralElements(ship, t);
   if (ship.entryLeg) {
     const st = entryLegState(ship.entryLeg, t);
+    return stateToElements(st.r, st.v, primaryMu(ship));
+  }
+  if (ship.approachLeg) {
+    const st = approachLegState(ship.approachLeg, t);
     return stateToElements(st.r, st.v, primaryMu(ship));
   }
   const mu = primaryMu(ship);
