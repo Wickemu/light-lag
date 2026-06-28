@@ -37,6 +37,7 @@ import { aimArrival, aimMoonArrival } from "./maneuver/arrival.ts";
 import { searchMoonWindow, outboundClearsParent } from "./maneuver/moon.ts";
 import { lambert } from "./maneuver/lambert.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
+import { impactParameter } from "./maneuver/flyby.ts";
 import { entryInterfaceAlt, entryInterfaceCrossing } from "./maneuver/entry.ts";
 import { solveBurnMagnitude } from "./maneuver/guidance.ts";
 import { type BodyDef, BODY_BY_ID, MU_SUN, DEFAULT_CAPTURE_ALT, j2RefRadius } from "./constants.ts";
@@ -1118,6 +1119,16 @@ export class Simulation {
 
     leg.done = true;
     leg.dvBurn = man.dvFlyby;
+    // Record the B-plane geometry actually flown: the rpMin-clamped periapsis (man.rp),
+    // its impact parameter b = rp·√((e+1)/(e−1)) — the B-plane targeting handle — the
+    // required bend, and any turn the free pass couldn't supply (paid by the periapsis
+    // burn; 0 ⇒ the bend was free). A feasible free flyby has man.rp ≡ bPlaneAim's rp
+    // (same e = 1/sin(δ/2) relation). Inspection/HUD only — v1 and the charged Δv above
+    // are unchanged, so the flown trajectory and cost are byte-identical (hash-neutral).
+    leg.rpAchieved = man.rp;
+    leg.bMag = impactParameter(length(vInfIn), flybyBody.mu, man.rp);
+    leg.turn = man.turnRequired;
+    leg.residualTurn = man.residualTurn;
     // Continue on the next conic from the (continuous) flyby point, in the SAME frame — the
     // parent for a moon tour (the ship never leaves the planet's SOI), the Sun otherwise.
     ship.primary = moonCruise ? central!.id : "sun";

@@ -3,7 +3,7 @@ import {
   flybyEccentricity, flybyTurnAngle, maxTurnAngle, flybyOutgoing, poweredFlybyVInfOut,
   impactParameter, bPlaneAim,
 } from "./flyby.ts";
-import { assistTransfer, chainAssist, searchAssist, minFlybyRadius } from "./assist.ts";
+import { assistTransfer, chainAssist, searchAssist, minFlybyRadius, flybyManeuver } from "./assist.ts";
 import { BODY_BY_ID, JULIAN_YEAR } from "../constants.ts";
 import { type Vec3, length, sub, dot } from "../math/vec3.ts";
 
@@ -60,6 +60,22 @@ describe("B-plane aim geometry", () => {
     expect(aim.e).toBeCloseTo(1 / Math.sin(ang / 2), 9);
     expect(aim.rp).toBeCloseTo(((aim.e - 1) * JUP.mu) / (vIn * vIn), 3);
     expect(aim.b).toBeCloseTo(impactParameter(vIn, JUP.mu, aim.rp), 3);
+  });
+
+  it("the B-plane aim and the flyby maneuver agree on the free-pass periapsis (the targeting handle)", () => {
+    // Matched excess speeds + a shallow bend ⇒ a feasible FREE flyby: the geometry supplies
+    // the whole turn (no residual, ~no burn), so the in-sim executor's recorded periapsis
+    // (flybyManeuver.rp, stored as FlybyLeg.rpAchieved) equals the B-plane aim's rp — the
+    // same e = 1/sin(δ/2) law — and impactParameter(v∞, μ, rp) equals the aim's b.
+    const vIn = 6000, ang = (25 * Math.PI) / 180;
+    const vInfInVec: Vec3 = { x: vIn, y: 0, z: 0 };
+    const vInfOutVec: Vec3 = { x: vIn * Math.cos(ang), y: vIn * Math.sin(ang), z: 0 };
+    const aim = bPlaneAim(vInfInVec, vInfOutVec, JUP.mu);
+    const man = flybyManeuver(vInfInVec, vInfOutVec, JUP);
+    expect(man.residualTurn).toBe(0); // the shallow bend is achievable for free
+    expect(man.dvFlyby).toBeLessThan(1); // matched speeds ⇒ ~no periapsis burn
+    expect(man.rp).toBeCloseTo(aim.rp, 0); // identical periapsis
+    expect(impactParameter(vIn, JUP.mu, man.rp)).toBeCloseTo(aim.b, 0); // and impact parameter
   });
 
   it("the B-vector lies in the B-plane (⊥ v∞_in) and in the bend plane", () => {

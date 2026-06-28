@@ -79,9 +79,18 @@ function qTransfer(t: ShipTransfer) {
     departed: t.departed, inSoi: t.inSoi, arrived: t.arrived,
   };
   if (t.flybys) {
-    o.flybys = t.flybys.map((f) => ({
-      bodyId: f.bodyId, tFlyby: q(f.tFlyby), dvBurn: q(f.dvBurn), done: f.done,
-    }));
+    o.flybys = t.flybys.map((f) => {
+      const fo: Record<string, unknown> = {
+        bodyId: f.bodyId, tFlyby: q(f.tFlyby), dvBurn: q(f.dvBurn), done: f.done,
+      };
+      // Recorded B-plane geometry serializes only once the pass is flown ⇒ an unflown
+      // chain (and the golden scenario) round-trips byte-for-byte without these.
+      if (f.rpAchieved !== undefined) fo.rpAchieved = q(f.rpAchieved);
+      if (f.bMag !== undefined) fo.bMag = q(f.bMag);
+      if (f.turn !== undefined) fo.turn = q(f.turn);
+      if (f.residualTurn !== undefined) fo.residualTurn = q(f.residualTurn);
+      return fo;
+    });
   }
   if (t.aeroPeriAlt !== undefined) o.aeroPeriAlt = q(t.aeroPeriAlt);
   if (t.captureApoAlt !== undefined) o.captureApoAlt = q(t.captureApoAlt);
