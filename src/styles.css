@@ -17,6 +17,13 @@
   --text-dim: #8294ad;
   --label: #aebfd6;
   --label-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
+  /* Per-object-type label tints (planets keep the neutral --label baseline). */
+  --label-dwarf: #c9b48f;
+  --label-moon: #93a3bb;
+  --label-asteroid: #8b897f;
+  --label-comet: #9fd3e0;
+  --label-satellite: #8fe6ff;
+  --label-star: #ffe0a0;
   --btn-bg: rgba(40, 60, 90, 0.5);
   --btn-bg-hover: rgba(70, 100, 150, 0.7);
   --active: #4fd1e0;
@@ -35,6 +42,13 @@
      where the old white *glow* over dark text just vanished. */
   --label-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff,
     1px 1px 0 #fff, 0 0 4px rgba(255, 255, 255, 0.6);
+  /* Darker, more saturated tints so each type still reads over the bright scene. */
+  --label-dwarf: #7a5526;
+  --label-moon: #3a4a64;
+  --label-asteroid: #5c564a;
+  --label-comet: #126a7d;
+  --label-satellite: #1488a8;
+  --label-star: #9a6a14;
   --btn-bg: rgba(210, 224, 244, 0.85);
   --btn-bg-hover: rgba(180, 205, 240, 0.95);
   --active: #1488a8;
@@ -594,6 +608,35 @@ button:hover {
   text-shadow: var(--label-shadow);
   white-space: nowrap;
   will-change: transform;
+}
+/* Per-object-type tint + a two-tier size cue: planets/dwarfs/Sun stay at the
+   11px "major body" size; moons, satellites, asteroids and comets drop to 10px
+   as the "minor body" tier, separated from each other by colour. Quiet by
+   design — planets keep the neutral baseline. .focused (below) still wins. */
+.body-label.kind-dwarf {
+  color: var(--label-dwarf);
+  font-style: italic;
+}
+.body-label.kind-star {
+  color: var(--label-star);
+  font-weight: 600;
+}
+.body-label.kind-moon {
+  color: var(--label-moon);
+  font-size: 10px;
+}
+.body-label.kind-satellite {
+  color: var(--label-satellite);
+  font-size: 10px;
+}
+.body-label.kind-comet {
+  color: var(--label-comet);
+  font-size: 10px;
+}
+.body-label.kind-asteroid {
+  color: var(--label-asteroid);
+  font-size: 10px;
+  letter-spacing: 1.2px;
 }
 .body-label.focused {
   color: var(--accent);
