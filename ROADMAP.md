@@ -73,38 +73,61 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-1. **J2 on the planetary approach — the honest single-pass version** — the heliocentric→planet
-   capture hyperbola (`aimArrival`) is still pure two-body even at an oblate giant. This is NOT a
-   mirror of the J2-aware moon aim: `aimMoonArrival`'s J2 acts on a BOUND parent-centric ellipse,
-   while secular J2 (`orbit.ts j2Rates`) is identically zero on a hyperbola — so the honest fix is a
-   single-pass J2 PERTURBATION of the approach, realized as a once-sampled deterministic `ApproachLeg`
-   (the `EntryLeg` pattern: integrate the J2-perturbed hyperbola once from SOI entry, referenced to the
-   body's tilted pole, read by elapsed time; the aim integrates the SAME model so aim ≡ flight). A
-   substantial standalone round: it MOVES the golden hash (the golden scenario captures at oblate Mars,
-   J2≈2e-3) and re-tunes the giant-capture tests (~1500 km periapsis shift at Saturn). *(see "J2
-   oblateness". The B-plane half of last round's candidate #1 — the in-sim flyby pass — is now DONE;
-   see "Done since last round".)*
-2. **Parent-centric porkchop + eccentric capture everywhere** — moon legs (`searchMoonWindow`)
+*(Last round's candidate #1 — **J2 on the planetary approach (the honest single-pass version)** — is
+now DONE: the heliocentric→planet capture hyperbola flies a J2-perturbed `ApproachLeg` and the aim
+integrates the same model. See "Done since last round" and "J2 oblateness".)*
+
+1. **Parent-centric porkchop + eccentric capture everywhere** — moon legs (`searchMoonWindow`)
    pick a single coarse-grid window and the auto-chained / same-parent moon captures still
    circularize; give moon transfers a proper porkchop plot (like the heliocentric one) and thread
    the existing optional `captureApoAlt` through `searchMoonWindow` / `maybeChainMoonLeg` so a
    moon capture can also choose the cheap loose ellipse. (The moon flyby TOUR already threads
    `captureApoAlt` and searches a small parent-centric grid; this brings the single-hop window
    to parity.) *(see "Transfer toolkit".)*
-3. **Follow ships (and other objects) in the interstellar view** — entering the interstellar map
+2. **Follow ships (and other objects) in the interstellar view** — entering the interstellar map
    hard-locks the camera target to Sol (`SceneManager.frameInterstellar` sets `controls.target` to
    the origin). Let it follow an interstellar-leg ship instead: add an optional focus id to
    `setViewMode` / a per-frame `updateFocus()` hook the interstellar view calls, have
    `interstellarView.update` drive `setFocusTarget` from the scaled ship position when one is
    selected, and surface ship selection in the HUD. Respect the view-mode isolation invariant
    (the interstellar view computes its own positions about Sol). *(Observation #2.)*
-4. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
+3. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
    DONE (a first cut — `core/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
    persistent depot stations, propellant boil-off, and a colony supplied within a transfer window.
    *(see Phase 7.)*
 
 *(**Animated launch / landing trajectories** — candidate #3 last round — is now DONE; see the
 "Done since last round" note below.)*
+
+*(Done since last round: **J2 on the planetary approach — the honest single-pass version**. The
+heliocentric→planet capture hyperbola (`aimArrival`) was pure two-body even at an oblate giant.
+Secular J2 (`orbit.ts j2Rates`) is the orbit-averaged drift of a BOUND orbit and is identically zero
+on a hyperbola, so "parity with the J2-aware moon aim" was a category error — `aimMoonArrival`'s J2
+acts on a BOUND parent-centric ellipse, while a direct planet arrival is a single hyperbolic pass with
+no bound phase. The real effect is the NON-secular perturbation integrated along the open arc: at an
+oblate giant the periapsis a capture actually reaches differs from the two-body `a(1−e)` by hundreds of
+km, with sign/size set by the approach's inclination to the equator (it passes through zero near the
+~55° critical inclination). New pure `core/maneuver/approach.ts` integrates the inbound hyperbola under
+point-mass + the J2 zonal term referenced to the body's spin pole (`ships.ts spinAxis`, RK4 with a
+state-adaptive step, periapsis refined by bisection on r·v=0) — deterministic in the SOI-entry state, so
+chunk-invariant when stored once and replayed. It is carried as an `ApproachLeg` (`world.ts`, the
+`LaunchLeg`/`EntryLeg` read-time-leg pattern): a 3D arc spline + the pinned periapsis the capture fires
+at (`ships.ts buildApproachLeg`/`approachLegState`; `shipRelativeState`/`shipOsculatingElements` dispatch
+through it; serialized). The flight (`sim.ts enterSoi`→`captureAtPeriapsis`) flies the leg for an inbound
+hyperbola at any oblate body and captures at the perturbed periapsis; the aim (`maneuver/arrival.ts
+aimArrival`) evaluates its offset bisection by integrating the SAME `j2Approach`, so the planned
+periapsis equals the flown one (the aim-must-match-flight rule — wiring the flight alone flew a low
+Jupiter capture sub-surface and crashed the moon-mission ship). A Saturn capture lands at the aimed
+altitude despite the ~hundreds-of-km shift; a spherical body returns null and stays the pure-Kepler coast.
+Impulsive + read-time-leg + scheduled-event ⇒ chunk-invariant (one-step ≡ chunked still holds). **Golden
+hash re-baselined** (`0058e70b45c3ef` → `11f2c9fc7a5876`): the Mars arrival now carries the J2 periapsis
+shift (O(km) at Mars); only the recorded physical value moved (round-trip + negative control unchanged),
+and no giant-capture assertion needed re-tuning. +8 tests (`core/maneuver/approach.test.ts`: oracle
+[J2=0 recovers two-body to <1 m], magnitude/sign vs inclination, determinism, arc interpolation, leg
+build/read, serialize; `app/j2Approach.test.ts`: the leg flies and the capture lands where aimed,
+chunk-invariance, mid-approach serialize). Still to do: the J2 perturbation on an AEROCAPTURE approach
+(above-atmosphere arc to the interface — the drag-pass entry leg is unchanged today); J3+ zonal harmonics;
+and full N-body. *(Candidate #1.)*)*
 
 *(Done since last round: **B-plane-targeted in-sim flyby pass — the geometry made explicit and
 inspectable**. The in-sim flyby (`sim.ts executeFlyby`) flew a "patched-conic point + charged residual"
@@ -445,16 +468,15 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   (exact at any time-warp; golden-hash-neutral), with a sun-synchronous-inclination
   helper. The **moon-arrival aim is now J2-aware** (`aimMoonArrival` propagates the
   parent-centric cruise with the parent's J2, matching `coastElements` — a gas giant's
-  oblateness no longer drifts the short hop out of a moon's small SOI). Still to do: full N-body
-  perturbations, J3+ harmonics, and the **heliocentric→planet** capture aim (`aimArrival`) — its
-  approach hyperbola is still pure two-body. NOTE (corrected): this is NOT achievable by mirroring the
-  moon aim. `aimMoonArrival`'s J2 acts on a BOUND parent-centric ellipse, and secular J2 (`j2Rates`) is
-  identically zero on a hyperbola (`e ≥ 1`) — a direct planet arrival has no bound phase, only a single
-  hyperbolic pass. The honest fix is a single-pass J2 PERTURBATION of the approach hyperbola, realized
-  as a once-sampled deterministic `ApproachLeg` (the `EntryLeg` pattern, referenced to the body's tilted
-  pole, integrated identically by aim and flight so they agree). It MOVES the golden hash (the golden
-  scenario captures at oblate Mars) and re-tunes the giant-capture tests — its own dedicated round (now
-  candidate #1).
+  oblateness no longer drifts the short hop out of a moon's small SOI). **The heliocentric→planet
+  capture approach is now J2-aware too — DONE:** the inbound hyperbola is no longer pure two-body at an
+  oblate body. Because secular J2 (`j2Rates`) is identically zero on a hyperbola, this is NOT the moon
+  aim's secular machinery but a single-pass J2 PERTURBATION integrated along the open arc
+  (`maneuver/approach.ts`, referenced to the body's spin pole), flown as a deterministic `ApproachLeg`
+  and aimed by the same integrator so aim ≡ flight (periapsis moves hundreds of km at a giant; golden
+  re-baselined for the O(km) Mars shift). Still to do: full N-body perturbations, J3+ harmonics, and the
+  J2 perturbation on an AEROCAPTURE approach (the above-atmosphere arc to the interface — the drag-pass
+  entry leg is unchanged today).
 - **Full B-plane targeting in the planner UI** — the analytic aim (`bPlaneAim`:
   free-bend hyperbola, impact parameter, B-vector) now exists, and the planner's
   single-flyby and chain readouts now show the impact parameter b alongside the
