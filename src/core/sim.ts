@@ -34,7 +34,7 @@ import { stateToElements, meanMotion, wrapTwoPi } from "./math/kepler.ts";
 import { bodyState, bodyElements, bodyStateRelative } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
 import { aimArrival, aimMoonArrival } from "./maneuver/arrival.ts";
-import { searchMoonWindow } from "./maneuver/moon.ts";
+import { searchMoonWindow, outboundClearsParent } from "./maneuver/moon.ts";
 import { lambert } from "./maneuver/lambert.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
 import { entryInterfaceAlt, entryInterfaceCrossing } from "./maneuver/entry.ts";
@@ -912,6 +912,12 @@ export class Simulation {
     const rParkTo = moon.radius + DEFAULT_CAPTURE_ALT;
     const aim = aimMoonArrival(central, moon, shipDep.r, t, tr.tArrive, rParkTo);
     if (!aim) return; // degenerate; leave un-departed for re-planning
+    // Safety net: never fly the ship into the parent. An injection solved only against the
+    // moon-relative arrival can — for an unfavourable parking-orbit phase — put the outbound
+    // conic's periapsis below the parent's surface (searchMoonWindow already filters these, but
+    // a directly-specified window might not). Leave the transfer un-departed so it re-plans
+    // rather than committing a powered burn straight into the planet.
+    if (!outboundClearsParent(shipDep.r, aim.v1, central.mu, central.radius)) return;
     const dv = length(sub(aim.v1, shipDep.v));
     if (!applyImpulsiveDv(ship, dv)) return; // can't afford the injection — stay parked
 
