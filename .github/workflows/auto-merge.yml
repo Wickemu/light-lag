@@ -59,7 +59,7 @@ jobs:
           fi
 
           echo "Merging PR #$number (author: $author)..."
-          if ! gh pr merge "$number" --repo "$REPO" --merge; then
+          if ! gh pr merge "$number" --repo "$REPO" --merge --delete-branch; then
             echo "Merge did not go through (likely conflicts or not yet mergeable); leaving PR open."
             exit 0
           fi
