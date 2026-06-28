@@ -1,0 +1,65 @@
+name: Auto-merge
+
+# Once CI passes on a pull request from an allowed author, merge it automatically
+# so we don't have to click "Merge" by hand. `gh pr merge` refuses to merge a
+# non-mergeable PR, so anything with conflicts is left open for manual resolution.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Only act when CI succeeded and it was triggered by a pull request.
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    steps:
+      - name: Merge green PRs from allowed authors
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # PRs by these authors auto-merge. The Claude integration opens PRs
+          # under the repo owner's account, so "Wickemu" covers both you and
+          # Claude; the bot logins are future-proofing.
+          ALLOWED="Wickemu claude[bot] claude-bot"
+
+          pr=$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --state open \
+                 --json number,author,headRefOid --jq '.[0] // empty')
+
+          if [ -z "$pr" ]; then
+            echo "No open PR for branch '$HEAD_BRANCH'; nothing to merge."
+            exit 0
+          fi
+
+          number=$(echo "$pr" | jq -r '.number')
+          author=$(echo "$pr" | jq -r '.author.login')
+          headOid=$(echo "$pr" | jq -r '.headRefOid')
+
+          # Guard against merging a commit CI didn't actually validate (the PR
+          # may have received new pushes after this CI run started).
+          if [ "$headOid" != "$HEAD_SHA" ]; then
+            echo "PR #$number head ($headOid) moved past the CI commit ($HEAD_SHA); skipping."
+            exit 0
+          fi
+
+          if ! echo " $ALLOWED " | grep -q " $author "; then
+            echo "PR #$number author '$author' is not in the allowlist; skipping."
+            exit 0
+          fi
+
+          echo "Merging PR #$number (author: $author)..."
+          if ! gh pr merge "$number" --repo "$REPO" --merge --delete-branch; then
+            echo "Merge did not go through (likely conflicts or not yet mergeable); leaving PR open."
+            exit 0
+          fi

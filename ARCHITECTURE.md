@@ -131,7 +131,7 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 | Module | Provides |
 |---|---|
 | `main.ts` | Entry point: constructs all layers and runs the one-way frame loop (sim advance → render read). |
-| `commands.ts` | Player intents → validated world mutations: `spawnShip` / `deleteShip`, `sendBurn` (via light-lag `sim.sendCommand`), `planTransfer` / `cancelTransfer`, `planAssist` / `planChainAssist`, `planMoonTransfer` / `planMoonTour` / `planMoonMission` (auto-chained two-stage), `landShip`, `launchShip`, `flyEntry`, `planSpiral`, `dispatchInterstellar`, plus capture/aerocapture preview helpers. |
+| `commands.ts` | Player intents → validated world mutations: `spawnShip` (in-space → LEO) / `spawnOnPad` (launch vehicle → Earth pad) / `expressToOrbit` (fly the ascent instantly) / `ascentPreview` / `deleteShip`, `sendBurn` (via light-lag `sim.sendCommand`), `planTransfer` / `cancelTransfer`, `planAssist` / `planChainAssist`, `planMoonTransfer` / `planMoonTour` / `planMoonMission` (auto-chained two-stage), `landShip`, `launchShip` (`opts.instant`), `flyEntry`, `planSpiral`, `dispatchInterstellar`, `transferPropellant` / `assembleShips` / `dockCandidates` (orbital refuelling & assembly), plus capture/aerocapture preview helpers. |
 | `shipCatalog.ts` | 30+ preset ship designs (Historical / Current / Prototype / Sci-Fi), every number from published data. Includes classical staged presets and `INTERSTELLAR_CRAFT` for the relativistic layer. |
 
 ## Building another game on the engine

@@ -7,6 +7,12 @@ on:
     branches: [main]
   pull_request:
 
+# When new commits land on a branch, cancel any CI run still in flight for it
+# so a fixup push doesn't leave two builds racing. main runs aren't cancelled.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
