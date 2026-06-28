@@ -73,11 +73,17 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-1. **B-plane-targeted in-sim pass + J2 on the planetary approach** — the in-sim flyby/aerocapture
-   passes use a patched-conic point + charged residual rather than a B-plane-targeted trajectory;
-   and the heliocentric→planet capture hyperbola (`aimArrival`) is still pure two-body even at an
-   oblate giant (the moon aim `aimMoonArrival` is now J2-aware — bring the planet aim to parity).
-   *(see "Gravity assists" and "J2 oblateness".)*
+1. **J2 on the planetary approach — the honest single-pass version** — the heliocentric→planet
+   capture hyperbola (`aimArrival`) is still pure two-body even at an oblate giant. This is NOT a
+   mirror of the J2-aware moon aim: `aimMoonArrival`'s J2 acts on a BOUND parent-centric ellipse,
+   while secular J2 (`orbit.ts j2Rates`) is identically zero on a hyperbola — so the honest fix is a
+   single-pass J2 PERTURBATION of the approach, realized as a once-sampled deterministic `ApproachLeg`
+   (the `EntryLeg` pattern: integrate the J2-perturbed hyperbola once from SOI entry, referenced to the
+   body's tilted pole, read by elapsed time; the aim integrates the SAME model so aim ≡ flight). A
+   substantial standalone round: it MOVES the golden hash (the golden scenario captures at oblate Mars,
+   J2≈2e-3) and re-tunes the giant-capture tests (~1500 km periapsis shift at Saturn). *(see "J2
+   oblateness". The B-plane half of last round's candidate #1 — the in-sim flyby pass — is now DONE;
+   see "Done since last round".)*
 2. **Parent-centric porkchop + eccentric capture everywhere** — moon legs (`searchMoonWindow`)
    pick a single coarse-grid window and the auto-chained / same-parent moon captures still
    circularize; give moon transfers a proper porkchop plot (like the heliocentric one) and thread
@@ -99,6 +105,38 @@ read-time analytic, suite green, golden hash documented if it moves.
 
 *(**Animated launch / landing trajectories** — candidate #3 last round — is now DONE; see the
 "Done since last round" note below.)*
+
+*(Done since last round: **B-plane-targeted in-sim flyby pass — the geometry made explicit and
+inspectable**. The in-sim flyby (`sim.ts executeFlyby`) flew a "patched-conic point + charged residual"
+but never computed or surfaced the actual B-plane geometry of the pass, though the analytic helpers
+(`flyby.ts bPlaneAim` / `impactParameter`) already existed unused by the executor. Each `FlybyLeg` now
+records, at execution, the geometry it actually flew — the rpMin-clamped periapsis (`rpAchieved`), its
+impact parameter b = rp·√((e+1)/(e−1)) (`bMag`, the B-plane targeting handle), the required bend
+(`turn`), and any turn the free pass couldn't supply (`residualTurn`; 0 ⇒ free). All four fields are
+OPTIONAL and serialize only once a pass is flown, so a planned-but-unflown chain — and the golden
+scenario, which has no flyby — round-trips byte-for-byte: the connecting velocity v1 and the charged
+residual (`flybyManeuver`, already B-plane-consistent) are unchanged, so the flown trajectory and cost
+are byte-identical and the **golden hash is unmoved** (`0058e70b45c3ef`). `minFlybyRadius` is now
+atmosphere-aware — `max(1.1·radius, radius + entryInterfaceAlt)` so a clean vacuum slingshot never dips
+inside a modeled atmosphere; a verified no-op for every body modeled today (the 10% margin already
+clears the 11-scale-height interface), it keeps the "closest SAFE pass" contract honest and guards a
+future thick-atmosphere small body. The HUD surfaces the geometry in BOTH the flight console (the flown
+pass: periapsis altitude, b in body radii, turn, free/burn) and the transfer planner (the single-flyby
+and chain readouts now show b alongside the periapsis and turn they already displayed — partially
+closing "Full B-plane targeting in the planner UI"). +8 tests (`app/bplaneFlyby.test.ts`:
+recorded-geometry sanity in the heliocentric AND parent-frame moon-tour branches, chunk-invariance,
+serialize round-trip, and the golden-neutral ABSENCE of the fields on an unflown chain; plus
+`flybyAssist.test.ts` checks that `bPlaneAim.rp ≡ flybyManeuver.rp` for a free pass and that the safe
+radius clears every modeled atmosphere). Verified live in both themes (Earth→Jupiter→Saturn: flight
+console "peri 668161 km · b 32.7 R · turn 108° · burn 8 m/s"; planner "peri 2741307 km, b 71.1 R, turn
+65°"). *(Candidate #1's B-plane half. Still to do: the connecting velocity is still assigned to thread
+the chain rather than re-derived from a pure B-plane integration, and the pass is instantaneous at
+heliocentric scale — an animated finite-SOI flyby arc, like the launch/entry legs, is a separate
+follow-up that would move pass timing and re-tune the chain tests.)* **The J2-on-the-approach half was
+deliberately deferred to its own round** — secular J2 is identically zero on a hyperbola, so "parity
+with the J2-aware `aimMoonArrival`" (whose J2 acts on a BOUND ellipse) is a category error; the honest
+single-pass J2-perturbed `ApproachLeg` (which MOVES the golden hash and re-tunes the giant-capture
+tests) is now candidate #1.)*
 
 *(Done since last round: **launch vehicles fly the ascent to LEO** — closing the "everything spawns
 full in LEO" hole. A preset's `role` now drives WHERE it starts: a launch vehicle (`spawnOnPad`)
@@ -390,10 +428,16 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   orbit via a near-free Ganymede flyby for a ~1.4 km/s capture). Surfaced in the planner as a **Flyby
   tour** mode. Reuses only existing optional `ShipTransfer` fields (`central` + `flybys` +
   `captureApoAlt`) ⇒ golden hash unmoved; impulsive + analytic-coast + scheduled-event ⇒
-  chunk-invariant. Still to do: a B-plane-targeted in-sim pass (it uses a patched-conic point +
-  charged residual); a full chain porkchop (the UI searches TOF multipliers around Hohmann timings,
-  not an exhaustive window sweep); and deeper multi-flyby resonant tour optimization (the tour search
-  is a first-cut bounded grid capped at ≤3 flyby moons over a curated sibling set).
+  chunk-invariant. **B-plane geometry made explicit — DONE:** the in-sim pass now computes and records
+  the real B-plane geometry it flies (`FlybyLeg.rpAchieved`/`bMag`/`turn`/`residualTurn` via `bPlaneAim`
+  + `impactParameter`), surfaced in the flight console and the planner; `minFlybyRadius` is atmosphere-
+  aware. The connecting velocity and charged residual are unchanged (golden hash unmoved). Still to do:
+  the connecting velocity is still assigned to thread the chain rather than re-derived from a pure
+  B-plane integration, and the pass is instantaneous at heliocentric scale — an animated finite-SOI
+  flyby arc (the launch/entry-leg pattern, but it moves pass timing and re-tunes the chain tests) is a
+  follow-up; plus a full chain porkchop (the UI searches TOF multipliers around Hohmann timings, not an
+  exhaustive window sweep); and deeper multi-flyby resonant tour optimization (the tour search is a
+  first-cut bounded grid capped at ≤3 flyby moons over a curated sibling set).
 - **Transfer toolkit** — DONE: plane-change Δv, bi-elliptic transfers, and
   multi-revolution Lambert (wired into the porkchop).
 - **J2 oblateness** — DONE: secular nodal/apsidal precession of ship/station
@@ -402,12 +446,22 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   helper. The **moon-arrival aim is now J2-aware** (`aimMoonArrival` propagates the
   parent-centric cruise with the parent's J2, matching `coastElements` — a gas giant's
   oblateness no longer drifts the short hop out of a moon's small SOI). Still to do: full N-body
-  perturbations, J3+ harmonics, and bringing the **heliocentric→planet** capture aim
-  (`aimArrival`) to the same J2 parity (its approach hyperbola is still pure two-body).
+  perturbations, J3+ harmonics, and the **heliocentric→planet** capture aim (`aimArrival`) — its
+  approach hyperbola is still pure two-body. NOTE (corrected): this is NOT achievable by mirroring the
+  moon aim. `aimMoonArrival`'s J2 acts on a BOUND parent-centric ellipse, and secular J2 (`j2Rates`) is
+  identically zero on a hyperbola (`e ≥ 1`) — a direct planet arrival has no bound phase, only a single
+  hyperbolic pass. The honest fix is a single-pass J2 PERTURBATION of the approach hyperbola, realized
+  as a once-sampled deterministic `ApproachLeg` (the `EntryLeg` pattern, referenced to the body's tilted
+  pole, integrated identically by aim and flight so they agree). It MOVES the golden hash (the golden
+  scenario captures at oblate Mars) and re-tunes the giant-capture tests — its own dedicated round (now
+  candidate #1).
 - **Full B-plane targeting in the planner UI** — the analytic aim (`bPlaneAim`:
-  free-bend hyperbola, impact parameter, B-vector) now exists; what remains is
-  surfacing it in the planner UI and a B-plane-targeted in-sim pass (B-plane solved
-  at execution today).
+  free-bend hyperbola, impact parameter, B-vector) now exists, and the planner's
+  single-flyby and chain readouts now show the impact parameter b alongside the
+  periapsis and turn (and the flight console reads out the flown pass's recorded
+  geometry). Still to do: an interactive B-plane aim control (drag the B-vector /
+  impact parameter), and the pure-B-plane in-sim pass noted under "Gravity assists"
+  (the connecting velocity is assigned to thread the chain today).
 - **SOI-as-point departure** (parking-orbit offset dropped) — documented
   approximation; refine if close-range nav matters.
 - **Validity window past 1800–2050** (the giants' 3000 BC–3000 AD b,c,s,f
