@@ -487,9 +487,15 @@ export class ShipPanel {
       this.sm.focusBody(ship.primary);
       return;
     }
+    // Frame from the orbit's apoapsis — but a ship on a powered ascent/descent leg has a
+    // DEGENERATE osculating conic at the arc endpoints (zero-speed liftoff/touchdown ⇒ a→∞),
+    // which would hand the camera a non-finite framing distance and black out the whole view.
+    // Fall back to a body-scaled distance whenever the apoapsis isn't a finite, positive length.
     const el = shipOsculatingElements(ship, this.sim.world.t);
     const ra = el.a * (1 + el.e);
-    const distUnits = Math.max((ra / 1e9) * 2.2, 0.02);
+    const body = BODY_BY_ID.get(ship.primary);
+    const scaleMeters = Number.isFinite(ra) && ra > 0 ? ra : (body ? body.radius * 3 : 1e7);
+    const distUnits = Math.max((scaleMeters / 1e9) * 2.2, 0.02);
     this.sm.setFocusTarget(id, (t) => {
       const s = this.sim.world.ships.get(id);
       return s ? shipWorldState(s, t).r : { x: 0, y: 0, z: 0 };

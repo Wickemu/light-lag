@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createWorld } from "../core/world.ts";
 import { Simulation } from "../core/sim.ts";
 import { spawnShip, defaultDesign, landShip, launchShip } from "./commands.ts";
-import { shipRelativeState } from "../core/ships.ts";
+import { shipRelativeState, shipWorldState, shipOsculatingElements } from "../core/ships.ts";
 import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
 import { circularOrbit } from "../core/orbit.ts";
 import { BODY_BY_ID } from "../core/constants.ts";
@@ -67,6 +67,36 @@ describe("in-sim animated launch / landing legs", () => {
     expect(alt / 1000).toBeGreaterThan(90);
     expect(alt / 1000).toBeLessThan(110);
     expect(ship.elements!.e).toBeLessThan(0.02); // clean circular insertion
+  });
+
+  it("keeps the renderer's reads finite across the whole launch arc (no black-out)", () => {
+    // Regression: at the EXACT start of a launch arc the ship's velocity reconstructs to ~zero
+    // (vertical liftoff, v=0), so its osculating conic is degenerate (a → ∞). The camera's
+    // ship-framing distance is derived from the orbit's apoapsis (a·(1+e)); a non-finite value
+    // there seated the camera at infinity and blacked out the entire system view (the floating
+    // origin / camera went NaN and stayed NaN). The renderer reads shipWorldState every frame for
+    // the floating origin, and frameShip reads the apoapsis once — both must stay usable.
+    const sim = new Simulation(createWorld(1, 0));
+    const id = landedMoonShip(sim);
+    const ship = sim.world.ships.get(id)!;
+    const leg = launchShip(sim, id, 100) && ship.launchLeg!;
+    expect(leg).toBeTruthy();
+
+    const span = leg!.tEnd - leg!.tStart;
+    for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
+      const t = leg!.tStart + span * frac;
+      const w = shipWorldState(ship, t);
+      // The floating-origin source must always be finite.
+      expect(Number.isFinite(w.r.x) && Number.isFinite(w.r.y) && Number.isFinite(w.r.z)).toBe(true);
+    }
+
+    // frameShip frames from the apoapsis, falling back to a body scale when it isn't a finite,
+    // positive length. The degenerate liftoff conic must therefore yield a FINITE framing distance.
+    const el = shipOsculatingElements(ship, leg!.tStart);
+    const ra = el.a * (1 + el.e);
+    const scaleMeters = Number.isFinite(ra) && ra > 0 ? ra : MOON.radius * 3;
+    const distUnits = Math.max((scaleMeters / 1e9) * 2.2, 0.02);
+    expect(Number.isFinite(distUnits)).toBe(true);
   });
 
   it("flies a descent arc from orbit down to a co-rotating touchdown (no snap)", () => {

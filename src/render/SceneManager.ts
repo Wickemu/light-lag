@@ -218,6 +218,13 @@ export class SceneManager {
    *  re-homed instantly — the right behaviour for a continuous follow or the
    *  interstellar map, which frames itself. */
   setFocusTarget(id: string, fn: (t: number) => Vec3, frameDistanceUnits?: number): void {
+    // A non-finite framing distance (e.g. a degenerate osculating apoapsis, a→∞) would seat the
+    // camera at a NaN/Infinity position and black out the entire view — and, because the bad
+    // value is sticky, no later focus/zoom would recover it. Never let one through: re-home the
+    // origin to follow the target, but keep the current camera distance.
+    if (frameDistanceUnits !== undefined && !Number.isFinite(frameDistanceUnits)) {
+      frameDistanceUnits = undefined;
+    }
     if (frameDistanceUnits !== undefined && this.viewMode === "system") {
       this.startFlight(id, fn, frameDistanceUnits);
       return;

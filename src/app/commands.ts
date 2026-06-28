@@ -16,6 +16,7 @@ import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelati
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "../core/maneuver/entry.ts";
 import { aimMoonArrival } from "../core/maneuver/arrival.ts";
 export { searchMoonWindow, type MoonWindow } from "../core/maneuver/moon.ts";
+import { outboundClearsParent } from "../core/maneuver/moon.ts";
 import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
 import { wrapPi } from "../core/math/kepler.ts";
 import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
@@ -266,6 +267,9 @@ export function planMoonTransfer(
   const rParkTo = moon.radius + DEFAULT_CAPTURE_ALT;
   const aim = aimMoonArrival(parent, moon, shipDep.r, tDepart, tArrive, rParkTo);
   if (!aim) return null;
+  // Reject a window whose outbound conic would fly the ship into the parent at departure (an
+  // unfavourable parking-orbit phase) — the same safety the sim enforces at departure.
+  if (!outboundClearsParent(shipDep.r, aim.v1, parent.mu, parent.radius)) return null;
   const dvDepart = length(sub(aim.v1, shipDep.v));
   // Capture about the moon: the approach v∞ from the (centre) Lambert vs the moon's velocity —
   // circular by default, or a cheaper elliptical insertion when an apoapsis is given.

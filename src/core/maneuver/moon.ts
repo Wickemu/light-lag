@@ -8,11 +8,36 @@
  */
 
 import { type Vec3, length, sub } from "../math/vec3.ts";
+import { stateToElements } from "../math/kepler.ts";
 import { hohmann } from "./hohmann.ts";
 import { aimMoonArrival } from "./arrival.ts";
 import { hyperbolicBurnDv } from "../orbit.ts";
 import { bodyStateRelative } from "../ephemeris.ts";
 import { BODY_BY_ID, DEFAULT_CAPTURE_ALT } from "../constants.ts";
+
+/**
+ * Does the parent-centric outbound transfer (the ship seeded at `depR` with the injection
+ * velocity `v1`) keep its PARENT-relative periapsis above the parent's surface? A moon
+ * transfer is flown about the parent (the ship never leaves its SOI), so an injection solved
+ * only against the moon-relative arrival can, for an unfavourable parking-orbit phase, put the
+ * outbound conic's periapsis BELOW the parent — flying the ship straight into the planet at
+ * departure. The sim's surface-impact guard then (correctly) destroys it. A real translunar
+ * injection burns at the right point in the parking orbit so periapsis stays above the surface;
+ * we enforce that here by rejecting windows whose outbound conic dips below the parent's radius.
+ * The test is an ABSOLUTE surface comparison (periapsis >= parentRadius), so it scales across
+ * every parent from Mars to Jupiter — a radius FRACTION would wrongly reject a low parking orbit
+ * at a giant, whose altitude is a tiny fraction of its radius. The sim crashes a coasting ship
+ * only at r <= R and the coast carries no drag, so clearing R is exactly the safe condition.
+ * Hyperbolic/degenerate conics (a <= 0) clear by construction (no near-side periapsis below the
+ * departure point on a departing arc).
+ */
+export function outboundClearsParent(depR: Vec3, v1: Vec3, parentMu: number, parentRadius: number): boolean {
+  const el = stateToElements(depR, v1, parentMu);
+  if (!isFinite(el.a) || !isFinite(el.e)) return false;
+  if (el.a <= 0) return true; // unbound — periapsis is the closest approach of a departing arc
+  const periapsis = el.a * (1 - el.e);
+  return periapsis >= parentRadius;
+}
 
 /** A planned moon-transfer window: the cheapest departure/arrival found, with its costs. */
 export interface MoonWindow {
@@ -54,6 +79,10 @@ export function searchMoonWindow(
       const tArr = tDep + tof;
       const aim = aimMoonArrival(parent, moon, dep.r, tDep, tArr, rParkTo);
       if (!aim) continue;
+      // Reject any window whose outbound conic would fly the ship into the parent at departure
+      // (an unfavourable parking-orbit phase). The phase sweep below still finds the cheap,
+      // SAFE windows — a real translunar injection departs from the right point in the orbit.
+      if (!outboundClearsParent(dep.r, aim.v1, parent.mu, parent.radius)) continue;
       const dvDepart = length(sub(aim.v1, dep.v));
       const dvArrive = hyperbolicBurnDv(aim.vInf ?? 0, moon.mu, rParkTo);
       const total = dvDepart + dvArrive;
