@@ -18,12 +18,20 @@ import { lambert } from "./lambert.ts";
 import { hohmann } from "./hohmann.ts";
 import { hyperbolicBurnDv, combinedPlaneChangeDv } from "../orbit.ts";
 import { maxTurnAngle } from "./flyby.ts";
+import { entryInterfaceAlt } from "./entry.ts";
 import { type Vec3, length, sub, dot } from "../math/vec3.ts";
 import { better, type Criterion, type Scorable, type ScoreRefs } from "./criteria.ts";
 
-/** Closest safe flyby radius: a 10% altitude margin above the surface. */
+/** Closest safe flyby radius: a 10% altitude margin above the surface, but never
+ *  inside a modeled atmosphere — a clean vacuum slingshot must clear the atmospheric
+ *  interface (entry.ts's 11 scale heights), below which drag/heating mean the pass is
+ *  no longer free. For every body modeled today the 10% margin already exceeds the
+ *  interface, so this max() is a pure floor with no current behavior change (golden- and
+ *  test-neutral); it keeps the "closest SAFE pass" contract honest and guards a future
+ *  thick-atmosphere small body. (Aerocapture deliberately aims BELOW the interface — a
+ *  different, drag-pass path; see enterSoi / aeroPeriAlt.) */
 export function minFlybyRadius(body: BodyDef): number {
-  return body.radius * 1.1;
+  return Math.max(body.radius * 1.1, body.radius + entryInterfaceAlt(body));
 }
 
 const vpAt = (vInf: number, mu: number, rp: number): number => Math.sqrt(vInf * vInf + (2 * mu) / rp);

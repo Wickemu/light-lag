@@ -57,6 +57,13 @@ export interface FlybyLeg {
   tFlyby: number; // s since J2000 — the patched-conic flyby instant
   dvBurn: number; // estimated powered-flyby Δv (m/s)
   done: boolean; // the flyby has been executed
+  // B-plane geometry of the executed pass, recorded at execution for inspection /
+  // HUD readout. All OPTIONAL (present only once the pass is flown) ⇒ a planned-but-
+  // unflown chain and the golden scenario serialize without them (hash-neutral).
+  rpAchieved?: number; // flown periapsis radius (m) — the rpMin-clamped pass periapsis
+  bMag?: number; // impact parameter |B| (m) at rpAchieved — the B-plane targeting handle
+  turn?: number; // bend angle required between the in/out excess velocities (rad)
+  residualTurn?: number; // turn beyond the free bend, paid by the periapsis burn (rad); 0 ⇒ free
 }
 
 /** An in-progress low-thrust (electric) spiral between near-circular orbits about

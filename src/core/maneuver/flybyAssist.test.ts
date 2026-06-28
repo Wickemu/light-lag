@@ -3,7 +3,8 @@ import {
   flybyEccentricity, flybyTurnAngle, maxTurnAngle, flybyOutgoing, poweredFlybyVInfOut,
   impactParameter, bPlaneAim,
 } from "./flyby.ts";
-import { assistTransfer, chainAssist, searchAssist, minFlybyRadius } from "./assist.ts";
+import { assistTransfer, chainAssist, searchAssist, minFlybyRadius, flybyManeuver } from "./assist.ts";
+import { entryInterfaceAlt } from "./entry.ts";
 import { BODY_BY_ID, JULIAN_YEAR } from "../constants.ts";
 import { type Vec3, length, sub, dot } from "../math/vec3.ts";
 
@@ -40,6 +41,25 @@ describe("flyby physics", () => {
     expect(maxTurnAngle(6000, JUP.mu, minFlybyRadius(JUP)))
       .toBeCloseTo(flybyTurnAngle(6000, JUP.mu, minFlybyRadius(JUP)), 9);
   });
+
+  it("the closest safe pass is a 10% margin for airless bodies and clears any modeled atmosphere", () => {
+    // Airless ⇒ the pure 10% altitude margin.
+    for (const id of ["moon", "ceres", "europa", "ganymede", "callisto"]) {
+      const b = BODY_BY_ID.get(id)!;
+      expect(b.atmosphere).toBeUndefined();
+      expect(minFlybyRadius(b)).toBeCloseTo(b.radius * 1.1, 6);
+    }
+    // With an atmosphere ⇒ the safe pass is never below the atmospheric interface (a clean
+    // slingshot isn't braking). For every body modeled today the 10% margin already exceeds
+    // the interface, so the honest floor is a no-op and minFlybyRadius is still 1.1·radius —
+    // the assertion that would flag a future thick-atmosphere body where it no longer is.
+    for (const id of ["venus", "earth", "mars", "titan"]) {
+      const b = BODY_BY_ID.get(id)!;
+      expect(b.atmosphere).toBeDefined();
+      expect(minFlybyRadius(b)).toBeGreaterThanOrEqual(b.radius + entryInterfaceAlt(b));
+      expect(minFlybyRadius(b)).toBeCloseTo(b.radius * 1.1, 6);
+    }
+  });
 });
 
 describe("B-plane aim geometry", () => {
@@ -60,6 +80,22 @@ describe("B-plane aim geometry", () => {
     expect(aim.e).toBeCloseTo(1 / Math.sin(ang / 2), 9);
     expect(aim.rp).toBeCloseTo(((aim.e - 1) * JUP.mu) / (vIn * vIn), 3);
     expect(aim.b).toBeCloseTo(impactParameter(vIn, JUP.mu, aim.rp), 3);
+  });
+
+  it("the B-plane aim and the flyby maneuver agree on the free-pass periapsis (the targeting handle)", () => {
+    // Matched excess speeds + a shallow bend ⇒ a feasible FREE flyby: the geometry supplies
+    // the whole turn (no residual, ~no burn), so the in-sim executor's recorded periapsis
+    // (flybyManeuver.rp, stored as FlybyLeg.rpAchieved) equals the B-plane aim's rp — the
+    // same e = 1/sin(δ/2) law — and impactParameter(v∞, μ, rp) equals the aim's b.
+    const vIn = 6000, ang = (25 * Math.PI) / 180;
+    const vInfInVec: Vec3 = { x: vIn, y: 0, z: 0 };
+    const vInfOutVec: Vec3 = { x: vIn * Math.cos(ang), y: vIn * Math.sin(ang), z: 0 };
+    const aim = bPlaneAim(vInfInVec, vInfOutVec, JUP.mu);
+    const man = flybyManeuver(vInfInVec, vInfOutVec, JUP);
+    expect(man.residualTurn).toBe(0); // the shallow bend is achievable for free
+    expect(man.dvFlyby).toBeLessThan(1); // matched speeds ⇒ ~no periapsis burn
+    expect(man.rp).toBeCloseTo(aim.rp, 0); // identical periapsis
+    expect(impactParameter(vIn, JUP.mu, man.rp)).toBeCloseTo(aim.b, 0); // and impact parameter
   });
 
   it("the B-vector lies in the B-plane (⊥ v∞_in) and in the bend plane", () => {
