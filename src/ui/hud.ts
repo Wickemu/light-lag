@@ -200,7 +200,8 @@ export class Hud {
     this.labelLayer = el("div", "label-layer");
     this.root.appendChild(this.labelLayer);
     for (const b of BODIES) {
-      const lbl = el("div", "body-label", b.name);
+      // The kind class drives the per-type tint/weight in styles.css.
+      const lbl = el("div", `body-label kind-${b.kind}`, b.name);
       this.labels.set(b.id, lbl);
       this.labelLayer.appendChild(lbl);
     }
