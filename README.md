@@ -130,8 +130,10 @@ Controls:
 | Tab / Shift+Tab | Cycle focus forward / backward through all 50 bodies |
 | `F` | Toggle ship designer & flight console |
 | `V` | Cycle camera view angle (isometric → top-down → edge-on) |
+| `M` | Toggle system ⇄ interstellar view |
 | `R` / Home | Reset camera distance for current focus |
-| Escape | Close transfer or interstellar planner (then ship panel) |
+| `?` | Toggle help overlay (keyboard reference) |
+| Escape | Close the open planner / help / ship panel (in that order) |
 | `◐` (button) | Toggle light / dark theme |
 
 Show / hide is in the **FOCUS** panel: an eye toggle on each body (and each
@@ -159,6 +161,7 @@ src/
       vec3.ts            f64 vector ops ({x,y,z}, serializable)
       kepler.ts          Kepler solvers, coe↔rv, propagation
       integrators.ts     RK4 for powered flight
+      relativity.ts      special-relativistic coordinate accel (relativistic powered flight)
     maneuver/
       lambert.ts         Lambert solver (single + multi-revolution)
       hohmann.ts         Hohmann transfer + synodic period
@@ -167,6 +170,10 @@ src/
       arrival.ts         B-plane hyperbolic approach targeting
       flyby.ts           gravity-flyby geometry
       assist.ts          two-leg gravity-assist solver + grid search
+      moon.ts            parent-centric moon transfer-window search (J2-aware)
+      moonTour.ts        parent-centric moon gravity-assist flyby chains
+      suggest.ts         auto-route suggester (direct / assist / VEEGA chain), ranked
+      criteria.ts        trajectory scoring (least-Δv / shortest / balanced)
       lowThrust.ts       Edelbaum analytic spiral (electric, power-limited)
       entry.ts           ballistic entry heating (Sutton-Graves) + aerocapture
       interstellar.ts    relativistic brachistochrone + transit estimator
@@ -177,6 +184,9 @@ src/
     ships.ts             ship helpers: state, mass, Δv, thermal readout
     surface.ts           landing/takeoff Δv: gravity-turn, atmospheres, aerobraking
     thermal.ts           Stefan-Boltzmann, solar flux, detection range
+    forces.ts            force/momentum breakdown for the overlay (gravity, tidal, velocity)
+    trajectory.ts        live ship forecast path from osculating elements
+    route.ts             heliocentric Lambert route geometry for visualization
     stars.ts             nearest ~24 star systems in ecliptic-J2000 frame
     comms.ts             light-time, signal propagation at c, retarded state
     serialize.ts         canonical world serialization + hashWorld (golden-state oracle)
@@ -186,9 +196,16 @@ src/
   render/                three.js read-only view — never feeds back into core
     SceneManager.ts      scene, camera, renderer, floating origin, OrbitControls
     bodyViews.ts         body meshes, orbit lines (phased through the marker), label anchors
+    bodyTextures.ts      procedural seeded surface textures (no image assets)
+    bodyFeatures.ts      real IAU surface-feature tables drawn over the texture base
+    earthLand.ts         real Earth coastline polygons → land/sea mask
     shipViews.ts         ship meshes + floating name labels
     starViews.ts         nearby real-star markers (the only sky; no procedural starfield)
+    interstellarView.ts  the interstellar map: nearby systems about Sol + ships in transit
+    trajectoryViews.ts   ship forecast / planned-route / preview-ghost overlays
+    forceViews.ts        gravity & momentum vector overlay for the focused object
     commsViews.ts        light-cone / signal-in-flight visualizations
+    overlayUtil.ts       shared overlay primitives (polylines, arrows, palette)
     visibility.ts        shared show/hide state (per-body, per-kind, per-layer)
     scale.ts             metre ↔ render-unit conversion, logarithmic depth
   ui/                    DOM panels over the WebGL canvas
@@ -197,6 +214,13 @@ src/
     transferPanel.ts     porkchop plot, gravity-assist via mode, commit
     interstellarPanel.ts star picker, torchship selector, transit estimator, dispatch
     keyboard.ts          shortcuts + smooth per-frame camera orbit/zoom
+    dom.ts               shared DOM builders (auto-tag glossary terms)
+    collapsible.ts       persistent disclosure sections
+    popover.ts           anchored flyout panels (e.g. the Layers menu)
+    tooltip.ts           hover/focus glossary definition cards
+    glossary.ts          physics-true term definitions (single source)
+    scaleBar.ts          cartographic scale-bar overlay
+    uiState.ts           persisted UI layout state (localStorage)
   app/                   wiring
     main.ts              entry point + the one-way frame loop
     commands.ts          player intents → validated world mutations
