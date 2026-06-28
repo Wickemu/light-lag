@@ -41,8 +41,9 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 | `constants.ts` | Physical constants + real Solar-System body data (JPL elements, μ=GM, radii, atmospheres). |
 | `ephemeris.ts` | Analytic body state (position, velocity) at any `t`. |
 | `orbit.ts` | vis-viva, apsides, periods, maneuver frame, SOI radius, Oberth burn, J2 secular precession rates, sun-synchronous inclination. |
-| `propulsion.ts` | Rocket equation, staging, Δv budget, electric power law (`F = min(F_rated, 2ηP/vₑ)`), variable-Isp constant-power throttle (`variableIspBurn`: thrust↔Isp↔time trade at `F·vₑ = 2ηP`). |
+| `propulsion.ts` | Rocket equation, staging, Δv budget, electric power law (`F = min(F_rated, 2ηP/vₑ)`), variable-Isp constant-power throttle (`variableIspBurn`: thrust↔Isp↔time trade at `F·vₑ = 2ηP`); per-stage tank capacity (`stageCapacity`/`stageHeadroom`, the refuelling ceiling). |
 | `ships.ts` | Ship mass/state/orbit helpers; impulsive Δv (with affordability check); thermal state readout. |
+| `refuel.ts` | Rendezvous-gated orbital propellant transfer + in-orbit assembly: `dockState`/`isDockable` (shared-primary, co-located gate), `transferProp` (mass-conserving, capacity-capped), `mergeStacks` (dock-merge two craft into one). |
 | `surface.ts` | Landing/takeoff Δv budgets: calibrated gravity-turn ascent through real exponential atmospheres, aerobraking fraction on descent. |
 | `forces.ts` | Read-only force/momentum breakdown for the overlay: dominant gravitational pull, secondary tidal perturbation, and primary-relative velocity for a body or ship (`bodyForceBreakdown`, `shipForceBreakdown`). |
 | `trajectory.ts` | Live ship forecast path sampled from osculating elements — a continuous, snap-free bound ellipse or unbound arc with a trailing past arc (`shipForecastPath`). |
