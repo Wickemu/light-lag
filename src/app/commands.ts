@@ -8,7 +8,7 @@
  */
 
 import { type Simulation } from "../core/sim.ts";
-import { type Ship, type BurnDir, type ShipTransfer, type PoweredSample } from "../core/world.ts";
+import { type Ship, type BurnDir, type BurnGoal, type ShipTransfer, type PoweredSample } from "../core/world.ts";
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "../core/orbit.ts";
 import { hohmann } from "../core/maneuver/hohmann.ts";
@@ -203,9 +203,22 @@ export function shipPropStatus(sim: Simulation, shipId: string): { available: nu
  *
  * Returns the one-way light delay (s) until the order reaches the ship, or null.
  */
-export function sendBurn(sim: Simulation, shipId: string, dvTarget: number, dir: BurnDir): number | null {
+export function sendBurn(
+  sim: Simulation,
+  shipId: string,
+  dvTarget: number,
+  dir: BurnDir,
+  goal?: BurnGoal,
+): number | null {
   if (dvTarget <= 0) return null;
-  const res = sim.sendCommand(shipId, { type: "burn", dv: dvTarget, dir });
+  // Open-loop (no goal): dvTarget is the exact Δv. Closed-loop: dvTarget is the
+  // correction CAP, and we stamp the primary the goal's radii are measured about
+  // (the retarded snapshot the player aimed from) so delivery can reject an
+  // order whose target frame the ship has since left.
+  const command = goal
+    ? { type: "burn" as const, dv: dvTarget, dir, goal, goalPrimary: sim.world.ships.get(shipId)?.primary }
+    : { type: "burn" as const, dv: dvTarget, dir };
+  const res = sim.sendCommand(shipId, command);
   return res ? res.delay : null;
 }
 

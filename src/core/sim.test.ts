@@ -3,7 +3,8 @@ import { createWorld } from "./world.ts";
 import { Simulation } from "./sim.ts";
 import { spawnShip, sendBurn, defaultDesign, planTransfer, type ShipDesign } from "../app/commands.ts";
 import { shipOsculatingElements, totalMass, shipWorldState, shipRelativeState, applyImpulsiveDv, dvRemaining, shipThermalState } from "./ships.ts";
-import { summarizeOrbit, circularOrbit } from "./orbit.ts";
+import { summarizeOrbit, circularOrbit, apoapsisRadius } from "./orbit.ts";
+import { serializeWorld, deserializeWorld, hashWorld } from "./serialize.ts";
 import { exhaustVelocity, propellantForDv, thrustAt, velocityFromRapidity, rapidity } from "./propulsion.ts";
 import { computePorkchop } from "./maneuver/porkchop.ts";
 import { bodyState } from "./ephemeris.ts";
@@ -490,6 +491,122 @@ describe("Phase 5: light-lag command", () => {
     const fine = run(30);
     expect(Math.abs(big.a - fine.a)).toBeLessThan(50); // metres
     expect(Math.abs(big.e - fine.e)).toBeLessThan(1e-5);
+  });
+});
+
+describe("Phase: closed-loop guidance", () => {
+  const propOf = (sim: Simulation, id: string) =>
+    sim.world.ships.get(id)!.stages.reduce((s, st) => s + st.propMass, 0);
+
+  // Put a ship deep in heliocentric transit (primary === "sun"), far from Earth.
+  const inTransit = () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const pork = computePorkchop({
+      fromId: "earth", toId: "mars",
+      depStart: 0, depEnd: 800 * DAY, depN: 60, tofMin: 120 * DAY, tofMax: 330 * DAY, tofN: 44,
+      rParkFrom: R_EARTH + 4e5, rParkTo: BODY_BY_ID.get("mars")!.radius + 4e5,
+    });
+    const best = pork.best!;
+    planTransfer(sim, id, "mars", best.depT, best.arrT);
+    sim.step(best.depT + 130 * DAY - sim.world.t);
+    return { sim, id };
+  };
+
+  it("trims Δv at delivery to hit the target apoapsis (LEO)", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+    const targetAlt = 2000e3; // raise apoapsis to 2000 km
+    sendBurn(sim, id, 2000, "prograde", { kind: "apoapsis", rTarget: R_EARTH + targetAlt });
+    flyUntilCoast(sim, id);
+    const after = summarizeOrbit(shipOsculatingElements(ship, sim.world.t), MU_EARTH, R_EARTH);
+    // Impulsive-sized goal vs. the finite, continuously-steered burn ⇒ a small gap.
+    expect(Math.abs(after.apoapsisAlt - targetAlt)).toBeLessThan(5e4); // within ~50 km
+  });
+
+  it("refuses (NACK) when the goal needs more than the correction cap", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+    const propBefore = propOf(sim, id);
+    // ~2.3 km/s would be needed; cap it at 50 m/s ⇒ unreachable.
+    const delay = sendBurn(sim, id, 50, "prograde", { kind: "apoapsis", rTarget: R_EARTH + 30000e3 });
+    expect(delay).not.toBeNull();
+    sim.step(delay! + 1); // past delivery
+    expect(sim.world.messages.some((m) => m.kind === "command")).toBe(false); // delivered + consumed
+    expect(ship.mode).toBe("coast"); // but no burn started → NACK
+    expect(propOf(sim, id)).toBe(propBefore);
+  });
+
+  it("refuses (NACK) when the ship has left the goal's SOI", () => {
+    const { sim, id } = inTransit();
+    const ship = sim.world.ships.get(id)!;
+    expect(ship.primary).toBe("sun");
+    const propBefore = propOf(sim, id);
+    // A goal framed about "earth" is invalid for a ship now orbiting the Sun.
+    const res = sim.sendCommand(id, {
+      type: "burn", dv: 100, dir: "prograde",
+      goal: { kind: "apoapsis", rTarget: R_EARTH + 1000e3 }, goalPrimary: "earth",
+    })!;
+    sim.step(res.delay + 5000);
+    expect(sim.world.messages.some((m) => m.kind === "command")).toBe(false);
+    expect(ship.mode).toBe("coast");
+    expect(propOf(sim, id)).toBe(propBefore);
+  });
+
+  it("refuses (NACK) when the orbit already meets the goal", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, defaultDesign());
+    const ship = sim.world.ships.get(id)!;
+    const propBefore = propOf(sim, id);
+    const delay = sendBurn(sim, id, 500, "prograde", { kind: "circular" }); // already circular at LEO
+    expect(delay).not.toBeNull();
+    sim.step(delay! + 1);
+    expect(ship.mode).toBe("coast");
+    expect(propOf(sim, id)).toBe(propBefore);
+  });
+
+  it("integrates a closed-loop-delivered burn identically across time-chunkings", () => {
+    const run = (chunk: number) => {
+      const { sim, id } = inTransit();
+      const ship = sim.world.ships.get(id)!;
+      const el0 = shipOsculatingElements(ship, sim.world.t);
+      const rTarget = apoapsisRadius(el0.a, el0.e) + 2e8; // a modest heliocentric apoapsis raise
+      const res = sim.sendCommand(id, {
+        type: "burn", dv: 5000, dir: "prograde",
+        goal: { kind: "apoapsis", rTarget }, goalPrimary: "sun",
+      })!;
+      const tEnd = sim.world.t + res.delay + 5000;
+      while (sim.world.t < tEnd) sim.step(Math.min(chunk, tEnd - sim.world.t));
+      return shipOsculatingElements(ship, sim.world.t);
+    };
+    const big = run(1e12); // one giant jump across delivery + the trimmed burn
+    const fine = run(30);
+    expect(Math.abs(big.a - fine.a)).toBeLessThan(50); // metres
+    expect(Math.abs(big.e - fine.e)).toBeLessThan(1e-5);
+  });
+
+  it("serializes an OPEN-loop command byte-identically (no goal fields)", () => {
+    const { sim, id } = inTransit();
+    sim.sendCommand(id, { type: "burn", dv: 50, dir: "prograde" }); // stays in flight (long delay)
+    const ser = JSON.parse(serializeWorld(sim.world));
+    const cmd = ser.messages.find((m: { kind: string }) => m.kind === "command").command;
+    expect(Object.keys(cmd).sort()).toEqual(["dir", "dv", "type"]);
+  });
+
+  it("round-trips a closed-loop command through serialize/deserialize hash-stably", () => {
+    const { sim, id } = inTransit();
+    sim.sendCommand(id, {
+      type: "burn", dv: 100, dir: "prograde",
+      goal: { kind: "periapsis", rTarget: 1.4e11 }, goalPrimary: "sun",
+    });
+    const h1 = hashWorld(sim.world);
+    const w2 = deserializeWorld(serializeWorld(sim.world));
+    expect(hashWorld(w2)).toBe(h1);
+    const cmd = w2.messages.find((m) => m.kind === "command")!.command!;
+    expect(cmd.goal).toBeDefined();
+    expect(cmd.goalPrimary).toBe("sun");
   });
 });
 

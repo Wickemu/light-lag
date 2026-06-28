@@ -27,7 +27,7 @@
 
 import {
   type WorldState, type Ship, type Station, type Maneuver,
-  type MessageInFlight, type ShipBurn, type ShipTransfer, type ShipCommand,
+  type MessageInFlight, type ShipBurn, type ShipTransfer, type ShipCommand, type BurnGoal,
   type InterstellarLeg, type SpiralLeg, type EntryLeg,
   type LaunchLeg, type DescentLeg, type PoweredSample,
 } from "./world.ts";
@@ -157,8 +157,25 @@ function qManeuver(m: Maneuver) {
   return { id: m.id, shipId: m.shipId, tIgnite: q(m.tIgnite), executed: m.executed };
 }
 
-function qCommand(c: ShipCommand) {
-  return { type: c.type, dv: q(c.dv), dir: c.dir };
+function qBurnGoal(g: BurnGoal): Record<string, unknown> {
+  switch (g.kind) {
+    case "periapsis":
+    case "apoapsis":
+      return { kind: g.kind, rTarget: q(g.rTarget) };
+    case "sma":
+      return { kind: g.kind, aTarget: q(g.aTarget) };
+    case "circular":
+      return { kind: g.kind };
+  }
+}
+
+function qCommand(c: ShipCommand): Record<string, unknown> {
+  // Keep open-loop commands byte-identical to before (goal absent) so existing
+  // golden hashes don't churn; only closed-loop commands carry the extra fields.
+  const o: Record<string, unknown> = { type: c.type, dv: q(c.dv), dir: c.dir };
+  if (c.goal) o.goal = qBurnGoal(c.goal);
+  if (c.goalPrimary) o.goalPrimary = c.goalPrimary;
+  return o;
 }
 
 function qMessage(m: MessageInFlight): Record<string, unknown> {
@@ -226,6 +243,7 @@ export function hashWorld(world: WorldState): string {
  *  field that happens to equal a token (e.g. a ship named "Inf") is left alone. */
 const STRING_KEYS = new Set([
   "id", "name", "primary", "mode", "targetId", "shipId", "label", "kind", "dir", "type", "controlNode", "status",
+  "goalPrimary",
 ]);
 
 /** Inverse of q()'s non-finite tokens, applied during JSON.parse. */
