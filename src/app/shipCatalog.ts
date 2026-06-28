@@ -265,16 +265,23 @@ export const SHIP_PRESETS: ShipPreset[] = [
   },
   {
     id: "s-ivb-tli",
-    name: "S-IVB (TLI stage)",
+    name: "Apollo stack (S-IVB + CSM)",
     category: "Historical",
     role: "in-space",
     era: "1968–1972",
     blurb:
-      "The Saturn third stage as flown from LEO: one restart of the J-2 to throw the ~49 t Apollo stack toward the Moon. A textbook demonstration of the Oberth effect — burn deep in Earth's well and the trans-lunar injection is cheap.",
-    design: design("S-IVB (TLI stage)", {
-      payloadMass: 48_600, // CSM + LM + spacecraft-LM adapter + instrument unit
+      "The full Apollo lunar stack as deployed in LEO. The S-IVB third stage restarts to throw it toward the Moon (trans-lunar injection — a textbook Oberth burn, cheap deep in Earth's well), then the CSM's own Service Propulsion System inserts into lunar orbit and burns home, with the Command + Lunar Modules riding as the ~20 t inert cargo. A complete Earth-to-lunar-orbit vehicle — the in-space twin of what the Saturn V leaves in orbit.",
+    // The Apollo spacecraft's own propulsion is explicit (matching the saturn-v preset): the S-IVB is
+    // the TLI stage and the Service Module's SPS (same engine as the apollo-csm preset) is the
+    // lunar-orbit-insertion stage, so the stack can actually complete the trip instead of stranding
+    // the Apollo modules as dead mass at the Moon.
+    design: design("Apollo stack (S-IVB + CSM)", {
+      payloadMass: 20_480, // Command Module (5.56 t) + Lunar Module (~14.85 t) — inert cargo on the CSM
       altitudeKm: 185,
-      stages: [S("S-IVB", 13_500, 107_100, 421, 1_033e3)],
+      stages: [
+        S("S-IVB", 13_500, 107_100, 421, 1_033e3), // J-2 restart — trans-lunar injection
+        S("CSM SPS", 6_110, 18_410, 314, 91_200), // Service Module engine — lunar-orbit insertion (+ trans-Earth return)
+      ],
     }),
   },
   {
