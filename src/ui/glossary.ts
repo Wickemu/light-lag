@@ -92,7 +92,7 @@ const ENTRIES: Entry[] = [
   {
     terms: ["Doppler"],
     title: "Doppler tint",
-    def: "Tints each ship by the relativistic Doppler shift of its telemetry seen from the control node — red receding, blue approaching. Invisible at planetary speeds; vivid on a near-c torchship, flipping sign at the mid-flight turnaround. Render-only; it changes nothing in the sim.",
+    def: "Tints each ship by the relativistic Doppler shift of its telemetry seen from the control node — red receding, blue approaching. Invisible at planetary speeds; deep red on a near-c torchship (it recedes the whole way out, strongest near mid-flight). Render-only; it changes nothing in the sim.",
   },
 
   // ── The rocket equation & the design ────────────────────────────────────────

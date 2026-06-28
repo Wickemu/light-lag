@@ -168,8 +168,10 @@ export class InterstellarView {
         // Mark it as thrusting throughout; ▲ while accelerating, ▼ after the flip
         // at the leg's midpoint.
         const accelerating = t < (leg.tDepart + leg.tArrive) / 2;
-        // Doppler tint (opt-in): a near-c torchship reddens hard on the outbound
-        // accelerating half and blue-shifts after the flip — the payoff case.
+        // Doppler tint (opt-in): a near-c torchship reddens hard — it recedes from
+        // the control node the whole leg (even decelerating after the flip it is
+        // still outbound), so the shift stays red, deepest near mid-flight where β
+        // peaks. (Blue would need a ship moving toward the control node.)
         let shipColor = THRUST_COLOR;
         if (this.vis.layer("doppler_tint")) {
           const dop = shipTelemetryDoppler(ship, world.controlNode, t);
