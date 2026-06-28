@@ -871,6 +871,26 @@ export class ShipPanel {
         lines.push(kv("In transit", `→ ${tName}, arrive in ${((tr.tArrive - t) / DAY).toFixed(0)} d`));
         lines.push(kv("Capture Δv", `${(tr.dvArrive / 1000).toFixed(2)} km/s`));
       }
+      // Per-flyby B-plane geometry: once a pass is flown the leg carries the targeting it
+      // actually flew — periapsis altitude, impact parameter b (in body radii), the bend,
+      // and whether the bend was free or bought with a periapsis burn. Pending passes show
+      // their scheduled time.
+      if (tr.flybys) {
+        for (const f of tr.flybys) {
+          const fb = BODY_BY_ID.get(f.bodyId);
+          const fName = fb?.name ?? f.bodyId;
+          if (f.done && f.rpAchieved !== undefined) {
+            const periAlt = (f.rpAchieved - (fb?.radius ?? 0)) / 1000;
+            const bRadii = fb ? f.bMag! / fb.radius : 0;
+            const free = (f.residualTurn ?? 0) < 1e-6 && f.dvBurn < 1;
+            lines.push(kv(`Flyby ${fName}`,
+              `peri ${periAlt.toFixed(0)} km · b ${bRadii.toFixed(1)} R · turn ${((f.turn ?? 0) * RAD).toFixed(0)}°` +
+              (free ? " · free" : ` · burn ${f.dvBurn.toFixed(0)} m/s`)));
+          } else {
+            lines.push(kv(`Flyby ${fName}`, `pending · ${formatDate(f.tFlyby)}`));
+          }
+        }
+      }
     }
     // "Warp to departure": only meaningful for a planned, not-yet-departed transfer.
     const planned = !!tr && !tr.departed;

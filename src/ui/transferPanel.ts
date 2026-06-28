@@ -25,6 +25,7 @@ import { dvRemaining, shipWorldState, shipOsculatingElements, shipRelativeState 
 import { bodyStateRelative } from "../core/ephemeris.ts";
 import { length } from "../core/math/vec3.ts";
 import { periapsisRadius } from "../core/orbit.ts";
+import { impactParameter } from "../core/maneuver/flyby.ts";
 import { formatDate } from "../core/time.ts";
 import { type BodyDef, type BodyKind, BODIES, BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
 import { div, btn, kv, setDisabled } from "./dom.ts";
@@ -862,8 +863,12 @@ export class TransferPanel {
       this.readout.innerHTML =
         optLine +
         kv("Depart", formatDate(r.tDepart)) +
-        r.flybys.map((f) => kv(`Flyby ${BODY_BY_ID.get(f.bodyId)!.name}`,
-          `${formatDate(f.t)} · ${(f.dvFlyby / 1000).toFixed(3)} km/s${f.unpowered ? " (free)" : ""}`)).join("") +
+        r.flybys.map((f) => {
+          const fb = BODY_BY_ID.get(f.bodyId)!;
+          const bRadii = (impactParameter(f.vInfIn, fb.mu, f.rp) / fb.radius).toFixed(1);
+          return kv(`Flyby ${fb.name}`,
+            `${formatDate(f.t)} · b ${bRadii} R, turn ${((f.turnRequired * 180) / Math.PI).toFixed(0)}° · ${(f.dvFlyby / 1000).toFixed(3)} km/s${f.unpowered ? " (free)" : ""}`);
+        }).join("") +
         kv("Arrive", formatDate(r.tArrive)) +
         kv("Flight time", `${((r.tArrive - r.tDepart) / DAY).toFixed(0)} days`) +
         kv("Injection Δv", `${(r.dvDepart / 1000).toFixed(3)} km/s`) +
@@ -894,11 +899,13 @@ export class TransferPanel {
       const verdict = cap.feasible
         ? this.budgetVerdict(a.dvDepart + a.dvFlyby, cap.dvArrive, haveDv)
         : { ok: false, html: `<div class="warn">✗ ${cap.label}</div>` };
-      this.axisEl.innerHTML = `<span>gravity assist via ${BODY_BY_ID.get(this.viaId)!.name}</span>`;
+      const vb = BODY_BY_ID.get(this.viaId)!;
+      const bRadii = (impactParameter(a.vInfIn, vb.mu, a.flybyRadius) / vb.radius).toFixed(1);
+      this.axisEl.innerHTML = `<span>gravity assist via ${vb.name}</span>`;
       this.readout.innerHTML =
         optLine +
         kv("Depart", formatDate(a.tDepart)) +
-        kv(`Flyby ${BODY_BY_ID.get(this.viaId)!.name}`, `${formatDate(a.tFlyby)} · ${(a.flybyRadius / 1000).toFixed(0)} km, turn ${((a.turnRequired * 180) / Math.PI).toFixed(0)}°`) +
+        kv(`Flyby ${vb.name}`, `${formatDate(a.tFlyby)} · peri ${(a.flybyRadius / 1000).toFixed(0)} km, b ${bRadii} R, turn ${((a.turnRequired * 180) / Math.PI).toFixed(0)}°`) +
         kv("Arrive", formatDate(a.tArrive)) +
         kv("Flight time", `${((a.tArrive - a.tDepart) / DAY).toFixed(0)} days`) +
         kv("Injection Δv", `${(a.dvDepart / 1000).toFixed(3)} km/s`) +
