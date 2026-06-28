@@ -60,6 +60,7 @@ const LAYER_CHIPS: { key: LayerKey; label: string }[] = [
   { key: "labels", label: "Labels" },
   { key: "stars", label: "Stars" },
   { key: "starLabels", label: "Star names" },
+  { key: "constellations", label: "Constellations" },
   { key: "ships", label: "Ships" },
   { key: "comms", label: "Comms" },
   { key: "doppler_tint", label: "Doppler" },

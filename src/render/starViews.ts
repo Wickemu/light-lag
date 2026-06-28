@@ -20,6 +20,7 @@ import { length } from "../core/math/vec3.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
 import { SkyBackdrop } from "./skyBackdrop.ts";
+import { ConstellationLines } from "./constellationLines.ts";
 
 /** Render-unit distance of the sky sprites from the camera. Far enough that the
  *  whole orrery (Neptune ≈ 4488 units, camera pull-out ≤ 5e6) always sits in
@@ -149,6 +150,7 @@ export class StarViews {
   private visuals: StarVisual[] = [];
   private labelLayer: HTMLElement;
   private backdrop: SkyBackdrop;
+  private constellations: ConstellationLines;
 
   constructor(private sm: SceneManager, uiRoot: HTMLElement, private vis: Visibility) {
     this.labelLayer = document.createElement("div");
@@ -158,6 +160,7 @@ export class StarViews {
     // The distant bright stars (Betelgeuse, Rigel, the constellation-filling stars)
     // sit on the same unzoomable sky shell as the curated nearby stars.
     this.backdrop = new SkyBackdrop(this.sm, uiRoot, BACKDROP_STARS, SKY_RADIUS, "star-label backdrop");
+    this.constellations = new ConstellationLines(this.sm, SKY_RADIUS);
   }
 
   private build(def: StarDef): void {
@@ -206,7 +209,10 @@ export class StarViews {
   update(t = 0): void {
     // The interstellar view owns the stars at that scale; the in-system sky is
     // only for the orrery mode.
-    if (this.sm.viewMode !== "system" || !this.vis.layer("stars")) {
+    const isSystem = this.sm.viewMode === "system";
+    // Constellation figures have their own toggle, independent of the star layer.
+    this.constellations.update(isSystem && this.vis.layer("constellations"));
+    if (!isSystem || !this.vis.layer("stars")) {
       this.hideAll();
       this.backdrop.update(false, false);
       return;
