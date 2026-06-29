@@ -102,13 +102,38 @@ export function spawnShip(sim: Simulation, design: ShipDesign): string {
   return id;
 }
 
-/** Body-fixed launch-site direction at latitude φ = the design's target inclination
- *  (the minimum inclination a pad can reach is its latitude; `launchShip` recovers it
- *  as asin(surfaceDir.z)). Longitude is arbitrary — the body rotates under the pad — so
- *  we seat it on the +x meridian. */
+/** Real launch sites, east-positive longitude (matching the procedural Earth map in
+ *  render/earthLand.ts). A site naturally serves inclinations ≥ its own latitude, so we
+ *  pick the one whose latitude is nearest the design's target inclination: a 28.5° design
+ *  rolls out at Cape Canaveral, an ISS-class 51.6° at Baikonur, an equatorial GTO run at
+ *  Kourou, an SSO/polar one at Vandenberg or Plesetsk. Latitudes here are only used to
+ *  CHOOSE the site (the pad's actual latitude stays at the inclination — see below). */
+const LAUNCH_SITES: { name: string; latDeg: number; lonDeg: number }[] = [
+  { name: "Guiana Space Centre", latDeg: 5.2, lonDeg: -52.8 }, // Kourou — equatorial / GTO
+  { name: "Cape Canaveral", latDeg: 28.5, lonDeg: -80.6 }, // KSC — the classic 28.5°
+  { name: "Vandenberg", latDeg: 34.7, lonDeg: -120.6 }, // SSO / polar / retrograde
+  { name: "Baikonur", latDeg: 45.96, lonDeg: 63.3 }, // ISS-class 51.6°
+  { name: "Plesetsk", latDeg: 62.9, lonDeg: 40.6 }, // high inclination
+];
+
+/** Body-fixed launch-site direction. The pad's LATITUDE is the design's target inclination
+ *  (the minimum inclination a pad can reach is its latitude; `launchShip` recovers it as
+ *  asin(surfaceDir.z), so this MUST stay = inclination to honour the requested orbit). The
+ *  LONGITUDE is physically free — the body rotates under the pad — so rather than leaving it
+ *  on the prime meridian (which lands the dot mid-Sahara at 0°E), we borrow the longitude of
+ *  the real launch site nearest this inclination, putting the pad in a recognisable launch
+ *  region (Cape Canaveral for the default 28.5°). */
 function launchSiteDir(inclinationDeg: number): { x: number; y: number; z: number } {
-  const phi = Math.min(Math.abs(inclinationDeg), 90) * DEG;
-  return { x: Math.cos(phi), y: 0, z: Math.sin(phi) };
+  const incl = Math.min(Math.abs(inclinationDeg), 90);
+  const phi = incl * DEG; // pad latitude (preserves the recovered inclination)
+  const site = LAUNCH_SITES.reduce((best, s) =>
+    Math.abs(s.latDeg - incl) < Math.abs(best.latDeg - incl) ? s : best);
+  const lambda = site.lonDeg * DEG; // east-positive longitude
+  return {
+    x: Math.cos(phi) * Math.cos(lambda),
+    y: Math.cos(phi) * Math.sin(lambda),
+    z: Math.sin(phi),
+  };
 }
 
 /**

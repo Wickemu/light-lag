@@ -104,6 +104,20 @@ describe("spawn placement by role", () => {
     expect(ship.elements).toBeUndefined(); // on the pad, not on an orbit
   });
 
+  it("seats the pad at a real launch-site longitude — a 28.5° design rolls out at Cape Canaveral, not mid-Sahara", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const design: ShipDesign = { ...defaultDesign(), inclinationDeg: 28.5, fromSurface: true };
+    const ship = sim.world.ships.get(spawnOnPad(sim, design))!;
+    const d = ship.landed!.surfaceDir;
+    // Body-fixed direction → geographic lat/lon (east-positive), the same convention the
+    // procedural Earth texture uses (render/bodyTextures lonLatToPx, render/earthLand).
+    const latDeg = Math.asin(d.z) / DEG;
+    const lonDeg = Math.atan2(d.y, d.x) / DEG;
+    expect(latDeg).toBeCloseTo(28.5, 4); // latitude still = inclination (orbit unchanged)
+    expect(lonDeg).toBeCloseTo(-80.6, 1); // Cape Canaveral longitude, NOT 0° (the Sahara)
+    expect(Math.abs(lonDeg)).toBeGreaterThan(10); // guards against regressing to the prime meridian
+  });
+
   it("in-space craft still deploy directly in LEO with full propellant", () => {
     const sim = new Simulation(createWorld(1, 0));
     for (const p of inSpace) {
