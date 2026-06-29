@@ -22,6 +22,9 @@ import { CommsViews } from "../render/commsViews.ts";
 import { Hud } from "../ui/hud.ts";
 import { ScaleBar } from "../ui/scaleBar.ts";
 import { ShipPanel } from "../ui/shipPanel.ts";
+import { Shipyard } from "../ui/shipyard.ts";
+import { MissionHud } from "../ui/missionHud.ts";
+import { EventFeed } from "../ui/events.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
 import { InterstellarPanel } from "../ui/interstellarPanel.ts";
 import { KeyboardManager } from "../ui/keyboard.ts";
@@ -58,12 +61,25 @@ const hud = new Hud(uiRoot, sim, sm, visibility);
 const scaleBar = new ScaleBar(uiRoot, sm);
 const transferPanel = new TransferPanel(uiRoot, sim, sm, trajectoryViews);
 const interstellarPanel = new InterstellarPanel(uiRoot, sim, sm);
-const shipPanel = new ShipPanel(
+// The Shipyard (build) and ShipPanel (fly) reference each other: the yard hands a
+// launched ship to the console; the console opens the yard. Forward-declare the
+// console so the yard's launch callback can reach it.
+let shipPanel: ShipPanel;
+const shipyard = new Shipyard(uiRoot, sim, (shipId) => {
+  shipPanel.selectShip(shipId);
+  if (!shipPanel.isOpen()) shipPanel.toggle();
+});
+shipPanel = new ShipPanel(
   uiRoot, sim, sm,
   (shipId) => transferPanel.open(shipId),
   (shipId) => interstellarPanel.open(shipId),
+  () => shipyard.open(),
 );
-const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel, interstellarPanel);
+// Mission events drive the closed-panel HUD's alerts and the console's event log.
+const eventFeed = new EventFeed();
+shipPanel.attachEventFeed(eventFeed);
+const missionHud = new MissionHud(uiRoot, sim, shipPanel, eventFeed);
+const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel, interstellarPanel, shipyard);
 
 // Hover/focus glossary: one delegated listener over the whole overlay surfaces a
 // definition card for any term-tagged label (kv readouts, fields, headers, …).
@@ -93,6 +109,8 @@ function renderOnce(): void {
   hud.update(fps, views);
   scaleBar.update();
   shipPanel.update(world.t);
+  eventFeed.update(world, world.t);
+  missionHud.update(world.t);
 }
 
 function frame(now: number): void {
@@ -125,6 +143,9 @@ if (import.meta.env.DEV) {
     commsViews,
     hud,
     shipPanel,
+    shipyard,
+    missionHud,
+    eventFeed,
     transferPanel,
     interstellarPanel,
     km,

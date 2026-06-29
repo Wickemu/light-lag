@@ -72,6 +72,8 @@ export class Hud {
   private dateEl!: HTMLElement;
   private warpEl!: HTMLElement;
   private pauseBtn!: HTMLButtonElement;
+  private navDockEl!: HTMLElement;
+  private navTab!: HTMLButtonElement;
   private focusTitle!: HTMLElement;
   private focusBody!: HTMLElement;
   private fpsEl!: HTMLElement;
@@ -152,9 +154,16 @@ export class Hud {
     // one place. Each row carries an eye toggle (show/hide that body); each group
     // header an eye toggle for the whole kind.
     const dock = el("div", "panel nav-dock");
+    this.navDockEl = dock;
     const list = el("div", "nav-list");
     const head = el("div", "list-head");
-    head.appendChild(el("div", "panel-title", "FOCUS"));
+    const headRow = el("div", "panel-head");
+    headRow.appendChild(el("div", "panel-title", "FOCUS"));
+    const navClose = button("✕", () => this.toggleNav());
+    navClose.className = "panel-close";
+    navClose.title = "Hide the Navigation dock (N or Esc)";
+    headRow.appendChild(navClose);
+    head.appendChild(headRow);
     list.appendChild(head);
 
     for (const g of GROUPS) {
@@ -208,6 +217,14 @@ export class Hud {
     focus.append(this.focusTitle, this.focusBody);
     dock.appendChild(focus);
     this.root.appendChild(dock);
+
+    // Navigation dock toggle: a re-open tab + persisted open/closed state, so the
+    // right edge can be cleared just like the Mission panel.
+    this.navTab = button("◂ NAV", () => this.toggleNav());
+    this.navTab.className = "dock-tab nav-tab";
+    this.navTab.title = "Show the Navigation dock (N)";
+    this.root.appendChild(this.navTab);
+    this.setNavOpen(getFlag("dock.nav.open", true));
 
     // Tiny FPS readout (bottom-right), off by default — a debug aid, not chrome.
     // Toggled from the Help overlay; the per-frame write is cheap regardless.
@@ -294,7 +311,9 @@ export class Hud {
       ["1–8", "focus Sun … Saturn"],
       ["tab", "cycle focus"],
       ["M", "system ⇄ interstellar map"],
-      ["F", "ship / flight panel"],
+      ["F", "Mission panel"],
+      ["B", "Shipyard (build)"],
+      ["N", "Navigation dock"],
       ["V", "cycle view angle"],
       ["R", "reset camera framing"],
       ["?", "this help"],
@@ -353,6 +372,15 @@ export class Hud {
   }
   closeHelp(): void {
     this.helpEl.style.display = "none";
+  }
+
+  /** Toggle the right Navigation dock (keyboard N, its ✕, or the re-open tab). */
+  toggleNav(): void { this.setNavOpen(!this.isNavOpen()); }
+  isNavOpen(): boolean { return this.navDockEl.style.display !== "none"; }
+  private setNavOpen(open: boolean): void {
+    this.navDockEl.style.display = open ? "flex" : "none";
+    this.navTab.style.display = open ? "none" : "flex";
+    setFlag("dock.nav.open", open);
   }
 
   private setShowFps(on: boolean): void {
