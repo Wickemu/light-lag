@@ -15,11 +15,13 @@
  * ingested satellites inconsistent with those.
  *
  * Accuracy: a TLE is exact only near its epoch; an analytically-propagated orbit
- * still drifts from the true satellite over days. The engine now coasts with the
- * TLE's measured secular drag (a constant ṅ → ½·ṅ·dt² along-track + SMA decay; see
- * `Ship.drag`), which captures the DOMINANT along-track drift but not what SGP4's
- * full density/resonance model does (the runaway as perigee drops, space-weather
- * swings). The sandbox surfaces the residual rather than hiding it.
+ * drifts from the true satellite over days. Real catalog satellites are actively
+ * maintained, so we ingest them as STATION-KEPT (`Ship.stationKept`): they hold their
+ * orbit on Kepler+J2 instead of spiralling in / drifting out when warped far past
+ * epoch. Their measured secular drag rate (`Ship.drag`, from the TLE's ṅ) is still
+ * recorded — the natural decay that station-keeping counters, and the basis for
+ * sizing real station-keeping Δv on player ships later (ROADMAP). The un-kept rung-1
+ * decay model remains in the engine for objects that genuinely decay (e.g. debris).
  *
  * App-layer (the engine never imports satellite.js).
  */
@@ -119,10 +121,15 @@ export function spawnSatellite(sim: Simulation, tle: Tle): string | null {
     stages: [],
     activeStage: 0,
     tau: 0,
+    // Real catalog satellites are actively maintained, so model them as STATION-KEPT:
+    // they hold their orbit rather than spiralling in (or, for a negative ṅ fit, drifting
+    // out) when warped far past the TLE epoch. The corrective burns are implicit (no Δv).
+    stationKept: true,
   };
-  // Carry the TLE's measured secular drag so the coast decays its orbit (rung-1),
-  // approximating the dominant along-track drift instead of coasting drag-free.
-  // Omit a zero rate so a drag-free object serializes like any other coasting ship.
+  // Record the TLE's measured secular decay rate even though station-keeping suppresses
+  // it: it is the orbit's natural (un-countered) drag — the basis for sizing real
+  // station-keeping Δv once player ships experience drag (rung-2; see ROADMAP). Omit a
+  // zero rate so a drag-free object serializes like any other coasting ship.
   const nDot = tleMeanMotionRate(tle.line1);
   if (nDot !== 0) ship.drag = { nDot };
   sim.world.ships.set(id, ship);

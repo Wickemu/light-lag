@@ -230,6 +230,9 @@ export interface Ship {
    * closed form — an along-track advance (½·ṅ·dt²) plus the consistent semi-major-axis
    * decay (n²a³ = μ) — so it stays exact at any time-warp, needing no integration.
    * Present only on satellites ingested from a TLE; absent ⇒ a drag-free conic.
+   * When `stationKept` is set the decay is SUPPRESSED in `coastElements` (the orbit
+   * is actively maintained), but the rate is still recorded here — it is the natural
+   * (un-countered) decay, i.e. the basis for sizing real station-keeping Δv.
    *
    * NEXT STEP — rung 2 (not yet built): replace the constant ṅ with an altitude- and
    * space-weather-dependent rate — a King-Hele averaged-element decay from an
@@ -240,6 +243,20 @@ export interface Ship {
    * per-orbit integration (this constant-rate model needs none).
    */
   drag?: { nDot: number };
+  /**
+   * The orbit is actively STATION-KEPT: its altitude is held against drag. The
+   * engine models the corrective burns IMPLICITLY — `coastElements` simply skips
+   * the `drag` secular decay — so a maintained object holds its orbit instead of
+   * spiralling in (or, for a negative ṅ, ballooning out) when warped far past the
+   * element-set epoch. Used for ingested real satellites, which are maintained in
+   * reality. (J2 precession is NOT suppressed — station-keeping fights drag, not
+   * the oblateness nodal drift, which sun-synchronous orbits actively rely on.)
+   *
+   * NOTE: this is the FREE, no-propellant model appropriate for catalog satellites.
+   * Player-built ships that eventually experience drag should instead pay real Δv
+   * for station-keeping (sized from `drag.nDot`) — see ROADMAP.
+   */
+  stationKept?: boolean;
   /** Thrust: integrated state about `primary` (valid at world.t). */
   r?: Vec3;
   v?: Vec3;

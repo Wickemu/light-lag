@@ -163,10 +163,11 @@ export function landedRelativeState(ship: Ship, t: number): State {
 /**
  * A coasting ship's osculating elements at time t, advanced by Kepler AND by the
  * primary's J2 secular precession (node, apsides, mean anomaly), and — for a ship
- * carrying a `drag` term — by a constant-rate secular atmospheric decay. Every rate
- * here is constant, so this stays exact at any time-warp — a LEO orbit's node
- * regresses ~5°/day, its plane visibly rotating, with no integration. Spherical
- * primaries (no J2) and drag-free orbits reduce to plain Kepler.
+ * carrying a `drag` term that is NOT station-kept — by a constant-rate secular
+ * atmospheric decay. Every rate here is constant, so this stays exact at any
+ * time-warp — a LEO orbit's node regresses ~5°/day, its plane visibly rotating, with
+ * no integration. Spherical primaries (no J2) and drag-free orbits reduce to plain
+ * Kepler.
  */
 export function coastElements(ship: Ship, t: number): KeplerElements {
   const mu = primaryMu(ship);
@@ -184,7 +185,9 @@ export function coastElements(ship: Ship, t: number): KeplerElements {
   // Secular atmospheric drag (rung-1): a constant ṅ advances the along-track angle
   // by ½·ṅ·dt² and shrinks the orbit consistently — n(t) = n0 + ṅ·dt, and n²a³ = μ
   // gives a = a0·(n0/n)^⅔. Bound orbits only (an unbound flyby is not drag-modelled).
-  if (ship.drag && el.e < 1) {
+  // SUPPRESSED for a station-kept orbit: its altitude is held against drag, so it
+  // coasts on Kepler+J2 instead of spiralling in / ballooning out far past epoch.
+  if (ship.drag && !ship.stationKept && el.e < 1) {
     const { nDot } = ship.drag;
     el.M = wrapPi(el.M + 0.5 * nDot * dt * dt);
     const n0 = meanMotion(el.a, mu);

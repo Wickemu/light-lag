@@ -19,7 +19,9 @@ the engine imports nothing from any game.
 - **Orbital mechanics** — vis-viva, apsides, SOI, Oberth, J2 secular precession,
   sun-synchronous inclination, and a closed-form secular atmospheric-drag decay on
   coasting orbits (a constant ṅ → ½·ṅ·dt² along-track + consistent SMA decay; opt-in
-  per ship via `Ship.drag`, used by the sandbox's TLE satellites).
+  per ship via `Ship.drag`). A `Ship.stationKept` flag suppresses that decay — an
+  implicit-burn model for maintained craft, so the sandbox's real satellites hold their
+  orbit; the natural rate stays recorded for sizing future station-keeping Δv.
 - **Propulsion** — rocket equation, staging, Δv budgets, electric power law, variable-Isp.
 - **Maneuvers** — Lambert, Hohmann, porkchop windows, bi-elliptic, gravity assists &
   multi-flyby chains, moon tours, low-thrust Edelbaum spirals, atmospheric entry &
