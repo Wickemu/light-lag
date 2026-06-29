@@ -1207,6 +1207,188 @@ button.danger:hover {
   opacity: 0.8;
 }
 
+/* ══ Mission console redesign ════════════════════════════════════════════════
+   The Mission panel was one cramped column carrying the whole ship lifecycle.
+   It now leads with a status banner + a tight primary readout, tucks the deep
+   telemetry behind disclosure, gates actions on viability, and pushes the
+   build-time and rendezvous workflows out to their own modals. */
+
+/* Compact action in the panel head (✚ Design). Title grows so the buttons group
+   to the right, mirroring the FOCUS/✕ affordance. */
+.ship-panel .panel-head .panel-title {
+  flex: 1 1 auto;
+}
+.head-btn {
+  flex: 0 0 auto;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--panel-border));
+}
+.head-btn:hover {
+  background: color-mix(in srgb, var(--accent) 18%, var(--btn-bg));
+}
+
+/* ── Status banner — the one headline state, tinted by what's happening ─────── */
+.flight-status {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border-left: 3px solid var(--text-dim);
+  background: rgba(127, 127, 127, 0.1);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.flight-status.active {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.flight-status.burning {
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+.flight-status.entry {
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
+}
+.flight-status.landed {
+  border-left-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.flight-status.lost {
+  border-left-color: #e06464;
+  background: color-mix(in srgb, #e06464 20%, transparent);
+}
+
+/* ── Activity chips — cross-cutting flags under the banner ──────────────────── */
+.chip-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.chip-row:empty {
+  display: none;
+}
+.chip {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.chip.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 50%, var(--panel-border));
+}
+
+/* ── Advanced telemetry groups — quiet, subordinate disclosure under Flight ──── */
+.flight-group {
+  border-left: 1px solid var(--panel-border);
+  margin-left: 1px;
+}
+.flight-group > .section-head {
+  padding: 2px 6px;
+}
+.flight-group > .section-head .section-head-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+.flight-group > .section-body {
+  padding: 2px 6px 4px;
+}
+
+/* ── OPERATIONS — surface ops + electric spiral, one bordered card ───────────── */
+.operations {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 7px 9px;
+  margin: 2px 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.05);
+}
+.operations > .section-label {
+  margin-bottom: 0;
+  color: var(--accent);
+}
+.ops-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ops-card .section-label {
+  margin-bottom: 2px;
+}
+
+/* ── Quiet footer — a destructive action kept clear of Execute burn ─────────── */
+.console-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-border);
+}
+
+/* ── Designer & Dock modals (centred, like the planners) ────────────────────── */
+.designer-panel,
+.dock-panel {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  flex-direction: column;
+  gap: 8px;
+  z-index: 20;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+.designer-panel {
+  width: 560px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+.dock-panel {
+  width: 320px;
+  max-width: calc(100vw - 32px);
+}
+.designer-cols {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.designer-stack {
+  flex: 1 1 58%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.designer-side {
+  flex: 1 1 42%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+}
+/* In the roomy modal the budget can breathe — give it a quiet card of its own. */
+.designer-side .budget {
+  margin: 0;
+}
+.designer-side .launch-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* ── Responsive: this is a desktop-first sim. These breakpoints keep the
    panels from overlapping or running off-screen on narrow windows/tablets,
    not a full mobile redesign. ─────────────────────────────────────────────── */
@@ -1262,9 +1444,21 @@ button.danger:hover {
   }
   .transfer-panel,
   .interstellar-panel,
+  .dock-panel,
   .help-overlay {
     width: min(340px, 94vw);
     max-height: 92vh;
     overflow-y: auto;
+  }
+  /* Stack the designer's two columns on a phone so neither gets crushed. */
+  .designer-panel {
+    width: min(360px, 94vw);
+  }
+  .designer-cols {
+    flex-direction: column;
+  }
+  .designer-side {
+    position: static;
+    width: 100%;
   }
 }
