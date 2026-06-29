@@ -8,10 +8,13 @@
  */
 
 import { type Simulation } from "@lightlag/engine/sim";
-import { type Ship, type WorldState, type BurnDir, type BurnGoal, type ShipTransfer, type PoweredSample } from "@lightlag/engine/world";
+import { type Ship, type WorldState, type BurnDir, type BurnGoal, type ShipTransfer, type LagrangePoint, type PoweredSample } from "@lightlag/engine/world";
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone, stageLiftoffThrust, stageLiftoffExhaust } from "@lightlag/engine/propulsion";
-import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "@lightlag/engine/orbit";
+import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius, synchronousRadius, synchronousFeasible, inclinationToEquator, combinedPlaneChangeDv } from "@lightlag/engine/orbit";
 import { hohmann } from "@lightlag/engine/maneuver/hohmann";
+import { orbitRaise } from "@lightlag/engine/maneuver/orbitRaise";
+import { computePorkchopTo, type Porkchop, type PorkGrid } from "@lightlag/engine/maneuver/porkchop";
+import { lagrangeState, lagrangeStateRelative, lagrangeEligible, lagrangeCentral } from "@lightlag/engine/maneuver/lagrange";
 import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, inertialDirToSurface, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "@lightlag/engine/ships";
 import { dockState, isDockable, transferProp, mergeStacks, shipPropAvailable, shipPropHeadroom } from "@lightlag/engine/refuel";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "@lightlag/engine/maneuver/entry";
@@ -30,7 +33,7 @@ import {
 } from "@lightlag/engine/surface";
 import { bodyState, bodyStateRelative, bodyElements } from "@lightlag/engine/ephemeris";
 import { lambert } from "@lightlag/engine/maneuver/lambert";
-import { length, sub, normalize, distance } from "@lightlag/engine/math/vec3";
+import { length, sub, normalize, distance, cross } from "@lightlag/engine/math/vec3";
 import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT, type BodyDef } from "@lightlag/engine/constants";
 
 export interface ShipDesign {
@@ -587,6 +590,198 @@ export function planMoonMission(
   ship.transfer!.thenMoonId = moonId;
   const stage2Dv = estimateMoonLeg(parent, moon, tArrive);
   return { ...stage1, stage2Dv, parentId: parent.id };
+}
+
+// ── Synchronous (GEO) & Lagrange-point destinations ───────────────────────────
+
+/** Sphere-of-influence radius of a body about its parent at time t. */
+function bodySoiRadius(body: BodyDef, t: number): number {
+  const parentMu = body.parent ? (BODY_BY_ID.get(body.parent)?.mu ?? MU_SUN) : MU_SUN;
+  return soiRadius(length(bodyStateRelative(body, t).r), body.mu, parentMu);
+}
+
+/** Is a synchronous (geostationary/areostationary) orbit offered at this body right now? */
+export function synchronousOrbitFeasible(body: BodyDef, t: number): boolean {
+  return synchronousFeasible(body.mu, body.rotationPeriod, body.radius, bodySoiRadius(body, t));
+}
+
+export interface GeoRaisePlan {
+  dv1: number; dv2: number; dvTotal: number; tof: number;
+  aSync: number; mode: "hohmann" | "bi-elliptic";
+}
+
+/** Read-only preview of raising the ship's CURRENT orbit to its primary's synchronous orbit
+ *  (the comsat case: Earth LEO → GEO): a Hohmann raise plus the equatorial plane change folded
+ *  into the apoapsis burn. null if the primary has no usable synchronous orbit, the ship is
+ *  landed, or it is already at/above synchronous radius. */
+export function geoRaisePreview(sim: Simulation, shipId: string): GeoRaisePlan | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || ship.landed) return null;
+  const body = BODY_BY_ID.get(ship.primary);
+  if (!body || !body.rotationPeriod || !synchronousOrbitFeasible(body, sim.world.t)) return null;
+  const el = shipOsculatingElements(ship, sim.world.t);
+  const rNow = el.a;
+  const aSync = synchronousRadius(body.mu, body.rotationPeriod);
+  if (aSync <= rNow) return null;
+  const st = shipRelativeState(ship, sim.world.t);
+  const di = inclinationToEquator(cross(st.r, st.v), body.obliquityDeg ?? 0);
+  const raise = orbitRaise(body.mu, rNow, aSync, di);
+  return { ...raise, aSync };
+}
+
+/** Plan and schedule a same-primary GEO raise (Earth LEO → GEO). An in-SOI Hohmann transfer to
+ *  the synchronous radius with an equatorial plane change; the sim flies the transfer ellipse and
+ *  circularizes at apoapsis (see Simulation.executeSyncRaiseDeparture/arriveSyncRaise). */
+export function planGeoRaise(sim: Simulation, shipId: string): GeoRaisePlan | null {
+  const plan = geoRaisePreview(sim, shipId);
+  if (!plan) return null;
+  const ship = sim.world.ships.get(shipId)!;
+  const t0 = sim.world.t;
+  ship.transfer = {
+    targetId: ship.primary, central: ship.primary, arrival: { kind: "synchronous" },
+    tDepart: t0, tArrive: t0 + plan.tof, dvDepart: plan.dv1, dvArrive: plan.dv2,
+    departed: false, inSoi: true, arrived: false,
+  };
+  sim.events.push({ t: t0, kind: "transfer-depart", entityId: shipId });
+  return plan;
+}
+
+/** The estimated equatorial plane change (rad) for a remote synchronous capture: the arrival
+ *  hyperbola is ~ecliptic, so the rotation to the equator is ≈ the body's obliquity. */
+function synchronousPlaneChange(target: BodyDef): number {
+  return (target.obliquityDeg ?? 0) * DEG;
+}
+
+/** Capture Δv (m/s) for arriving at `vInf` directly into a circular synchronous orbit at `target`:
+ *  the periapsis burn slows the hyperbola to circular at a_sync and rotates into the equator. */
+function synchronousCaptureDv(target: BodyDef, vInf: number): number {
+  const aSync = synchronousRadius(target.mu, target.rotationPeriod!);
+  const vHypPeri = Math.sqrt(vInf * vInf + (2 * target.mu) / aSync);
+  return combinedPlaneChangeDv(vHypPeri, Math.sqrt(target.mu / aSync), synchronousPlaneChange(target));
+}
+
+/** A porkchop to a remote body's SYNCHRONOUS orbit: the heliocentric transfer to the body, but
+ *  costed with a direct circular synchronous capture (+ estimated equatorial plane change). */
+export function computeSynchronousPorkchop(
+  fromId: string, targetId: string, grid: PorkGrid, rParkFrom: number,
+): Porkchop | null {
+  const from = BODY_BY_ID.get(fromId);
+  const to = BODY_BY_ID.get(targetId);
+  if (!from || !to || !to.rotationPeriod) return null;
+  return computePorkchopTo(
+    fromId, targetId, MU_SUN,
+    (t) => bodyState(from, t),
+    { stateAt: (t) => bodyState(to, t), captureDv: (vInf) => synchronousCaptureDv(to, vInf) },
+    (vInf) => hyperbolicBurnDv(vInf, from.mu, rParkFrom),
+    grid,
+  );
+}
+
+/** Plan and schedule a transfer that captures into a remote body's synchronous orbit (Mars
+ *  areostationary, etc.). Mirrors planTransfer but aims the hyperbola at a_sync and circularizes
+ *  there with an equatorial plane change. null if the body has no usable synchronous orbit. */
+export function planSynchronousTransfer(
+  sim: Simulation, shipId: string, targetId: string, tDepart: number, tArrive: number,
+): TransferPlan | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || ship.landed || tArrive <= tDepart) return null;
+  const depBody = BODY_BY_ID.get(ship.primary);
+  const target = BODY_BY_ID.get(targetId);
+  if (!depBody || !target || !target.rotationPeriod || !synchronousOrbitFeasible(target, tArrive)) return null;
+  const depState = bodyState(depBody, tDepart);
+  const arrState = bodyState(target, tArrive);
+  const sol = lambert(depState.r, arrState.r, tArrive - tDepart, MU_SUN, true);
+  if (!sol) return null;
+  const el = shipOsculatingElements(ship, sim.world.t);
+  const rParkFrom = periapsisRadius(el.a, el.e);
+  const dvDepart = hyperbolicBurnDv(length(sub(sol.v1, depState.v)), depBody.mu, rParkFrom);
+  const dvArrive = synchronousCaptureDv(target, length(sub(sol.v2, arrState.v)));
+  ship.transfer = {
+    targetId, tDepart, tArrive, dvDepart, dvArrive,
+    departed: false, inSoi: false, arrived: false, arrival: { kind: "synchronous" },
+  };
+  sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
+  return { dvDepart, dvArrive, tof: tArrive - tDepart };
+}
+
+/** A porkchop to a Lagrange point of the (parent, `secondaryId`) pair, solved in the L-point's
+ *  cruise frame: heliocentric for a planet's Sun–planet points (Oberth escape from the departure
+ *  planet's well), geocentric for a moon's planet–moon points (direct injection from the parking
+ *  orbit). Arrival is a velocity match (captureDv = v∞). null if the ship isn't positioned to fly
+ *  it (a geocentric pair needs the ship to be orbiting the parent planet). */
+export function computeLagrangePorkchop(
+  sim: Simulation, shipId: string, secondaryId: string, point: LagrangePoint,
+  grid: PorkGrid, rParkFrom: number,
+): Porkchop | null {
+  const ship = sim.world.ships.get(shipId);
+  const secondary = BODY_BY_ID.get(secondaryId);
+  if (!ship || !secondary || !lagrangeEligible(secondary)) return null;
+  const central = lagrangeCentral(secondary);
+  if (central !== undefined) {
+    const cen = BODY_BY_ID.get(central)!;
+    if (ship.primary !== cen.id) return null; // must be orbiting the parent planet
+    return computePorkchopTo(
+      ship.primary, secondaryId, cen.mu,
+      (t) => shipRelativeState(ship, t),
+      { stateAt: (t) => lagrangeStateRelative(secondary, point, t), captureDv: (vInf) => vInf },
+      (vInf) => vInf, // direct injection — the ship is already in orbit about the parent
+      grid,
+    );
+  }
+  const depBody = BODY_BY_ID.get(ship.primary);
+  if (!depBody) return null;
+  return computePorkchopTo(
+    ship.primary, secondaryId, MU_SUN,
+    (t) => bodyState(depBody, t),
+    { stateAt: (t) => lagrangeState(secondary, point, t), captureDv: (vInf) => vInf },
+    (vInf) => hyperbolicBurnDv(vInf, depBody.mu, rParkFrom),
+    grid,
+  );
+}
+
+/** Plan and schedule a transfer to a Lagrange point of the (parent, `secondaryId`) pair. The
+ *  Lambert leg is solved in the cruise frame and the arrival is a single velocity match. null if
+ *  the geometry is degenerate, the ship is landed, or a geocentric pair's frame doesn't match. */
+export function planLagrange(
+  sim: Simulation, shipId: string, secondaryId: string, point: LagrangePoint,
+  tDepart: number, tArrive: number,
+): TransferPlan | null {
+  const ship = sim.world.ships.get(shipId);
+  const secondary = BODY_BY_ID.get(secondaryId);
+  if (!ship || ship.landed || tArrive <= tDepart || !secondary || !lagrangeEligible(secondary)) return null;
+  const depBody = BODY_BY_ID.get(ship.primary);
+  if (!depBody) return null;
+  const central = lagrangeCentral(secondary);
+  const tof = tArrive - tDepart;
+  let dvDepart: number;
+  let dvArrive: number;
+  if (central !== undefined) {
+    const cen = BODY_BY_ID.get(central)!;
+    if (ship.primary !== cen.id) return null;
+    const dep = shipRelativeState(ship, tDepart);
+    const arr = lagrangeStateRelative(secondary, point, tArrive);
+    const sol = lambert(dep.r, arr.r, tof, cen.mu, true);
+    if (!sol) return null;
+    if (!outboundClearsParent(dep.r, sol.v1, cen.mu, cen.radius)) return null;
+    dvDepart = length(sub(sol.v1, dep.v));
+    dvArrive = length(sub(sol.v2, arr.v));
+  } else {
+    const depState = bodyState(depBody, tDepart);
+    const arr = lagrangeState(secondary, point, tArrive);
+    const sol = lambert(depState.r, arr.r, tof, MU_SUN, true);
+    if (!sol) return null;
+    const el = shipOsculatingElements(ship, sim.world.t);
+    const rPark = periapsisRadius(el.a, el.e);
+    dvDepart = hyperbolicBurnDv(length(sub(sol.v1, depState.v)), depBody.mu, rPark);
+    dvArrive = length(sub(sol.v2, arr.v)); // velocity match — no well, no Oberth
+  }
+  ship.transfer = {
+    targetId: secondaryId, tDepart, tArrive, dvDepart, dvArrive,
+    departed: false, inSoi: false, arrived: false, arrival: { kind: "lagrange", point },
+    ...(central !== undefined ? { central } : {}),
+  };
+  sim.events.push({ t: tDepart, kind: "transfer-depart", entityId: shipId });
+  return { dvDepart, dvArrive, tof };
 }
 
 /** Forget a planned transfer (a stale scheduled departure is ignored later). */

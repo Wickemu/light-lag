@@ -5,9 +5,9 @@
  * SI throughout; mu = GM of the body being orbited.
  */
 
-import { type Vec3, cross, normalize, neg } from "./math/vec3.ts";
+import { type Vec3, cross, normalize, neg, dot } from "./math/vec3.ts";
 import { type KeplerElements } from "./math/kepler.ts";
-import { JULIAN_YEAR } from "./constants.ts";
+import { JULIAN_YEAR, DEG } from "./constants.ts";
 
 /** vis-viva: orbital speed at radius r on an orbit of semi-major axis a. */
 export function visVivaSpeed(mu: number, r: number, a: number): number {
@@ -145,6 +145,56 @@ export function orbitalPeriod(a: number, mu: number): number {
 /** Elements of a circular orbit of the given radius (m) and inclination (rad). */
 export function circularOrbit(radius: number, i = 0, Omega = 0, M = 0): KeplerElements {
   return { a: radius, e: 0, i, Omega, omega: 0, M };
+}
+
+/**
+ * Radius (m) of a circular SYNCHRONOUS orbit about a body of GM `mu` whose sidereal
+ * rotation period is `rotPeriod` (s; sign ignored — a retrograde spinner still has a
+ * synchronous radius). From Kepler's third law with period = rotation period:
+ * a = ∛(mu·T²/4π²). This is GEO for Earth (≈42,164 km radius ⇒ ≈35,786 km altitude) and
+ * the areostationary radius for Mars (≈20,428 km).
+ */
+export function synchronousRadius(mu: number, rotPeriod: number): number {
+  const T = Math.abs(rotPeriod);
+  return Math.cbrt((mu * T * T) / (4 * Math.PI * Math.PI));
+}
+
+/** A synchronous orbit is offered only well inside the sphere of influence, so it stays
+ *  bound and stable rather than being stripped by the parent. The Moon's synchronous radius
+ *  (≈88,000 km) exceeds its SOI (≈66,000 km), so a lunar "GEO" is excluded by this bound. */
+export const SYNC_SOI_FRACTION = 0.4;
+
+/**
+ * Is a synchronous orbit physically usable at this body? It needs a rotation period, a
+ * synchronous radius above the surface, and one comfortably inside the SOI
+ * (≤ `SYNC_SOI_FRACTION`·rSoi). Returns false for a tidally-locked / slow rotator whose
+ * synchronous radius falls outside its SOI (the Moon), and for a body with no rotation period.
+ */
+export function synchronousFeasible(
+  mu: number, rotPeriod: number | undefined, radius: number, rSoi: number,
+): boolean {
+  if (!rotPeriod) return false;
+  const aSync = synchronousRadius(mu, rotPeriod);
+  return aSync > radius && aSync <= SYNC_SOI_FRACTION * rSoi;
+}
+
+/**
+ * Unit spin pole of a body from its obliquity (axial tilt from the ecliptic +Z, in degrees).
+ * Only the tilt MAGNITUDE is recorded per body (not the pole's ecliptic longitude), so the axis
+ * is taken tilted about the ecliptic +X — a canonical choice that fixes the equatorial plane's
+ * normal at (0, −sin ε, cos ε). The body's EQUATOR is the plane perpendicular to this; a
+ * geostationary orbit lies in it.
+ */
+export function spinPole(obliquityDeg = 0): Vec3 {
+  const e = obliquityDeg * DEG;
+  return { x: 0, y: -Math.sin(e), z: Math.cos(e) };
+}
+
+/** Inclination (rad) of an orbit (whose plane normal is the unit `orbitNormal` = r×v normalized)
+ *  to a body's equatorial plane — i.e. the plane-change angle that would make it equatorial. */
+export function inclinationToEquator(orbitNormal: Vec3, obliquityDeg = 0): number {
+  const c = Math.max(-1, Math.min(1, dot(normalize(orbitNormal), spinPole(obliquityDeg))));
+  return Math.acos(c);
 }
 
 export interface OrbitFrame {

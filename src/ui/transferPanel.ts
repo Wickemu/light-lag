@@ -11,7 +11,7 @@
  */
 
 import { type Simulation } from "@lightlag/engine/sim";
-import { type Ship } from "@lightlag/engine/world";
+import { type Ship, type LagrangePoint } from "@lightlag/engine/world";
 import { type SceneManager } from "../render/SceneManager.ts";
 import { type TrajectoryViews } from "../render/trajectoryViews.ts";
 import { computePorkchop, type Porkchop, type PorkCell } from "@lightlag/engine/maneuver/porkchop";
@@ -20,8 +20,10 @@ import { type Criterion } from "@lightlag/engine/maneuver/criteria";
 import {
   suggestRoutes, transferWindow, bestAssist, bestChain, bestPorkCell, type SuggestedRoute,
 } from "@lightlag/engine/maneuver/suggest";
-import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, planMoonTour, searchMoonTour, aerocapturePreview, captureDvPreview, assistCapturePreview, looseCaptureApoAlt, type MoonTourResult } from "../app/commands.ts";
+import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, planMoonTour, searchMoonTour, aerocapturePreview, captureDvPreview, assistCapturePreview, looseCaptureApoAlt, planGeoRaise, geoRaisePreview, planSynchronousTransfer, computeSynchronousPorkchop, synchronousOrbitFeasible, planLagrange, computeLagrangePorkchop, type MoonTourResult } from "../app/commands.ts";
 import { computeMoonPorkchop } from "@lightlag/engine/maneuver/moon";
+import { hohmann } from "@lightlag/engine/maneuver/hohmann";
+import { lagrangeEligible, lagrangeCentral } from "@lightlag/engine/maneuver/lagrange";
 import { dvRemaining, shipWorldState, shipOsculatingElements, shipRelativeState } from "@lightlag/engine/ships";
 import { bodyStateRelative } from "@lightlag/engine/ephemeris";
 import { length } from "@lightlag/engine/math/vec3";
@@ -54,8 +56,13 @@ const GROUPS: { kind: BodyKind; label: string }[] = [
 type RouteMode = "direct" | "suggest" | "via1" | "via2";
 /** Same-parent moon arrival: a single Direct hop, or a Flyby tour past sibling moons (pump-down). */
 type MoonMode = "direct" | "tour";
-/** Propulsive low-circular capture · propulsive loose-ellipse capture (Oberth-cheap) · aerocapture. */
-type CaptureMode = "propulsive" | "elliptical" | "aerocapture";
+/**
+ * What orbit / point the mission ends at — the second-level "DESTINATION ORBIT" selector, picked
+ * after the primary body. Body-capture slots (low circular · Oberth-cheap loose ellipse ·
+ * aerocapture) plus the new synchronous (GEO) orbit and the five Lagrange points of the body's
+ * system. Filtered per body by `orbitSlots()`.
+ */
+type OrbitSlot = "leo" | "ellipse" | "aerocapture" | "geo" | LagrangePoint;
 
 /** A body is a useful gravity-assist flyby only if it has real mass: a planet (or Ceres). */
 function isAssistBody(b: BodyDef): boolean {
@@ -97,7 +104,7 @@ export class TransferPanel {
   private moonTours: { flybyMoonIds: string[]; result: MoonTourResult }[] = [];
   private selectedTour: { flybyMoonIds: string[]; result: MoonTourResult } | null = null;
 
-  private captureMode: CaptureMode = "propulsive";
+  private orbitSlot: OrbitSlot = "leo";
   private routeMode: RouteMode = "direct";
   private criterion: Criterion = "dv";
   private shipId: string | null = null;
@@ -180,15 +187,83 @@ export class TransferPanel {
   /** Apoapsis altitude for an elliptical capture at the effective target (a loose half-SOI
    *  ellipse), or undefined for the default low circular capture. */
   private captureApoAlt(): number | undefined {
-    return this.captureMode === "elliptical"
+    return this.orbitSlot === "ellipse"
       ? looseCaptureApoAlt(this.effectiveTarget(), this.sim.world.t) : undefined;
   }
 
-  /** The command-layer capture mode the current selection maps to (the planner's "elliptical"
+  /** The command-layer capture mode the current selection maps to (the planner's "ellipse"
    *  is a propulsive capture with an apoapsis; aerocapture only where there's an atmosphere). */
   private commandCaptureMode(): "propulsive" | "aerocapture" {
-    return this.captureMode === "aerocapture" && BODY_BY_ID.get(this.effectiveTarget())?.atmosphere
+    return this.orbitSlot === "aerocapture" && BODY_BY_ID.get(this.effectiveTarget())?.atmosphere
       ? "aerocapture" : "propulsive";
+  }
+
+  /** A Lagrange-point destination slot (L1–L5)? */
+  private isLagrangeSlot(): boolean {
+    return this.orbitSlot.length === 2 && this.orbitSlot[0] === "L";
+  }
+
+  /** The selected Lagrange point, or null if the slot isn't a Lagrange point. */
+  private lagrangePoint(): LagrangePoint | null {
+    return this.isLagrangeSlot() ? (this.orbitSlot as LagrangePoint) : null;
+  }
+
+  /** A same-primary GEO raise: the GEO slot at the body the ship is already orbiting. */
+  private isGeoRaise(): boolean {
+    return this.orbitSlot === "geo" && this.targetId === this.originId();
+  }
+
+  /** The new destination-orbit slots (synchronous / Lagrange) drive a direct arrival of their own,
+   *  bypassing the route-mode / flyby / moon-tour machinery. */
+  private isNewSlot(): boolean {
+    return this.orbitSlot === "geo" || this.isLagrangeSlot();
+  }
+
+  /** The "Sun–Earth" / "Earth–Moon" system label for a body's Lagrange points. */
+  private systemLabel(body: BodyDef): string {
+    const parent = body.parent ? BODY_BY_ID.get(body.parent) : undefined;
+    return parent ? `${parent.name}–${body.name}` : body.name;
+  }
+
+  /** The DESTINATION ORBIT options for the currently-selected body: low-circular / ellipse /
+   *  aerocapture for a remote capture, plus synchronous (GEO) where feasible and the five
+   *  Lagrange points of the body's system. The body you're already at offers only the non-trivial
+   *  slots (a low circular orbit at your own body is a no-op). */
+  private orbitSlots(): { slot: OrbitSlot; label: string; enabled: boolean; note?: string }[] {
+    const target = BODY_BY_ID.get(this.targetId);
+    if (!target) return [];
+    const t = this.sim.world.t;
+    const atOrigin = this.targetId === this.originId();
+    const out: { slot: OrbitSlot; label: string; enabled: boolean; note?: string }[] = [];
+    if (!atOrigin) {
+      out.push({ slot: "leo", label: "Low circular (LEO)", enabled: true });
+      out.push({ slot: "ellipse", label: "Loose ellipse (cheap)", enabled: true });
+      // Aerocapture brakes against the body the arrival actually captures at (the parent planet for
+      // a cross-system moon mission), so gate it on THAT body's atmosphere.
+      if (BODY_BY_ID.get(this.effectiveTarget())?.atmosphere) {
+        out.push({ slot: "aerocapture", label: "Aerocapture (drag pass)", enabled: true });
+      }
+    }
+    // Synchronous orbit: at your own primary (a GEO raise) or a heliocentric body you transfer to
+    // (areostationary, etc.). Tidally-locked moons whose a_sync exceeds the SOI are excluded.
+    const geoReachable = atOrigin || target.parent === "sun";
+    if (geoReachable && synchronousOrbitFeasible(target, t)) {
+      out.push({ slot: "geo", label: atOrigin ? "Geostationary (GEO)" : `Synchronous (${target.name}-stationary)`, enabled: true });
+    } else if (geoReachable && target.rotationPeriod) {
+      out.push({ slot: "geo", label: "Synchronous", enabled: false, note: "exceeds SOI" });
+    }
+    // Lagrange points of the body's system. A planet's Sun–planet points are reached heliocentrically
+    // from anywhere; a moon's planet–moon points need the ship already at that planet.
+    if (lagrangeEligible(target)) {
+      const central = lagrangeCentral(target);
+      if (central === undefined || this.originId() === central) {
+        const sys = this.systemLabel(target);
+        for (const p of ["L1", "L2", "L3", "L4", "L5"] as LagrangePoint[]) {
+          out.push({ slot: p, label: `${sys} ${p}`, enabled: true });
+        }
+      }
+    }
+    return out;
   }
 
   /**
@@ -230,8 +305,10 @@ export class TransferPanel {
   }
 
   private destEligible = (b: BodyDef): Eligible => {
-    const origin = this.originId();
-    if (b.id === origin || b.id === "sun") return { show: false, enabled: false };
+    if (b.id === "sun") return { show: false, enabled: false };
+    // The body you're already at is selectable — not for a (no-op) transfer to its low orbit, but
+    // for its own GEO and Lagrange points (the comsat / space-telescope case).
+    if (b.id === this.originId()) return { show: true, enabled: true, note: "(local orbits)" };
     if (b.kind === "moon") return this.moonEligible(b);
     return { show: true, enabled: true };
   };
@@ -275,6 +352,7 @@ export class TransferPanel {
       this.targetId = this.targetSel.value || this.firstEnabledDestination();
       this.targetSel.value = this.targetId;
     }
+    this.refreshOrbitSlots();
     this.fillSelect(this.viaSel, "— pick a flyby —", this.flybyEligible(this.via2Id), this.viaId);
     this.fillSelect(this.via2Sel, "— pick a flyby —", this.flybyEligible(this.viaId), this.via2Id);
     this.originEl.textContent = `From: ${this.originId() === "earth" && (!this.shipId || this.sim.world.ships.get(this.shipId!)?.primary === "sun")
@@ -284,6 +362,24 @@ export class TransferPanel {
   private firstEnabledDestination(): string {
     for (const g of GROUPS) for (const b of BODIES) if (b.kind === g.kind && this.destEligible(b).enabled) return b.id;
     return "mars";
+  }
+
+  /** (Re)populate the DESTINATION ORBIT selector for the current target, snapping a stale slot to
+   *  the first enabled option (e.g. when switching to a body with no synchronous orbit). */
+  private refreshOrbitSlots(): void {
+    const slots = this.orbitSlots();
+    this.captureSel.innerHTML = "";
+    for (const s of slots) {
+      const o = document.createElement("option");
+      o.value = s.slot;
+      o.textContent = s.note ? `${s.label} — ${s.note}` : s.label;
+      o.disabled = !s.enabled;
+      this.captureSel.appendChild(o);
+    }
+    if (!slots.some((s) => s.slot === this.orbitSlot && s.enabled)) {
+      this.orbitSlot = (slots.find((s) => s.enabled)?.slot ?? "leo") as OrbitSlot;
+    }
+    this.captureSel.value = this.orbitSlot;
   }
 
   // ── Build ────────────────────────────────────────────────────────────────────
@@ -356,26 +452,17 @@ export class TransferPanel {
     critRow.appendChild(this.critSel);
     this.panel.appendChild(critRow);
 
-    // Capture mode (direct arrivals at a body with an atmosphere).
+    // Destination orbit — the second-level selector (low circular / loose ellipse / aerocapture /
+    // geostationary / Lagrange points), filtered per body. Options are filled by refreshOrbitSlots.
     this.capRow = div("transfer-head");
-    this.capRow.appendChild(sectionLabel("CAPTURE MODE"));
+    this.capRow.appendChild(sectionLabel("DESTINATION ORBIT"));
     this.captureSel = document.createElement("select");
     this.captureSel.className = "target-sel";
-    for (const [val, label] of [
-      ["propulsive", "Propulsive — low circular"],
-      ["elliptical", "Propulsive — loose ellipse (cheap)"],
-      ["aerocapture", "Aerocapture (drag pass)"],
-    ] as const) {
-      const o = document.createElement("option");
-      o.value = val; o.textContent = label;
-      this.captureSel.appendChild(o);
-    }
     this.captureSel.onchange = () => {
-      this.captureMode = this.captureSel.value as CaptureMode;
-      // A moon hop/tour bakes the capture into its porkchop/tour search (the loose ellipse is
-      // cheaper), so re-search the parent-centric grid; a heliocentric arrival just re-reads the cell.
-      if (this.isMoonTarget()) this.recomputeMoon();
-      else { this.updateReadout(); this.updatePreview(); }
+      this.orbitSlot = this.captureSel.value as OrbitSlot;
+      // Switching slot can change the whole route shape (a Lagrange point, a GEO raise, or a plain
+      // capture), so recompute from scratch rather than re-reading a cell.
+      this.recompute();
     };
     this.capRow.appendChild(this.captureSel);
     this.panel.appendChild(this.capRow);
@@ -449,8 +536,9 @@ export class TransferPanel {
   private updatePreview(): void {
     const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
     if (!ship) { this.traj.setPreviewRoute(null); return; }
-    // A same-parent moon hop is a parent-centric arc; the heliocentric route overlay doesn't draw it.
-    if (this.isMoonTarget()) { this.traj.setPreviewRoute(null); return; }
+    // A synchronous/Lagrange arrival's geometry (a moving point / a synchronous ring) isn't drawn
+    // by the heliocentric route overlay yet; a same-parent moon hop is a parent-centric arc.
+    if (this.isNewSlot() || this.isMoonTarget()) { this.traj.setPreviewRoute(null); return; }
     const fromId = this.originId();
     const target = BODY_BY_ID.get(this.targetId);
     const rParkTo = target ? target.radius + DEFAULT_CAPTURE_ALT : undefined;
@@ -492,8 +580,25 @@ export class TransferPanel {
   }
 
   /** Heliocentric controls (route mode, criterion, capture, porkchop) apply to interplanetary
-   *  transfers; a moon transfer is a single parent-centric hop, so they're hidden. */
+   *  transfers; a moon transfer is a single parent-centric hop, so they're hidden. A synchronous /
+   *  Lagrange destination is a direct arrival of its own and hides the route machinery entirely. */
   private layoutForTarget(): void {
+    // Synchronous (GEO) or Lagrange destination — no route modes, flybys, or moon tour. A
+    // same-primary GEO raise is a single Hohmann (no porkchop/criterion); remote GEO and every
+    // Lagrange point read off a porkchop. The DESTINATION ORBIT selector always stays.
+    if (this.isNewSlot()) {
+      const sameGeo = this.isGeoRaise();
+      this.modeRow.style.display = "none";
+      this.moonModeRow.style.display = "none";
+      this.viaRow.style.display = "none";
+      this.via2Row.style.display = "none";
+      this.capRow.style.display = "flex";
+      this.critRow.style.display = sameGeo ? "none" : "flex";
+      this.canvas.style.display = sameGeo ? "none" : "block";
+      this.suggestEl.style.display = "none";
+      this.moonTourEl.style.display = "none";
+      return;
+    }
     const moon = this.isMoonTarget();       // same-parent parent-centric hop
     const mission = this.isMoonMission();   // cross-system two-stage (heliocentric Stage 1)
     const canTour = this.canMoonTour();     // the parent has ≥2 other moons to slingshot past
@@ -501,10 +606,10 @@ export class TransferPanel {
     const tour = moon && canTour && this.moonMode === "tour";
     const moonDirect = moon && !tour;       // a single parent-centric hop (now porkchop-driven)
     // Aerocapture is a heliocentric/tour arrival choice; a single moon hop offers only the
-    // propulsive circular / loose-ellipse split, so drop any stale aerocapture selection.
-    if (moonDirect && this.captureMode === "aerocapture") { this.captureMode = "propulsive"; this.captureSel.value = "propulsive"; }
-    const aeroOpt = this.captureSel.options[2]; // the "aerocapture" option (3rd) — hidden for a moon hop
+    // propulsive circular / loose-ellipse split, so hide it and drop any stale selection.
+    const aeroOpt = Array.from(this.captureSel.options).find((o) => o.value === "aerocapture");
     if (aeroOpt) aeroOpt.hidden = moonDirect;
+    if (moonDirect && this.orbitSlot === "aerocapture") { this.orbitSlot = "leo"; this.captureSel.value = "leo"; }
     // A same-parent hop hides every heliocentric control. A mission flies a Direct heliocentric
     // Stage-1 to the parent planet, so it keeps the porkchop + criterion + capture, but offers no
     // flyby/suggest variants (planMoonMission plans a direct Stage 1).
@@ -514,10 +619,8 @@ export class TransferPanel {
     this.critRow.style.display = moon ? "none" : "flex";
     this.viaRow.style.display = !moon && !mission && (this.routeMode === "via1" || this.routeMode === "via2") ? "flex" : "none";
     this.via2Row.style.display = !moon && !mission && this.routeMode === "via2" ? "flex" : "none";
-    // Capture mode applies to any heliocentric arrival — a direct transfer, a cross-system
-    // Stage-1, OR a gravity-assist/chain arrival — and to a moon flyby TOUR or a single moon hop
-    // (circular vs the Oberth-cheap loose ellipse).
-    this.capRow.style.display = (!moon && (mission || this.routeMode !== "suggest")) || tour || moonDirect ? "flex" : "none";
+    // The DESTINATION ORBIT selector is the primary second-level control — always shown.
+    this.capRow.style.display = "flex";
     // The porkchop canvas backs every route except the heliocentric Suggest list and the moon tour.
     this.canvas.style.display = tour || (!moon && !mission && this.routeMode === "suggest") ? "none" : "block";
     this.suggestEl.style.display = !moon && !mission && this.routeMode === "suggest" ? "block" : "none";
@@ -588,6 +691,10 @@ export class TransferPanel {
   private recompute(): void {
     if (!this.shipId || !this.sim.world.ships.get(this.shipId)) return;
     this.layoutForTarget();
+    // A synchronous (GEO) or Lagrange-point destination is a direct arrival of its own — it takes
+    // over the route entirely (no flybys / suggest / moon tour).
+    if (this.isLagrangeSlot()) { this.recomputeLagrange(); return; }
+    if (this.orbitSlot === "geo") { this.recomputeSync(); return; }
     if (this.isMoonTarget()) { this.recomputeMoon(); return; }
     const t0 = this.sim.world.t;
     const fromId = this.originId();
@@ -629,6 +736,53 @@ export class TransferPanel {
       const refs = this.balancedRefs();
       this.assist = bestAssist(fromId, this.viaId, this.targetId, t0, { rParkFrom, rParkTo, depSpan: win.depSpan, criterion: this.criterion, refs });
     }
+    this.selectBest();
+  }
+
+  /** Same-primary GEO raise (no porkchop — a single in-SOI Hohmann), or a remote synchronous-orbit
+   *  capture (a porkchop to the body costed with a direct circular synchronous capture). */
+  private recomputeSync(): void {
+    this.assist = null; this.chain = null; this.suggestions = [];
+    this.traj.setPreviewRoute(null);
+    const t0 = this.sim.world.t;
+    if (this.isGeoRaise()) {
+      this.pork = null;
+      this.selI = -1; this.selJ = -1;
+      this.draw();
+      this.updateReadout();
+      return;
+    }
+    const fromId = this.originId();
+    const { rParkFrom } = this.parkRadii();
+    const win = transferWindow(fromId, this.targetId, t0);
+    this.pork = computeSynchronousPorkchop(fromId, this.targetId, {
+      depStart: t0, depEnd: t0 + win.depSpan, depN: 64, tofMin: win.tofMin, tofMax: win.tofMax, tofN: 48,
+    }, rParkFrom);
+    this.selectBest();
+  }
+
+  /** A transfer to a Lagrange point — a porkchop in the L-point's cruise frame: heliocentric for a
+   *  planet's Sun–planet points, geocentric (parent-period span) for a moon's planet–moon points. */
+  private recomputeLagrange(): void {
+    this.assist = null; this.chain = null; this.suggestions = [];
+    this.traj.setPreviewRoute(null);
+    const point = this.lagrangePoint()!;
+    const t0 = this.sim.world.t;
+    const { rParkFrom } = this.parkRadii();
+    const secondary = BODY_BY_ID.get(this.targetId)!;
+    const central = lagrangeCentral(secondary);
+    let grid;
+    if (central === undefined) {
+      const win = transferWindow(this.originId(), this.targetId, t0);
+      grid = { depStart: t0, depEnd: t0 + win.depSpan, depN: 56, tofMin: win.tofMin, tofMax: win.tofMax, tofN: 44 };
+    } else {
+      const parent = BODY_BY_ID.get(central)!;
+      const rSec = length(bodyStateRelative(secondary, t0).r);
+      const secPeriod = 2 * Math.PI * Math.sqrt((rSec * rSec * rSec) / parent.mu);
+      const hTof = hohmann(parent.mu, rParkFrom, rSec).tof;
+      grid = { depStart: t0, depEnd: t0 + secPeriod, depN: 48, tofMin: 0.5 * hTof, tofMax: 1.8 * hTof, tofN: 40 };
+    }
+    this.pork = computeLagrangePorkchop(this.sim, this.shipId!, this.targetId, point, grid, rParkFrom);
     this.selectBest();
   }
 
@@ -780,7 +934,7 @@ export class TransferPanel {
     // A moon has no atmosphere, so a tour captures propulsively — circular or a loose ellipse.
     const aeroOpt = this.captureSel.querySelector('option[value="aerocapture"]') as HTMLOptionElement | null;
     if (aeroOpt) aeroOpt.disabled = true;
-    if (this.captureMode === "aerocapture") { this.captureMode = "propulsive"; this.captureSel.value = "propulsive"; }
+    if (this.orbitSlot === "aerocapture") { this.orbitSlot = "leo"; this.captureSel.value = "leo"; }
     this.captureSel.disabled = false;
 
     const sel = this.selectedTour;
@@ -809,8 +963,63 @@ export class TransferPanel {
     setDisabled(this.commitBtn, !feasible, "Tour Δv exceeds the ship's budget.");
   }
 
+  /** Readout for a same-primary GEO raise: the in-SOI Hohmann ledger and a budget gate. */
+  private updateGeoRaiseReadout(ship: Ship): void {
+    const body = BODY_BY_ID.get(this.originId())!;
+    this.axisEl.innerHTML = `<span>${body.name} orbit → geostationary (synchronous raise)</span>`;
+    const plan = geoRaisePreview(this.sim, this.shipId!);
+    if (!plan) {
+      this.readout.innerHTML = `No synchronous orbit available at ${body.name}.`;
+      setDisabled(this.commitBtn, true, "No synchronous orbit here.");
+      return;
+    }
+    const haveDv = dvRemaining(ship);
+    const feasible = plan.dvTotal <= haveDv;
+    this.readout.innerHTML =
+      kv("Raise to", `GEO — ${((plan.aSync - body.radius) / 1000).toFixed(0)} km circular (synchronous)`) +
+      kv("Transfer burn", `${(plan.dv1 / 1000).toFixed(3)} km/s`) +
+      kv("Circularize + plane change", `${(plan.dv2 / 1000).toFixed(3)} km/s`) +
+      kv("Total Δv", `${(plan.dvTotal / 1000).toFixed(3)} km/s`) +
+      kv("Transfer time", `${(plan.tof / DAY).toFixed(2)} days`) +
+      kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+      (feasible ? `<div class="ok">✓ within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
+    setDisabled(this.commitBtn, !feasible, "GEO raise Δv exceeds the ship's budget.");
+  }
+
+  /** Readout for a remote synchronous capture or a Lagrange-point transfer: the selected porkchop
+   *  cell's injection + arrival ledger (arrival = circularize+plane for GEO, a velocity match for L). */
+  private updateNewOrbitReadout(ship: Ship): void {
+    const target = BODY_BY_ID.get(this.targetId)!;
+    const isLagr = this.isLagrangeSlot();
+    const label = isLagr ? `${this.systemLabel(target)} ${this.orbitSlot}` : `${target.name} synchronous`;
+    this.axisEl.innerHTML = `<span>${BODY_BY_ID.get(this.originId())?.name} → ${label} &nbsp;·&nbsp; ↑ flight time &nbsp; → departure date</span>`;
+    const cell = this.selectedCell();
+    if (!cell || !isFinite(cell.total)) {
+      this.readout.innerHTML = `No transfer window to ${label} found.`;
+      setDisabled(this.commitBtn, true, "No window found.");
+      return;
+    }
+    const haveDv = dvRemaining(ship);
+    const feasible = cell.total <= haveDv;
+    this.readout.innerHTML =
+      kv("Destination", label) + kv("Optimizing", this.criterionLabel()) +
+      kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
+      kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) +
+      kv("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
+      kv(isLagr ? "Station-keeping Δv" : "Capture Δv (circ + plane)", `${(cell.dvArrive / 1000).toFixed(3)} km/s`) +
+      kv("Total Δv", `${(cell.total / 1000).toFixed(3)} km/s`) +
+      kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+      (feasible ? `<div class="ok">✓ within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
+    setDisabled(this.commitBtn, !feasible, "Transfer Δv exceeds the ship's budget.");
+  }
+
   private updateReadout(): void {
     const ship = this.shipId ? this.sim.world.ships.get(this.shipId) : undefined;
+
+    // Same-primary GEO raise: a single in-SOI Hohmann ledger (no porkchop cell).
+    if (this.isGeoRaise() && ship) { this.updateGeoRaiseReadout(ship); return; }
+    // Remote synchronous capture or any Lagrange-point transfer: read the selected porkchop cell.
+    if (this.isNewSlot() && ship) { this.updateNewOrbitReadout(ship); return; }
 
     // Moon flyby tour: a parent-centric gravity-assist chain, costed by searchMoonTour.
     if (this.isMoonTarget() && ship && this.moonMode === "tour" && this.canMoonTour()) {
@@ -862,8 +1071,8 @@ export class TransferPanel {
     this.capRow.style.display = capturing ? "flex" : "none";
     const aeroOpt = this.captureSel.querySelector('option[value="aerocapture"]') as HTMLOptionElement | null;
     if (aeroOpt) aeroOpt.disabled = !hasAtm;
-    if (!hasAtm && this.captureMode === "aerocapture") {
-      this.captureMode = "propulsive"; this.captureSel.value = "propulsive";
+    if (!hasAtm && this.orbitSlot === "aerocapture") {
+      this.orbitSlot = "leo"; this.captureSel.value = "leo";
     }
 
     if (!mission && this.routeMode === "suggest") return; // the list is the readout
@@ -958,9 +1167,9 @@ export class TransferPanel {
     const trade = this.criterion !== "dv" && dvMin
       ? kv("Min-Δv flight time", `${(dvMin.tof / DAY).toFixed(0)} days @ ${(dvMin.total / 1000).toFixed(2)} km/s`) : "";
 
-    const aero = this.captureMode === "aerocapture" && target?.atmosphere
+    const aero = this.orbitSlot === "aerocapture" && target?.atmosphere
       ? aerocapturePreview(effId, fromId, cell.depT, cell.arrT) : null;
-    if (this.captureMode === "aerocapture" && target?.atmosphere) {
+    if (this.orbitSlot === "aerocapture" && target?.atmosphere) {
       // Aerocapture pays only a small post-pass trim, so the budget verdict folds that in.
       const verdict = aero?.feasible
         ? this.budgetVerdict(cell.dvDepart, aero.trimDv, haveDv, true)
@@ -1010,6 +1219,23 @@ export class TransferPanel {
 
   private commit(): void {
     if (!this.shipId) return;
+    // Same-primary GEO raise — a single in-SOI Hohmann, no porkchop cell.
+    if (this.isGeoRaise()) {
+      if (!planGeoRaise(this.sim, this.shipId)) return;
+      this.focusAndClose();
+      return;
+    }
+    // Remote synchronous capture, or a Lagrange-point transfer — read the selected porkchop cell.
+    if (this.isNewSlot()) {
+      const cell = this.selectedCell();
+      if (!cell || !isFinite(cell.total)) return;
+      const ok = this.isLagrangeSlot()
+        ? planLagrange(this.sim, this.shipId, this.targetId, this.lagrangePoint()!, cell.depT, cell.arrT)
+        : planSynchronousTransfer(this.sim, this.shipId, this.targetId, cell.depT, cell.arrT);
+      if (!ok) return;
+      this.focusAndClose();
+      return;
+    }
     if (this.isMoonTarget() && this.moonMode === "tour" && this.selectedTour) {
       const sel = this.selectedTour;
       if (!planMoonTour(this.sim, this.shipId, sel.flybyMoonIds, this.targetId, sel.result.times, this.captureApoAlt())) return;
@@ -1041,7 +1267,7 @@ export class TransferPanel {
     const cell = this.selectedCell();
     if (!cell) return;
     const target = BODY_BY_ID.get(this.effectiveTarget());
-    const mode = this.captureMode === "aerocapture" && target?.atmosphere ? "aerocapture" : "propulsive";
+    const mode = this.orbitSlot === "aerocapture" && target?.atmosphere ? "aerocapture" : "propulsive";
     const apoAlt = this.captureApoAlt(); // set ⇒ elliptical (loose) capture; undefined ⇒ circular
     // A cross-system mission plans the Stage-1 heliocentric leg to the parent planet and tags the
     // final moon; the sim auto-chains Stage 2 on capture. A plain transfer otherwise.

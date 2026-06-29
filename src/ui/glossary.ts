@@ -85,9 +85,19 @@ const ENTRIES: Entry[] = [
     def: "What the planner should minimise for the highlighted launch window — propellant (Δv), flight time, or a balance of the two.",
   },
   {
-    terms: ["CAPTURE MODE"],
-    title: "Capture mode",
-    def: "How to arrive: brake into a low circular orbit, into a cheap loose ellipse, or aerocapture through the atmosphere.",
+    terms: ["DESTINATION ORBIT", "CAPTURE MODE"],
+    title: "Destination orbit",
+    def: "Which orbit or point the mission ends at: a low circular orbit, a cheap loose ellipse, an aerocapture, a geostationary (synchronous) orbit, or one of the body's five Lagrange points.",
+  },
+  {
+    terms: ["Geostationary (GEO)", "Synchronous"],
+    title: "Geostationary / synchronous orbit",
+    def: "A circular orbit whose period equals the body's rotation, so a satellite hangs over a fixed longitude (GEO ≈ 35,786 km altitude at Earth, areostationary at Mars). Reached by a Hohmann raise from your current orbit, or captured into directly on arrival; the equatorial plane change is included.",
+  },
+  {
+    terms: ["Lagrange point", "L1", "L2", "L3", "L4", "L5"],
+    title: "Lagrange point",
+    def: "One of five points that co-orbit with a body where a craft can hold station against its parent's pull — Sun–Earth L2 hosts JWST. Reached by a transfer that ends in a small velocity match rather than a capture burn (there is no gravity well to brake into).",
   },
   {
     terms: ["Doppler"],

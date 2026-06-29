@@ -180,6 +180,26 @@ export interface ApproachLeg {
   exitV: Vec3; // body-relative periapsis velocity (m/s)
 }
 
+/** The five Lagrange points of a (primary, secondary) pair, keyed off the secondary body. */
+export type LagrangePoint = "L1" | "L2" | "L3" | "L4" | "L5";
+
+/**
+ * A non-default arrival SHAPE for a transfer. Absent ⇒ today's behaviour (a low circular
+ * capture, or the `captureApoAlt` ellipse / `aeroPeriAlt` aerocapture). Present ⇒ the
+ * arrival establishes a specific bound orbit or station instead:
+ *  - `synchronous`: a circular orbit at the target's synchronous (geostationary) radius —
+ *    a remote capture (Mars areostationary), or, when the target IS the ship's own primary,
+ *    an in-SOI Hohmann raise from the current orbit (Earth LEO → GEO).
+ *  - `lagrange`: a station at an L-point of the (targetId.parent, targetId) pair — reached
+ *    by a Lambert leg in the cruise frame (heliocentric for Sun–Earth, geocentric `central`
+ *    for Earth–Moon) and held by a velocity match (no gravity well, no Oberth).
+ * Plain serializable data; absent from a default transfer ⇒ hash-neutral, like the other
+ * optional ShipTransfer fields.
+ */
+export type ArrivalOrbit =
+  | { kind: "synchronous" }
+  | { kind: "lagrange"; point: LagrangePoint };
+
 /** A planned/active interplanetary transfer (Lambert leg to another body). */
 export interface ShipTransfer {
   targetId: string;
@@ -208,6 +228,9 @@ export interface ShipTransfer {
    *  heliocentric leg targets the moon's parent planet; on capture there the sim auto-chains a
    *  parent-centric Stage-2 leg to this moon (see sim.ts), then clears the field. */
   thenMoonId?: string;
+  /** A non-default arrival shape (synchronous/GEO orbit or a Lagrange-point station). When set
+   *  it overrides the default capture: see `ArrivalOrbit`. Absent ⇒ today's capture behaviour. */
+  arrival?: ArrivalOrbit;
 }
 
 /**
