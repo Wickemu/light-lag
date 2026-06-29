@@ -18,7 +18,7 @@
 
 import { describe, it, expect } from "vitest";
 import * as THREE from "three";
-import { fillOrbitLoopWorld } from "./bodyViews.ts";
+import { fillOrbitLoopWorld, tidalLockOrientation } from "./bodyViews.ts";
 import { SCENE_SCALE } from "./scale.ts";
 import { BODY_BY_ID } from "../core/constants.ts";
 import { bodyState, bodyStateRelative, bodyElements } from "../core/ephemeris.ts";
@@ -206,5 +206,41 @@ describe("Pluto–Charon binary orbit loops", () => {
     const charonLoop = new Float32Array(charonPts.length * 3);
     fillOrbitLoopWorld(charonLoop, charonPts, bary, origin, 1 - f);
     expect(nearVertexToBody(charonLoop, bodyState(CHARON, T0).r, origin), "Charon loop → Charon").toBeLessThan(0.01);
+  });
+});
+
+describe("tidal lock orientation keeps a fixed face toward the partner", () => {
+  const q = new THREE.Quaternion();
+  // The defining test: transform the world direction-to-partner into the body's
+  // local frame at several times across the orbit. A 1:1 lock means it is the SAME
+  // local direction every time (the same surface point always faces the partner).
+  const facesConstantly = (satId: string, sign: number) => {
+    const sat = BODY_BY_ID.get(satId)!;
+    const local: THREE.Vector3[] = [];
+    for (const t of [0, 1.3e5, 4.1e5, 9e5, 1.7e6]) {
+      const rel = bodyStateRelative(sat, t);
+      tidalLockOrientation(rel, sign, q);
+      const toPartner = new THREE.Vector3(rel.r.x, rel.r.y, rel.r.z).multiplyScalar(sign).normalize();
+      local.push(toPartner.applyQuaternion(q.clone().invert()));
+    }
+    return local;
+  };
+
+  it("Charon and the Moon keep one hemisphere toward their parent", () => {
+    for (const satId of ["charon", "moon"]) {
+      const dirs = facesConstantly(satId, -1); // satellite faces the primary
+      for (const d of dirs) {
+        expect(d.x, `${satId} faces +X`).toBeGreaterThan(0.999); // prime meridian → partner
+        expect(d.distanceTo(dirs[0]!), `${satId} is rock-steady`).toBeLessThan(1e-5);
+      }
+    }
+  });
+
+  it("Pluto keeps one hemisphere toward Charon (the primary side of the lock)", () => {
+    const dirs = facesConstantly("charon", 1); // Pluto (sign +1) faces the satellite
+    for (const d of dirs) {
+      expect(d.x).toBeGreaterThan(0.999);
+      expect(d.distanceTo(dirs[0]!)).toBeLessThan(1e-5);
+    }
   });
 });
