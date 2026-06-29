@@ -90,6 +90,13 @@ export class SceneManager {
    *  matching set. */
   viewMode: ViewMode = "system";
 
+  /** In the interstellar view, the id of the ship the camera follows, or `null` for
+   *  Sol at the origin (the default). The interstellar view owns the geometry — it
+   *  pushes the followed ship's scaled position each frame via `followInterstellar`,
+   *  so this stays just a selection, never a world reference. Separate from `focusId`
+   *  because the interstellar view ignores the in-system floating origin. */
+  private interstellarFocus: string | null = null;
+
   /** Body the camera is centred on; its world position is the floating origin. */
   focusId = "sun";
   private focusPos: Vec3 = vec3(0, 0, 0);
@@ -345,10 +352,43 @@ export class SceneManager {
     }
   }
 
-  /** Re-snap the camera to a sensible default for whichever view is active. */
+  /** Re-snap the camera to a sensible default for whichever view is active. In the
+   *  interstellar view this also drops any ship-follow back to Sol (clearing the HUD
+   *  selection), so `R` always means "frame the whole neighbourhood". */
   resetView(): void {
-    if (this.viewMode === "interstellar") this.frameInterstellar();
+    if (this.viewMode === "interstellar") this.setInterstellarFocus(null);
     else this.focusBody(this.focusId);
+  }
+
+  /** The id of the ship the interstellar camera is following, or `null` for Sol.
+   *  Read by the interstellar view (to push the follow position) and the HUD (to
+   *  light the active entry in its FOLLOW list). */
+  get interstellarFocusId(): string | null {
+    return this.interstellarFocus;
+  }
+
+  /** Choose what the interstellar camera follows: a ship id, or `null` to recentre
+   *  on Sol. Just records the selection — the per-frame tracking is driven by the
+   *  interstellar view through `followInterstellar` (it owns the scaled geometry).
+   *  Clearing while the interstellar map is open reframes Sol at once; in the system
+   *  view it only stores the choice, taking effect when the map is next opened. */
+  setInterstellarFocus(id: string | null): void {
+    this.interstellarFocus = id;
+    if (id === null && this.viewMode === "interstellar") this.frameInterstellar();
+  }
+
+  /** Per-frame interstellar follow: lock the camera onto a moving render-space point
+   *  (the followed ship's scaled position). Shifting the look-at AND the camera by
+   *  the same vector leaves the user's orbit offset and zoom untouched while keeping
+   *  the ship centred — the same hand-off trick `advanceFlight`/`cancelFlight` use,
+   *  and it keeps `|camera − target|` (so the min/max-distance clamp) invariant. The
+   *  first follow frame recentres the ship to where Sol sat; later frames track it as
+   *  it crawls outward and the starfield drifts past. Only meaningful in the
+   *  interstellar view; a no-op-equivalent elsewhere since nothing calls it there. */
+  followInterstellar(pos: THREE.Vector3): void {
+    const delta = pos.clone().sub(this.controls.target);
+    this.controls.target.add(delta);
+    this.camera.position.add(delta);
   }
 
   /** Frame the interstellar map: Sol at the render origin, camera above and back

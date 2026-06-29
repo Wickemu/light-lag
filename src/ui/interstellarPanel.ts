@@ -133,6 +133,9 @@ export class InterstellarPanel {
       const s = this.sim.world.ships.get(this.shipId!);
       return s ? shipWorldState(s, t).r : { x: 0, y: 0, z: 0 };
     }, 1000);
+    // Pre-arm the interstellar camera on this ship too, so switching to the
+    // interstellar map (M) immediately follows it rather than parking on Sol.
+    this.sm.setInterstellarFocus(this.shipId);
     this.close();
   }
 }

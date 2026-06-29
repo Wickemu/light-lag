@@ -19,6 +19,7 @@ import { surfaceGravity, escapeVelocity } from "../core/surface.ts";
 import { period as orbitalPeriod } from "../core/math/kepler.ts";
 import { length, distance } from "../core/math/vec3.ts";
 import { formatDate } from "../core/time.ts";
+import { interstellarFleet } from "../app/commands.ts";
 import { el, button, kv } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
 import { popover, type Popover } from "./popover.ts";
@@ -96,6 +97,13 @@ export class Hud {
   /** Focus-list order as displayed (grouped by kind) — drives Tab cycling so the
    *  keyboard and the visible list agree. */
   private focusOrder: string[] = [];
+  // Interstellar FOLLOW selector (shown only on the interstellar map): a Sol button
+  // plus one per ship in transit. Rebuilt only when the in-transit id-set changes.
+  private followSection!: HTMLElement;
+  private followList!: HTMLElement;
+  private solFollowBtn!: HTMLButtonElement;
+  private followButtons = new Map<string, HTMLButtonElement>();
+  private followSig = "";
 
   constructor(
     private root: HTMLElement,
@@ -178,6 +186,19 @@ export class Hud {
       }
     }
     dock.appendChild(list);
+
+    // Interstellar FOLLOW selector — shown only on the interstellar map, where the
+    // body list above is inert (it ignores the floating origin). Sol recentres the
+    // neighbourhood; each ship button locks the camera onto a craft in transit.
+    this.followSection = el("div", "nav-follow");
+    this.followSection.style.display = "none";
+    this.followSection.appendChild(el("div", "section-label", "FOLLOW"));
+    this.followList = el("div", "follow-list");
+    this.solFollowBtn = button("Sol", () => this.setFollow(null));
+    this.solFollowBtn.classList.add("body-btn", "follow-btn");
+    this.followList.appendChild(this.solFollowBtn);
+    this.followSection.appendChild(this.followList);
+    dock.appendChild(this.followSection);
 
     // Focused-body readout — pinned as the dock's non-scrolling footer, directly
     // under the body you just picked from the list above it.
@@ -403,6 +424,43 @@ export class Hud {
   private refreshViewSwitch(): void {
     this.systemBtn.classList.toggle("active", this.sm.viewMode === "system");
     this.interstellarBtn.classList.toggle("active", this.sm.viewMode === "interstellar");
+    this.refreshFollow();
+  }
+
+  /** Choose what the interstellar camera follows (a ship id, or null for Sol) and
+   *  repaint the active states. */
+  private setFollow(id: string | null): void {
+    this.sm.setInterstellarFocus(id);
+    this.refreshFollowActive();
+  }
+
+  /** Repaint the interstellar FOLLOW list: toggle the whole section by view mode,
+   *  and rebuild the ship buttons only when the in-transit id-set actually changes
+   *  (the active-state repaint below is cheap and runs every call). */
+  private refreshFollow(): void {
+    const interstellar = this.sm.viewMode === "interstellar";
+    this.followSection.style.display = interstellar ? "block" : "none";
+    if (!interstellar) return;
+    const fleet = interstellarFleet(this.sim.world);
+    const sig = fleet.map((f) => f.id).join(",");
+    if (sig !== this.followSig) {
+      this.followSig = sig;
+      for (const b of this.followButtons.values()) b.remove();
+      this.followButtons.clear();
+      for (const f of fleet) {
+        const b = button(f.name, () => this.setFollow(f.id));
+        b.classList.add("body-btn", "follow-btn");
+        this.followList.appendChild(b);
+        this.followButtons.set(f.id, b);
+      }
+    }
+    this.refreshFollowActive();
+  }
+
+  private refreshFollowActive(): void {
+    const focus = this.sm.interstellarFocusId;
+    this.solFollowBtn.classList.toggle("active", focus === null);
+    for (const [id, b] of this.followButtons) b.classList.toggle("active", id === focus);
   }
 
   focus(id: string): void {
@@ -453,6 +511,9 @@ export class Hud {
 
     this.updateFocusReadout(t);
     this.updateLabels(views);
+    // The interstellar FOLLOW list tracks ships dispatched/arrived/deleted over time,
+    // and reflects an auto-recenter the view may have triggered (a deleted follow).
+    this.refreshFollow();
   }
 
   private updateFocusReadout(t: number): void {

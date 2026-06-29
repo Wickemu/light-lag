@@ -211,6 +211,24 @@ body {
   padding-top: 8px;
   border-top: 1px solid var(--panel-border);
 }
+/* Interstellar FOLLOW selector: Sol + a button per ship in transit. Shown only on
+   the interstellar map (display toggled from the HUD). Reuses .body-btn styling. */
+.nav-follow {
+  flex: 0 0 auto;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-border);
+}
+.follow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.follow-list .follow-btn {
+  width: 100%;
+}
 /* Main panel heading (FOCUS, SHIP DESIGNER, TRANSFER PLANNER, …). */
 .panel-title {
   font-size: 12px;
