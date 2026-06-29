@@ -165,19 +165,24 @@ in-flight comms.
 ## Develop
 
 ```bash
-npm test           # vitest — the physics core is tested hard
-npm run typecheck  # strict TypeScript, no emit
-npm run build      # static, zero-install production bundle
+npm install            # wires the workspace (links @lightlag/engine)
+npm test               # vitest — the physics engine is tested hard (engine + game)
+npm run typecheck      # strict TypeScript over the whole repo, no emit
+npm run typecheck:engine  # DOM-free engine-only check — the boundary gate
+npm run build          # static, zero-install production bundle
 ```
 
 ## Architecture
 
-The single rule that everything rests on: **the simulation core is a pure, deterministic,
+The single rule that everything rests on: **the simulation engine is a pure, deterministic,
 double-precision SI module with zero renderer dependencies. Three.js only ever *reads* it.**
+The engine is its own workspace package (`@lightlag/engine`); the game is a thin layer on
+top. Dependencies point inward only — the engine imports nothing from the game.
 
 ```
-src/
-  core/                  pure f64 SI physics — no three.js import anywhere
+packages/engine/src/     @lightlag/engine — pure f64 SI physics. No three.js, no DOM,
+  (imported by the game as @lightlag/engine/<module>, e.g. @lightlag/engine/orbit,
+   or via the namespaced barrel: import { orbit, sim } from "@lightlag/engine")
     math/
       vec3.ts            f64 vector ops ({x,y,z}, serializable)
       kepler.ts          Kepler solvers, coe↔rv, propagation
@@ -215,7 +220,8 @@ src/
     time.ts              clock, time-warp levels, event queue, calendar
     world.ts             WorldState — plain serializable data (the save format)
     sim.ts               step kernel: time advance, RK4, event dispatch, light-lag command delivery
-  render/                three.js read-only view — never feeds back into core
+src/                     the game layer — depends on @lightlag/engine
+  render/                three.js read-only view — never feeds back into the engine
     SceneManager.ts      scene, camera, renderer, floating origin, OrbitControls
     bodyViews.ts         body meshes, orbit lines (phased through the marker), label anchors
     bodyTextures.ts      procedural seeded surface textures (no image assets)
@@ -247,13 +253,14 @@ src/
     main.ts              entry point + the one-way frame loop
     commands.ts          player intents → validated world mutations
     shipCatalog.ts       30+ preset designs (Historical / Current / Prototype / Sci-Fi)
+  integration/           app↔engine integration tests (sim / integration / j2 + test-helpers)
 ```
 
 Determinism is a feature: state is plain serializable data, advanced only by `sim.step()`; the
-renderer and HUD never feed back into it. No `Date.now()` or `Math.random()` in the core.
+renderer and HUD never feed back into it. No `Date.now()` or `Math.random()` in the engine.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the dependency rules, engine contract, and the
-path to a standalone `@lightlag/engine` package.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the dependency rules, the engine contract, how to
+build another game on `@lightlag/engine`, and the workspace layout.
 
 ## License
 

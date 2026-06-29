@@ -3,8 +3,9 @@
 **Status:** Phases 1–6 complete; core-physics hardening pass complete (ephemeris
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
-fixed). The reusable physics engine is `src/core/` (see
-[ARCHITECTURE.md](ARCHITECTURE.md)); 659 passing physics/sim tests — including a
+fixed). The reusable physics engine is the `@lightlag/engine` workspace package
+(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 669 passing
+physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
 golden-state determinism hash.
@@ -48,7 +49,7 @@ findings fixed. **The physics core is locked.**
 ### Phase 7 — Mass economy · resources · depots · colonization
 - Wealth is **mass, energy, Δv, heat** — never abstract money.
 - **Propellant depots + refueling — DONE (first cut):** rendezvous-gated ship-to-ship
-  propellant transfer + in-orbit assembly (`core/refuel.ts`); docking raises m₀ → Δv,
+  propellant transfer + in-orbit assembly (`packages/engine/src/refuel.ts`); docking raises m₀ → Δv,
   mass-conserving and capacity-capped. Still to do here: persistent depot *stations*
   (transfer is ship↔ship today), propellant boil-off, and a rendezvous-targeting planner
   (you fly craft co-orbital by hand; identical orbits dock exactly).
@@ -80,7 +81,7 @@ since last round" and "Interstellar sky / camera". The round before, **Parent-ce
 eccentric capture everywhere** landed.)*
 
 1. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
-   DONE (a first cut — `core/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
+   DONE (a first cut — `packages/engine/src/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
    persistent depot stations, propellant boil-off, and a colony supplied within a transfer window.
    *(see Phase 7.)*
 2. **Click-to-focus a star in the interstellar view** — the follow-cam now retargets the
@@ -129,7 +130,7 @@ and reconciling the in-system in-transit streak into this view. *(Candidate #1; 
 hop used to call `searchMoonWindow` once and pick one coarse window — no porkchop, always a low
 circular capture — while the moon flyby TOUR already searched a parent-centric grid AND could
 capture into the Oberth-cheap loose ellipse. This brings the single hop to parity. New pure
-`computeMoonPorkchop` (`core/maneuver/moon.ts`) is the intra-system twin of `computePorkchop`,
+`computeMoonPorkchop` (`packages/engine/src/maneuver/moon.ts`) is the intra-system twin of `computePorkchop`,
 returning the SAME `Porkchop` shape so the planner's canvas/crosshair/`selectBest` render it
 unchanged: departure axis = one moon period, TOF axis = the Hohmann band, and — because a parking
 orbit is fast (a LEO is ~90 min) next to the moon geometry (~27 days), so the cheap in-plane
@@ -146,7 +147,7 @@ the vast Jupiter apoapsis altitude would be physically wrong), not the planet's.
 moon-direct path now shows the porkchop + a CAPTURE MODE control (circular vs loose ellipse;
 aerocapture stays heliocentric/tour-only); commit flies the selected cell with the chosen capture.
 All new state is optional and the golden scenario has no moon mission / `captureApoAlt`, so the
-**golden hash is unmoved** (`11f2c9fc7a5876`). +13 tests (`core/maneuver/moonPorkchop.test.ts`:
+**golden hash is unmoved** (`11f2c9fc7a5876`). +13 tests (`packages/engine/src/maneuver/moonPorkchop.test.ts`:
 grid shape + finite best, loose-ellipse-cheaper, determinism, null guard, `moonLooseApoAlt`
 magnitude, `searchMoonWindow` elliptical < circular; `app/moonTransfer.test.ts`: `planMoonTransfer`
 with an apoapsis captures cheaper and flies a bound ellipse; `app/moonMission.test.ts`: an elliptical
@@ -163,7 +164,7 @@ acts on a BOUND parent-centric ellipse, while a direct planet arrival is a singl
 no bound phase. The real effect is the NON-secular perturbation integrated along the open arc: at an
 oblate giant the periapsis a capture actually reaches differs from the two-body `a(1−e)` by hundreds of
 km, with sign/size set by the approach's inclination to the equator (it passes through zero near the
-~55° critical inclination). New pure `core/maneuver/approach.ts` integrates the inbound hyperbola under
+~55° critical inclination). New pure `packages/engine/src/maneuver/approach.ts` integrates the inbound hyperbola under
 point-mass + the J2 zonal term referenced to the body's spin pole (`ships.ts spinAxis`, RK4 with a
 state-adaptive step, periapsis refined by bisection on r·v=0) — deterministic in the SOI-entry state, so
 chunk-invariant when stored once and replayed. It is carried as an `ApproachLeg` (`world.ts`, the
@@ -178,7 +179,7 @@ altitude despite the ~hundreds-of-km shift; a spherical body returns null and st
 Impulsive + read-time-leg + scheduled-event ⇒ chunk-invariant (one-step ≡ chunked still holds). **Golden
 hash re-baselined** (`0058e70b45c3ef` → `11f2c9fc7a5876`): the Mars arrival now carries the J2 periapsis
 shift (O(km) at Mars); only the recorded physical value moved (round-trip + negative control unchanged),
-and no giant-capture assertion needed re-tuning. +8 tests (`core/maneuver/approach.test.ts`: oracle
+and no giant-capture assertion needed re-tuning. +8 tests (`packages/engine/src/maneuver/approach.test.ts`: oracle
 [J2=0 recovers two-body to <1 m], magnitude/sign vs inclination, determinism, arc interpolation, leg
 build/read, serialize; `app/j2Approach.test.ts`: the leg flies and the capture lands where aimed,
 chunk-invariance, mid-approach serialize). Still to do: the J2 perturbation on an AEROCAPTURE approach
@@ -237,7 +238,7 @@ Heavy's headline 63.8 t assumes crossfeed (still a backlog item) so it's modeled
 ~45 t. Earlier: **orbital propellant transfer + in-orbit construction** (Phase-7 first cut) —
 the SpaceX-tanker / depot mechanic and dock-merge assembly, both gated on a TRUE RENDEZVOUS (shared
 primary + co-located in position and matched in velocity; co-orbital craft pass exactly). A new pure
-`core/refuel.ts` adds the rendezvous gate (`dockState`/`isDockable`), a mass-conserving,
+`packages/engine/src/refuel.ts` adds the rendezvous gate (`dockState`/`isDockable`), a mass-conserving,
 capacity-capped propellant move (`transferProp` — drains donor core stages, fills receiver stages to
 their as-built `stageCapacity`), and `mergeStacks` (the added ship's remaining stages stack atop the
 base's and its payload sums in — in-orbit construction). `Stage.propCapacity` (optional, set at spawn

@@ -3,7 +3,14 @@
 LIGHTLAG is deliberately split so the **physics is a reusable engine** and any
 particular **game is a thin layer on top**. If you want to build a different
 game around the same hard-physics rules (a courier sim, a 4X, a survival
-sandbox), you keep `src/core/` and replace the layers above it.
+sandbox), you keep `@lightlag/engine` and replace the layers above it.
+
+The split is now a **real package boundary**, not just a folder convention:
+
+```
+packages/engine/   →  @lightlag/engine   the physics engine (this repo's first product)
+src/render|ui|app  →  the game           the strategy sim built on the engine
+```
 
 ## The one rule
 
@@ -11,19 +18,39 @@ sandbox), you keep `src/core/` and replace the layers above it.
 
 ```
 app/  ─┐
-ui/   ─┼──►  core/        core/ imports NOTHING from app, ui, or render.
-render/┘              (no Three.js, no DOM, no game-specific assumptions)
+ui/   ─┼──►  @lightlag/engine     the engine imports NOTHING from app, ui, or render.
+render/┘                      (no Three.js, no DOM, no game-specific assumptions)
 ```
 
-`src/core/` has zero `import` from `../render`, `../ui`, or `../app`. The
-renderer and UI are strictly *read-only views* of the simulation; only
-`Simulation.step()` mutates state. This is enforced by convention today and is
-the invariant to protect.
+The engine (`packages/engine/src/`) has zero `import` from the game. The renderer
+and UI are strictly *read-only views* of the simulation; only `Simulation.step()`
+mutates state.
 
-## The engine — `src/core/` (pure, deterministic, SI)
+This is no longer enforced by convention alone. The engine is its own workspace
+package with its own **DOM-free** `tsconfig`, and CI runs `npm run typecheck:engine`
+against it: because that config's `lib` is `ES2022` only (no `"DOM"`) and it sees
+no game source, any accidental reach into the browser, the renderer, or the game
+layer fails to compile. The boundary is now self-enforcing.
+
+The game consumes the engine through its package name, never a relative path:
+
+```ts
+import { summarizeOrbit } from "@lightlag/engine/orbit";   // fine-grained subpath
+import { orbit, sim, vec3 } from "@lightlag/engine";        // namespaced barrel
+```
+
+`@lightlag/engine/<module>` maps 1:1 to `packages/engine/src/<module>.ts` via the
+package's wildcard `exports`. There is no build step — Vite, Vitest, and `tsc`
+(bundler resolution) all consume the engine's TypeScript source directly through
+the workspace symlink.
+
+## The engine — `packages/engine/` (`@lightlag/engine`, pure, deterministic, SI)
 
 Game-agnostic. No framework, no renderer, no wall-clock, no `Math.random()` in
 the hot path. Everything is double-precision SI and a pure function of state + time.
+Module paths below are relative to `packages/engine/src/` (and imported as
+`@lightlag/engine/<module>`). The package barrel `index.ts` re-exports every module
+under a namespace for the `import { orbit, sim } from "@lightlag/engine"` form.
 
 ### Math primitives
 
@@ -88,7 +115,12 @@ the hot path. Everything is double-precision SI and a pure function of state + t
   light-lag bargain, not a bug. A NACK propagates back at `c` if the ship cannot
   execute. Both directions are `MessageInFlight` entries in `WorldState`.
 
-## The game / presentation — `render/`, `ui/`, `app/`
+## The game / presentation — `src/render/`, `src/ui/`, `src/app/`
+
+These live at the repo root under `src/` and depend on `@lightlag/engine`. This is
+the current game (the strategy sim). A second purpose would be a sibling — a new
+`apps/<name>/` (or its own `src/`) consuming the same engine. The modules here are
+*views and intent*, never physics.
 
 ### `render/` — Three.js read-only view
 
@@ -136,23 +168,57 @@ the hot path. Everything is double-precision SI and a pure function of state + t
 
 ## Building another game on the engine
 
-Keep `src/core/`. Provide your own `render/`/`ui/`, and your own `commands` +
-event semantics. The engine gives you correct orbits, transfers, propulsion,
-SOI patched conics, and light-lag for free.
+Add `@lightlag/engine` as a dependency and provide your own render/UI layer and
+your own `commands` + event semantics. The engine gives you correct orbits,
+transfers, propulsion, SOI patched conics, thermal/detection, and light-lag for
+free — none of it assumes a particular game.
 
-## Path to a standalone engine package (when you commit to it)
+```ts
+import { Simulation } from "@lightlag/engine/sim";
+import { createWorld } from "@lightlag/engine/world";
+import { searchMoonWindow } from "@lightlag/engine/maneuver/moon";
+// …your own commands, your own views, your own goals.
+```
 
-The split is mostly mechanical because the dependency direction is already right:
+A new purpose lives beside the current game (e.g. `apps/courier/`), depends on the
+same engine package, and is free to diverge completely above the physics. The
+engine's golden-state determinism guard and full physics test suite protect every
+consumer at once.
 
-1. Move `src/core/` to `packages/engine/src` with its own `package.json`
-   (`@lightlag/engine`), `tsconfig`, and the existing `*.test.ts` (they only
-   import core).
-2. The app imports `@lightlag/engine` instead of `../core`.
-3. **One real refactor:** `sim.ts` currently contains *game-specific* event
-   handlers (interplanetary transfer departure, SOI capture, flyby pass, spiral
-   arrival, and light-lag command delivery) alongside the generic kernel. For a
-   clean engine these become **registered handlers** the game supplies, leaving
-   `sim.ts` with only the generic step/event machinery. Until then they live in
-   the kernel for convenience — this file is the marker for that future tease-apart.
+## Workspace layout
 
-Nothing else crosses the boundary, so the engine is already a coherent unit.
+```
+packages/
+  engine/                @lightlag/engine — the physics engine (pure, SI, deterministic)
+    package.json         name + wildcard exports ("./*" → "./src/*.ts"); no build step
+    tsconfig.json        DOM-FREE config — the boundary gate (npm run typecheck:engine)
+    src/                 the former src/core/, unchanged; index.ts is the namespaced barrel
+src/                     the game (the strategy sim) — depends on @lightlag/engine
+  render/ ui/ app/       Three.js views, DOM panels, wiring + command semantics
+  integration/           app↔engine integration tests (see below)
+```
+
+npm workspaces wire it: the root is the game **and** the workspace root; `npm install`
+symlinks `node_modules/@lightlag/engine` → `packages/engine`. One `tsc --noEmit` and one
+`vitest` run cover both layers; `npm run typecheck:engine` additionally checks the engine
+in DOM-free isolation as the enforced boundary.
+
+### Why the integration tests moved
+
+The engine's own test suite is pure — it imports only `@lightlag/engine`. Four suites,
+however, drive the kernel **through the game's command layer** (`spawnShip`, `planTransfer`,
+…), so they couple the engine to the app by definition. Those (`sim.test.ts`,
+`integration.test.ts`, `j2.test.ts`, and their shared `test-helpers.ts`) now live in
+`src/integration/` on the game side. Keeping them there is what lets the engine package
+stand alone: `packages/engine/` has **zero** dependency on the game, in product code and
+in tests alike.
+
+## The one remaining tease-apart
+
+`sim.ts` still contains *game-specific* event handlers (interplanetary transfer departure,
+SOI capture, flyby pass, spiral arrival, and light-lag command delivery) alongside the
+generic step/event kernel. They are pure and engine-safe today, but they bake in *this*
+game's notion of what events mean. For maximum reuse across very different purposes, these
+should become **handlers the consumer registers**, leaving `sim.ts` as just the generic
+time-advance + event-queue machinery. This is the natural next refactor when a second
+purpose needs different event semantics — `sim.ts` is the marker for it.
