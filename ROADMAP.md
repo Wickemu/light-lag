@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is `src/core/` (see
-[ARCHITECTURE.md](ARCHITECTURE.md)); 595 passing physics/sim tests — including a
+[ARCHITECTURE.md](ARCHITECTURE.md)); 659 passing physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
 golden-state determinism hash.
@@ -73,26 +73,57 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-*(Last round's candidate #1 — **Parent-centric porkchop + eccentric capture everywhere** — is now
-DONE: a single moon hop reads off a real parent-centric porkchop (`computeMoonPorkchop`) with a
-circular / loose-ellipse capture choice, and `captureApoAlt` now threads through `searchMoonWindow`
-and the cross-system auto-chain `maybeChainMoonLeg`. See "Done since last round" and "Gravity
-assists" / "Transfer toolkit". The round before, **J2 on the planetary approach** landed.)*
+*(Last round's candidate #1 — **Follow ships in the interstellar view** — is now DONE: entering the
+interstellar map no longer hard-locks the camera on Sol; you can lock it onto a ship in transit and
+track it across the years, with a HUD **FOLLOW** selector (Sol + each in-transit craft). See "Done
+since last round" and "Interstellar sky / camera". The round before, **Parent-centric porkchop +
+eccentric capture everywhere** landed.)*
 
-1. **Follow ships (and other objects) in the interstellar view** — entering the interstellar map
-   hard-locks the camera target to Sol (`SceneManager.frameInterstellar` sets `controls.target` to
-   the origin). Let it follow an interstellar-leg ship instead: add an optional focus id to
-   `setViewMode` / a per-frame `updateFocus()` hook the interstellar view calls, have
-   `interstellarView.update` drive `setFocusTarget` from the scaled ship position when one is
-   selected, and surface ship selection in the HUD. Respect the view-mode isolation invariant
-   (the interstellar view computes its own positions about Sol). *(Observation #2.)*
-2. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
+1. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
    DONE (a first cut — `core/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
    persistent depot stations, propellant boil-off, and a colony supplied within a transfer window.
    *(see Phase 7.)*
+2. **Click-to-focus a star in the interstellar view** — the follow-cam now retargets the
+   interstellar camera onto any render-space point (`SceneManager.setInterstellarFocus` /
+   `followInterstellar`), so the natural next step is a star pick: click a star marker (or pick from
+   the FOLLOW list) to frame that system and read its name/distance/spectral class, reusing the same
+   focus plumbing the ship follow uses. *(From the "Interstellar sky / camera" backlog.)*
 
 *(**Animated launch / landing trajectories** — candidate #3 two rounds ago — is now DONE; see the
 "Done since last round" note below.)*
+
+*(Done since last round: **Follow ships in the interstellar view — the camera no longer hard-locks on
+Sol**. Entering the interstellar map used to pin `controls.target` to the origin
+(`SceneManager.frameInterstellar`) with no way to follow a ship streaking out to a star — you could
+watch it crawl across the map but never centre on it. Now the interstellar camera can lock onto a craft
+in transit and track it across the years. Because the interstellar view draws into its OWN root group
+in absolute render-space (Sol at the origin, heliocentric metres ÷ `INTERSTELLAR_M_PER_UNIT`) and never
+consults the in-system floating origin, the follow does NOT go through `setFocusTarget` (the
+floating-origin path): a new `SceneManager.interstellarFocus` selection + `followInterstellar(pos)`
+drives `controls.target` directly, shifting the look-at AND the camera by the same per-frame delta — the
+identical shift-both trick `advanceFlight`/`cancelFlight` already use, so the user's orbit offset and
+zoom are preserved and `|camera − target|` (the min/max-distance clamp) stays invariant; the first
+follow frame recentres the ship to where Sol sat and later frames track it as the starfield drifts past.
+The interstellar view owns the geometry: a per-frame `updateFocus()` hook reads `sm.interstellarFocusId`,
+computes the followed ship's scaled position with the SAME `toUnits(shipWorldState(ship,t).r)` it already
+draws the marker at, and calls `followInterstellar`; it runs ungated by the ships layer (you can follow a
+ship whose marker is hidden) and self-heals — a deleted / off-leg follow drops back to Sol
+(`setInterstellarFocus(null)` → `frameInterstellar`), which also clears the HUD selection. The followed
+marker reads a touch larger. Ship selection is surfaced as a HUD **FOLLOW** section in the nav-dock,
+shown only on the interstellar map (where the body list is inert): a Sol button (recentre) plus one per
+ship in transit, sourced from a new pure `interstellarFleet(world)` query (`app/commands.ts`, the
+`dockCandidates` read-only-query pattern — ships on a leg, not lost, sorted by name) and rebuilt only when
+the in-transit id-set changes. Dispatch pre-arms the focus (`InterstellarPanel.dispatch` →
+`setInterstellarFocus`) so pressing `M` immediately follows the just-launched ship; `R` (resetView) in the
+interstellar view recentres Sol and clears the follow. **The whole feature is render/UI — nothing reaches
+`WorldState`, so the golden hash is unmoved (`11f2c9fc7a5876`).** +6 tests
+(`app/interstellarFollow.test.ts`: `interstellarFleet` empty / lists a dispatched ship by id+name /
+excludes off-leg ships / drops a lost ship / deterministic name order / read-only hash-neutral); the
+camera math needs a WebGL context (the `SceneManager` constructor builds a `WebGLRenderer`) so it is
+verified manually, as the render layer's other camera code is. Still to do: a smooth eased transition into
+the follow (it re-homes in one frame, matching the documented "interstellar re-homes instantly"
+semantics); click-to-focus a STAR in the interstellar view reusing the same plumbing (now candidate #2);
+and reconciling the in-system in-transit streak into this view. *(Candidate #1; Observation #2.)*)*
 
 *(Done since last round: **Parent-centric porkchop + eccentric capture everywhere**. A single moon
 hop used to call `searchMoonWindow` once and pick one coarse window — no porkchop, always a low
@@ -596,9 +627,16 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   orrery and places the ~24 systems at their *real relative distances* — to-scale is
   easy here because the range is only 4–12 ly (~3×), nothing like the in-system gap —
   with Sol at the origin, proper-motion drift, and any ship (or object) on an
-  interstellar leg drawn at its true position along the way. Still to do: click-to-focus
-  a star in the interstellar view; reconcile the in-system ship in-transit streak (still
-  on the legacy compressed shell) into the interstellar view; an optional faint deep-sky
+  interstellar leg drawn at its true position along the way. **Follow a ship in the
+  interstellar view — DONE:** the camera no longer hard-locks on Sol; a
+  `SceneManager.interstellarFocus` selection + per-frame `followInterstellar(pos)` (driven
+  by the view's `updateFocus()` from the followed ship's scaled position) locks the camera
+  onto a craft in transit and tracks it, shifting look-at + camera together so orbit/zoom
+  are preserved; surfaced as a HUD **FOLLOW** selector (`interstellarFleet(world)`), pre-armed
+  on dispatch, cleared by `R`. Render/UI only ⇒ golden hash unmoved. Still to do: click-to-focus
+  a star in the interstellar view (now the focus plumbing exists — candidate #2); a smooth eased
+  follow transition (it re-homes in one frame today); reconcile the in-system ship in-transit
+  streak (still on the legacy compressed shell) into the interstellar view; an optional faint deep-sky
   backdrop sourced from a **real** catalog (e.g. Hipparcos/Gaia bright stars) — explicitly
   *not* a re-introduced procedural/fake starfield.
 - **Stellar proper motion** — DONE: the nearby-star catalog carries real Gaia /

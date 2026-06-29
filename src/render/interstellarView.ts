@@ -64,6 +64,7 @@ export class InterstellarView {
   private ships = new Map<string, ShipVisual>();
   private tintBase = new THREE.Color(); // reused scratch — no per-frame alloc
   private tintEnd = new THREE.Color();
+  private focusScratch = new THREE.Vector3(); // reused for the follow position
   private labelLayer: HTMLElement;
   private backdrop: SkyBackdrop;
   private constellations: ConstellationLines;
@@ -160,6 +161,25 @@ export class InterstellarView {
     }
 
     this.updateShips(world, t, w, h);
+    this.updateFocus(world, t);
+  }
+
+  /** Lock the camera onto the followed ship, if one is selected. Runs every frame
+   *  regardless of the ships layer (you can follow a ship whose marker is hidden),
+   *  and self-heals: if the followed ship has been deleted or is no longer on a leg,
+   *  drop the follow so the camera recentres on Sol (and the HUD clears its FOLLOW
+   *  selection). Respects the view-mode isolation invariant — the position is
+   *  computed here, about Sol, never via the in-system floating origin. */
+  private updateFocus(world: WorldState, t: number): void {
+    const id = this.sm.interstellarFocusId;
+    if (!id) return;
+    const ship = world.ships.get(id);
+    if (!ship || !ship.interstellarLeg || ship.status === "lost") {
+      this.sm.setInterstellarFocus(null);
+      return;
+    }
+    this.toUnits(shipWorldState(ship, t).r, this.focusScratch);
+    this.sm.followInterstellar(this.focusScratch);
   }
 
   /** Draw every ship currently on an interstellar leg at its true position, with a
@@ -194,9 +214,11 @@ export class InterstellarView {
         (vis.marker.material as THREE.SpriteMaterial).color.setHex(shipColor);
         (vis.path.material as THREE.LineBasicMaterial).color.setHex(shipColor);
 
-        // Marker at the ship's true heliocentric position, scaled.
+        // Marker at the ship's true heliocentric position, scaled. The followed
+        // ship reads a touch larger so the locked target stands out from the fleet.
         this.toUnits(shipWorldState(ship, t).r, tmp);
         vis.marker.position.copy(tmp);
+        vis.marker.scale.setScalar(ship.id === this.sm.interstellarFocusId ? 0.032 : 0.02);
 
         // Path: Sol (departure) → the star's arrival-time position (the leg's aim).
         const aim = this.toUnits(starPosition(star, leg.tArrive), new THREE.Vector3());

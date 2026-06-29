@@ -8,7 +8,7 @@
  */
 
 import { type Simulation } from "../core/sim.ts";
-import { type Ship, type BurnDir, type BurnGoal, type ShipTransfer, type PoweredSample } from "../core/world.ts";
+import { type Ship, type WorldState, type BurnDir, type BurnGoal, type ShipTransfer, type PoweredSample } from "../core/world.ts";
 import { type Stage, exhaustVelocity, thrustAt, brachistochrone, stageLiftoffThrust, stageLiftoffExhaust } from "../core/propulsion.ts";
 import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "../core/orbit.ts";
 import { hohmann } from "../core/maneuver/hohmann.ts";
@@ -791,6 +791,21 @@ export function dispatchInterstellar(
   ship.elements = undefined;
   ship.epoch = t;
   return transit;
+}
+
+/**
+ * The ships currently crossing interstellar space — those on an active
+ * `interstellarLeg` and not lost — as `{id, name}`, sorted by name for a stable
+ * display order. A pure read-only world query (the established pattern, like
+ * `dockCandidates`): it drives the HUD's interstellar FOLLOW selector and is the
+ * unit-tested core of the follow feature. The camera follow itself is render-only,
+ * so this adds no world state and leaves the golden hash untouched.
+ */
+export function interstellarFleet(world: WorldState): { id: string; name: string }[] {
+  return [...world.ships.values()]
+    .filter((s) => s.interstellarLeg && s.status !== "lost")
+    .map((s) => ({ id: s.id, name: s.name }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
 export interface SpiralPlan {
