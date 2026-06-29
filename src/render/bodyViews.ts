@@ -16,6 +16,7 @@ import * as THREE from "three";
 import { BODIES, BODY_BY_ID, type BodyDef, type BodyKind } from "../core/constants.ts";
 import { bodyState, bodyElements } from "../core/ephemeris.ts";
 import { orbitPath } from "../core/math/kepler.ts";
+import { type Vec3 } from "../core/math/vec3.ts";
 import { metersToUnits, SCENE_SCALE } from "./scale.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
@@ -447,21 +448,18 @@ export class BodyViews {
       (vis.marker.material as THREE.SpriteMaterial).color.copy(focused ? vis.focusColor : vis.baseColor);
 
       if (orbitsOn && vis.orbit && vis.orbitArray && def.parent) {
-        // Orbit path lives relative to the parent: position the loop at the
-        // parent's render location and fill local vertices with the ellipse.
+        // The loop sits at the render origin; each vertex is folded through the
+        // floating origin in f64 (fillOrbitLoopWorld) rather than the cheaper
+        // "loop .position = parent, vertices = parent-relative" trick — see that
+        // helper for why the trick makes the line jitter.
         const parent = BODY_BY_ID.get(def.parent)!;
         const parentState = bodyState(parent, t);
-        this.sm.toRender(parentState.r, vis.orbit.position);
+        vis.orbit.position.set(0, 0, 0);
 
         const el = bodyElements(def, t);
         if (el) {
           const pts = orbitPath(el, ORBIT_SEGMENTS);
-          const arr = vis.orbitArray;
-          for (let k = 0; k < pts.length; k++) {
-            arr[k * 3] = pts[k]!.x / SCENE_SCALE;
-            arr[k * 3 + 1] = pts[k]!.y / SCENE_SCALE;
-            arr[k * 3 + 2] = pts[k]!.z / SCENE_SCALE;
-          }
+          fillOrbitLoopWorld(vis.orbitArray, pts, parentState.r, this.sm.origin);
           const attr = vis.orbit.geometry.getAttribute("position") as THREE.BufferAttribute;
           attr.needsUpdate = true;
         }
@@ -477,5 +475,37 @@ export class BodyViews {
       out.push({ id: vis.def.id, name: vis.def.name, ndc });
     }
     return out;
+  }
+}
+
+/**
+ * Write an orbit loop's float32 vertex buffer as ABSOLUTE render-space points:
+ * each ellipse sample (`pts`, parent-relative metres) is shifted by the parent's
+ * world position and the floating origin and divided by SCENE_SCALE — the whole
+ * subtraction done in f64, exactly as SceneManager.toRender does for the marker,
+ * before the result narrows to float32. The loop's own `.position` therefore stays
+ * at the origin.
+ *
+ * Why not the cheaper idiom (loop `.position` = parent's render position, vertices
+ * = parent-relative offsets / SCENE_SCALE)? That leaves the float32 cancellation to
+ * the GPU: when the camera sits on a body far from its parent — Pluto at ~39 AU is
+ * ~5900 render units from the Sun, likewise the asteroid belt and a comet near
+ * aphelion — the loop's object offset and its local vertices are each thousands of
+ * units, and the fused modelView matrix (uploaded as float32) must add them to land
+ * the near side of the ellipse back at the origin. Float32's ~7 significant figures
+ * leave a hundreds-of-km residual there, and since the body and camera move every
+ * frame that residual changes every frame: the orbit line visibly wobbles across
+ * the marker. The error grows with distance-from-parent and shrinks against a large
+ * body's disk — which is why Pluto is glaring, Ceres/Vesta/Halley clear, Jupiter
+ * faint, and the inner planets clean. Folding the origin in here keeps the on-body
+ * vertex coincident with the marker to f64 precision; only the far side (off-camera,
+ * sub-pixel) is left at float32. Same per-vertex transform fillPolylineWorld uses.
+ */
+export function fillOrbitLoopWorld(arr: Float32Array, pts: readonly Vec3[], parent: Vec3, origin: Vec3): void {
+  for (let k = 0; k < pts.length; k++) {
+    const p = pts[k]!;
+    arr[k * 3] = (parent.x + p.x - origin.x) / SCENE_SCALE;
+    arr[k * 3 + 1] = (parent.y + p.y - origin.y) / SCENE_SCALE;
+    arr[k * 3 + 2] = (parent.z + p.z - origin.z) / SCENE_SCALE;
   }
 }
