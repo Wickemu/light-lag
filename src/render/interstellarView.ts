@@ -42,6 +42,38 @@ export const INTERSTELLAR_SKY_RADIUS = 2e5;
 const COAST_COLOR = 0x6fe0ff;
 const THRUST_COLOR = 0xff8a30;
 
+/** Pointer-pick tuning for the interstellar map. A press that travels more than
+ *  DRAG_PX between down and up was an OrbitControls orbit/zoom, not a tap, so it
+ *  never selects; a tap selects the nearest marker within PICK_PX of the release
+ *  point — a comfortable radius around the screen-fixed, only-a-few-pixel sprite. */
+const DRAG_PX = 5;
+const PICK_PX = 18;
+
+/** The nearest screen-space marker to a click. Returns the entry within `threshold`
+ *  pixels of (cx, cy) that is closest to it, or `undefined` if none is in range.
+ *  Pure (no THREE / DOM) so it is unit-testable; an exact distance tie keeps the
+ *  earlier array entry, for a deterministic pick. */
+export function pickNearest<T extends { x: number; y: number }>(
+  pts: T[],
+  cx: number,
+  cy: number,
+  threshold: number,
+): T | undefined {
+  const max2 = threshold * threshold;
+  let best: T | undefined;
+  let bestD2 = Infinity;
+  for (const p of pts) {
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 <= max2 && d2 < bestD2) {
+      best = p;
+      bestD2 = d2;
+    }
+  }
+  return best;
+}
+
 interface StarVisual {
   def: StarDef;
   marker: THREE.Sprite;
@@ -65,6 +97,7 @@ export class InterstellarView {
   private tintBase = new THREE.Color(); // reused scratch — no per-frame alloc
   private tintEnd = new THREE.Color();
   private focusScratch = new THREE.Vector3(); // reused for the follow position
+  private pointerDown: { x: number; y: number } | null = null; // tap-vs-drag origin
   private labelLayer: HTMLElement;
   private backdrop: SkyBackdrop;
   private constellations: ConstellationLines;
@@ -83,6 +116,48 @@ export class InterstellarView {
     // so it never zooms/parallaxes while the near systems in `root` do).
     this.backdrop = new SkyBackdrop(this.sm, uiRoot, BACKDROP_STARS, INTERSTELLAR_SKY_RADIUS, "interstellar-label backdrop");
     this.constellations = new ConstellationLines(this.sm, INTERSTELLAR_SKY_RADIUS);
+
+    // Click-to-focus a star. OrbitControls owns drag/zoom on the same canvas; we
+    // only act on a tap (down+up with little travel) in the interstellar view, so
+    // the two never fight. Selection runs through the very plumbing the FOLLOW
+    // buttons use (`setInterstellarFocus`).
+    const canvas = this.sm.renderer.domElement;
+    canvas.addEventListener("pointerdown", (e) => {
+      this.pointerDown = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
+    });
+    canvas.addEventListener("pointerup", (e) => this.onPointerUp(e));
+  }
+
+  /** A left-button tap on the interstellar map selects the nearest star — or Sol —
+   *  to frame it, reusing `setInterstellarFocus`. A press that travelled more than
+   *  DRAG_PX was an orbit/zoom and is ignored; so is a tap on empty space (no
+   *  accidental deselect — matching the ship-follow semantics). */
+  private onPointerUp(e: PointerEvent): void {
+    const down = this.pointerDown;
+    this.pointerDown = null;
+    if (!down || e.button !== 0 || this.sm.viewMode !== "interstellar") return;
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > DRAG_PX) return;
+    const hit = this.pickStar(e.clientX, e.clientY);
+    if (hit !== undefined) this.sm.setInterstellarFocus(hit.id);
+  }
+
+  /** Project Sol and every star marker to screen pixels (the `placeLabel` math) and
+   *  return the nearest within PICK_PX of the click, or `undefined`. Sol's entry
+   *  carries `id: null` so picking it recentres the neighbourhood. */
+  private pickStar(clientX: number, clientY: number): { id: string | null } | undefined {
+    const rect = this.sm.renderer.domElement.getBoundingClientRect();
+    const w = rect.width || window.innerWidth;
+    const h = rect.height || window.innerHeight;
+    const pts: { id: string | null; x: number; y: number }[] = [];
+    const tmp = new THREE.Vector3();
+    const add = (id: string | null, pos: THREE.Vector3): void => {
+      const ndc = tmp.copy(pos).project(this.sm.camera);
+      if (ndc.z >= 1 || Math.abs(ndc.x) > 1 || Math.abs(ndc.y) > 1) return;
+      pts.push({ id, x: (ndc.x * 0.5 + 0.5) * w, y: (-ndc.y * 0.5 + 0.5) * h });
+    };
+    add(null, this.sol.position);
+    for (const sv of this.stars) add(sv.def.id, sv.marker.position);
+    return pickNearest(pts, clientX - rect.left, clientY - rect.top, PICK_PX);
   }
 
   /** Sol sits at the origin: a warm point with a soft corona, the one place every
@@ -155,6 +230,10 @@ export class InterstellarView {
     for (const sv of this.stars) {
       this.toUnits(starPosition(sv.def, t), tmp);
       sv.marker.position.copy(tmp);
+      // The focused system reads a touch larger so the framed target stands out
+      // (parity with the followed-ship marker below).
+      const focused = sv.def.id === this.sm.interstellarFocusId;
+      sv.marker.scale.setScalar(focused ? 0.034 : sv.def.parentId ? 0.014 : 0.024);
       // Components of a multiple sit nearly on top of their primary; show the
       // sprite but suppress the duplicate label.
       this.placeLabel(sv.label, sv.marker.position, w, h, labelsOn && !sv.def.parentId);
@@ -164,15 +243,25 @@ export class InterstellarView {
     this.updateFocus(world, t);
   }
 
-  /** Lock the camera onto the followed ship, if one is selected. Runs every frame
-   *  regardless of the ships layer (you can follow a ship whose marker is hidden),
-   *  and self-heals: if the followed ship has been deleted or is no longer on a leg,
-   *  drop the follow so the camera recentres on Sol (and the HUD clears its FOLLOW
-   *  selection). Respects the view-mode isolation invariant — the position is
-   *  computed here, about Sol, never via the in-system floating origin. */
+  /** Lock the camera onto the followed target — a focused star or a ship in transit
+   *  — if one is selected. Runs every frame regardless of the ships layer (you can
+   *  follow a target whose marker is hidden). A ship follow self-heals: if it has
+   *  been deleted or is no longer on a leg, drop the follow so the camera recentres
+   *  on Sol (and the HUD clears its FOLLOW selection); a star never disappears.
+   *  Respects the view-mode isolation invariant — the position is computed here,
+   *  about Sol, never via the in-system floating origin. */
   private updateFocus(world: WorldState, t: number): void {
     const id = this.sm.interstellarFocusId;
     if (!id) return;
+    // A focused STAR — a static catalog system. Frame it (and track its slow
+    // proper-motion drift). It never self-heals: a star can't be deleted.
+    const star = STAR_BY_ID.get(id);
+    if (star) {
+      this.toUnits(starPosition(star, t), this.focusScratch);
+      this.sm.followInterstellar(this.focusScratch);
+      return;
+    }
+    // Otherwise a ship follow: self-heal a deleted / off-leg target back to Sol.
     const ship = world.ships.get(id);
     if (!ship || !ship.interstellarLeg || ship.status === "lost") {
       this.sm.setInterstellarFocus(null);

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createWorld } from "@lightlag/engine/world";
 import { Simulation } from "@lightlag/engine/sim";
-import { spawnShip, defaultDesign, dispatchInterstellar, interstellarFleet } from "./commands.ts";
+import { spawnShip, defaultDesign, dispatchInterstellar, interstellarFleet, interstellarStarList } from "./commands.ts";
 import { hashWorld } from "@lightlag/engine/serialize";
 import { G0 } from "@lightlag/engine/constants";
 
@@ -64,5 +64,34 @@ describe("interstellarFleet — the interstellar FOLLOW selector source", () => 
     interstellarFleet(sim.world);
     interstellarFleet(sim.world);
     expect(hashWorld(sim.world)).toBe(before);
+  });
+});
+
+describe("interstellarStarList — the interstellar STARS picker source", () => {
+  it("lists the navigable systems with the display fields", () => {
+    const list = interstellarStarList();
+    expect(list.length).toBeGreaterThan(0);
+    for (const s of list) {
+      expect(typeof s.id).toBe("string");
+      expect(typeof s.name).toBe("string");
+      expect(Number.isFinite(s.distanceLy)).toBe(true);
+      expect(typeof s.spectralType).toBe("string");
+    }
+  });
+
+  it("is sorted nearest-first, ties broken by id", () => {
+    const list = interstellarStarList();
+    for (let i = 1; i < list.length; i++) {
+      const a = list[i - 1]!;
+      const b = list[i]!;
+      expect(a.distanceLy < b.distanceLy || (a.distanceLy === b.distanceLy && a.id <= b.id)).toBe(true);
+    }
+  });
+
+  it("includes a known nearby system and is deterministic", () => {
+    const list = interstellarStarList();
+    expect(list.some((s) => s.id === "proxima")).toBe(true);
+    // Pure catalog query: repeated calls return identical data (stable menu order).
+    expect(interstellarStarList()).toEqual(list);
   });
 });
