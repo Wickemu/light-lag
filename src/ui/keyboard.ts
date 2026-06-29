@@ -120,6 +120,8 @@ export class KeyboardManager {
 
     if (k === "b" || k === "B") { this.shipyard.toggle(); return; }
 
+    if (k === "n" || k === "N") { this.hud.toggleNav(); return; }
+
     if (k === "?") { this.hud.toggleHelp(); return; }
 
     if (k === "Escape") {
@@ -133,8 +135,10 @@ export class KeyboardManager {
         this.transferPanel.close();
       } else if (this.hud.isHelpOpen()) {
         this.hud.closeHelp();
-      } else {
-        if (this.shipPanel.isOpen()) this.shipPanel.toggle();
+      } else if (this.shipPanel.isOpen()) {
+        this.shipPanel.toggle();
+      } else if (this.hud.isNavOpen()) {
+        this.hud.toggleNav();
       }
       return;
     }
