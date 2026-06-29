@@ -30,11 +30,13 @@ export type Theme = "dark" | "light";
 export type ViewMode = "system" | "interstellar";
 
 /** How far back a fly-to bows the camera mid-flight, as a fraction of the gap
- *  between the two bodies. ~0.9 keeps both endpoints inside the frame at the
- *  half-way point (the 50° FOV plus perspective foreshortening puts them near the
- *  edges, so the journey reads as motion rather than a static overview). Only
- *  kicks in when the gap dwarfs the framing distances — short hops dolly in. */
-const FLY_FRAME_FRACTION = 0.9;
+ *  between the two bodies. The camera rises just enough that the journey reads as
+ *  motion — NOT enough to frame both endpoints (that "zoom out to the whole
+ *  system and back" is what feels jarring on a long hop). ~0.3 keeps a distant
+ *  target's pull-back to roughly a third of the gap: the eye sees it lift, sweep
+ *  over, and settle, with the fast part of the sweep crossing the (empty) middle.
+ *  Only bites when the gap dwarfs the framing distances — short hops just dolly. */
+const FLY_ARC_FRACTION = 0.3;
 
 const BG: Record<Theme, number> = {
   dark: 0x05070d,
@@ -112,6 +114,7 @@ export class SceneManager {
     dir: THREE.Vector3; // unit target→camera offset direction, held constant
     startTarget: THREE.Vector3; // camera target at lift-off (old-origin render space)
     startDist: number; // camera distance from target at lift-off, in render units
+    midDist: number; // camera distance at the apex of the arc (render units), fixed at lift-off
     elapsed: number; // seconds since lift-off
     duration: number; // total flight time, seconds
   };
@@ -419,31 +422,61 @@ export class SceneManager {
    *  target (panning the look-at point and easing the distance) before the
    *  origin is handed off. Re-selecting during a flight simply retargets it. */
   private startFlight(id: string, fn: (t: number) => Vec3, dist: number): void {
+    // Discard any leftover OrbitControls momentum (a just-released drag/zoom keeps
+    // damped velocity that `update()` would otherwise feed in for several frames),
+    // so the flight begins from exactly the camera the user is looking at — not one
+    // still drifting out from under them.
+    this.stopControlsDrift();
+
     const offset = this.camera.position.clone().sub(this.controls.target);
     if (offset.lengthSq() === 0) offset.set(0, 0.5, 1);
     const startDist = Math.max(offset.length(), 1e-6);
     const dir = offset.normalize();
     this.focusId = id; // light up the selection immediately
-    // Duration scales with how much "zoom" the flight covers — counting both the
-    // dolly between framing distances and the mid-flight pull-back that frames the
-    // gap (see advanceFlight). A moon hop stays snappy; a cross-system jump gets a
-    // touch more time so the eye can follow the journey instead of being whipped.
+
+    // The apex distance of the arc, fixed now so the zoom curve is stable even if
+    // the target drifts mid-flight (the look-at still tracks it live). For a short
+    // hop this is just the natural mid-dolly (geometric mean) and the arc is flat;
+    // for a long hop it lifts to ~FLY_ARC_FRACTION of the gap — enough to read the
+    // travel, far short of framing the whole span.
     const sep = this.toRender(fn(this.lastT)).distanceTo(this.controls.target);
-    const peak = Math.max(startDist, dist, sep * FLY_FRAME_FRACTION);
-    const octaves = Math.log2(peak / startDist) + Math.log2(peak / dist);
-    const duration = Math.min(1.6, Math.max(0.55, 0.5 + 0.08 * octaves));
+    const geomMid = Math.sqrt(startDist * dist);
+    const midDist = Math.max(geomMid, sep * FLY_ARC_FRACTION);
+
+    // Duration scales with the actual zoom travelled — out to the apex, then in to
+    // the destination, in octaves — so a moon hop stays snappy while a cross-system
+    // leg gets enough time to glide instead of being whipped across.
+    const travel = Math.abs(Math.log2(midDist / startDist)) + Math.abs(Math.log2(dist / midDist));
+    const duration = Math.min(2.0, Math.max(0.5, 0.45 + 0.085 * travel));
+
     this.flight = {
       fn,
       dist,
       dir,
       startTarget: this.controls.target.clone(),
       startDist,
+      midDist,
       elapsed: 0,
       duration,
     };
     this.flightLastMs = undefined;
     // focusFn is deliberately left on the old body: it remains the render origin
     // until advanceFlight lands and swaps it.
+  }
+
+  /** Zero OrbitControls' damped residuals (orbit/zoom/pan momentum) so the next
+   *  `update()` reproduces the current camera exactly instead of nudging it. Used
+   *  when a fly-to takes over: the flight is the authority, and any leftover drift
+   *  from a recent drag would otherwise show up as a small lurch on lift-off. */
+  private stopControlsDrift(): void {
+    const c = this.controls as unknown as {
+      _sphericalDelta?: { set(x: number, y: number, z: number): void };
+      _panOffset?: { set(x: number, y: number, z: number): void };
+      _scale?: number;
+    };
+    c._sphericalDelta?.set(0, 0, 0);
+    c._panOffset?.set(0, 0, 0);
+    if (typeof c._scale === "number") c._scale = 1;
   }
 
   /** Advance the active fly-to by one frame. The look-at point and camera ease
@@ -470,14 +503,13 @@ export class SceneManager {
     // recedes and the new one swells at a *perceptually* even rate, since apparent
     // size goes as 1/distance. A linear dolly would shrink the body you left to a
     // dot within the first frames and rush the new one in only at the very end.
-    let dist = f.startDist * Math.pow(f.dist / f.startDist, e);
-    // On long hops, bow the camera outward mid-flight so both bodies — and the
-    // space between — stay framed: a clear zoom-out-then-in arc instead of a blur
-    // past empty space. sin() is zero at both ends, so lift-off and arrival are
-    // untouched; the bow only appears when the gap dwarfs the framing distances.
-    const sep = endTarget.distanceTo(f.startTarget);
-    const peak = Math.max(0, sep * FLY_FRAME_FRACTION - Math.max(f.startDist, f.dist));
-    dist += peak * Math.sin(Math.PI * e);
+    const base = f.startDist * Math.pow(f.dist / f.startDist, e);
+    // Bow the camera out to the apex distance mid-flight, then back in — a gentle
+    // rise-and-settle that lets a long hop read as travel. sin() is zero at both
+    // ends, so lift-off and arrival are untouched; the bow is the extra height of
+    // the apex above the natural mid-dolly, and is ~0 when no pull-back is needed.
+    const bow = Math.max(0, f.midDist - Math.sqrt(f.startDist * f.dist));
+    const dist = base + bow * Math.sin(Math.PI * e);
     this.camera.position.copy(this.controls.target).addScaledVector(f.dir, dist);
 
     if (p >= 1) {
