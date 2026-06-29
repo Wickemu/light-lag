@@ -157,6 +157,13 @@ export interface BodyDef {
    *  `radius`. For an oblate giant (Jupiter/Saturn) equatorial exceeds mean by
    *  several %, and the J2 rate (∝ R²) is wrong by ~5–7% if fed the mean radius. */
   equatorialRadius?: number;
+  /** This body's orbit row tracks the BARYCENTRE of itself and the named
+   *  co-orbiting satellite, not its own centre — so ephemeris.ts shifts the body
+   *  off the barycentre by the satellite's mass fraction f = μ_sat/(μ_body+μ_sat).
+   *  Earth↔Moon (barycentre ~4670 km, inside Earth) and Pluto↔Charon (barycentre
+   *  ~2130 km, ABOVE Pluto's surface — a true binary). The satellite's own row is
+   *  parent-centre-relative, so the chain recombines to the original barycentre. */
+  barycenterChild?: string;
 }
 
 // JPL Standish elements, valid 1800 AD – 2050 AD (no extra correction terms).
@@ -191,8 +198,9 @@ export const BODIES: BodyDef[] = [
     kind: "planet", color: 0x4a90d9,
     rotationPeriod: 86164.0905, obliquityDeg: 23.44, hasSurface: true, J2: 1.08263e-3, equatorialRadius: 6378137, // sidereal day; eq radius WGS84
     atmosphere: { surfacePressure: 101325, surfaceDensity: 1.225, scaleHeight: 8500 },
-    // Standish "EM Bary" row; we treat it as Earth (the Earth–barycentre offset
-    // of ~4670 km is far below visual relevance at 1 AU).
+    // Standish "EM Bary" row: the Earth–Moon barycentre. ephemeris.ts shifts it to
+    // Earth's true centre via barycenterChild (the ~4670 km offset sits inside Earth).
+    barycenterChild: "moon",
     standish: {
       a: 1.00000261, aDot: 0.00000562, e: 0.01671123, eDot: -0.00004392,
       i: -0.00001531, iDot: -0.01294668, L: 100.46457166, LDot: 35999.37244981,
@@ -306,6 +314,11 @@ export const BODIES: BodyDef[] = [
     id: "pluto", name: "Pluto", parent: "sun", mu: 8.696e11, radius: 1.1883e6,
     kind: "dwarf", color: 0xd6b89a,
     rotationPeriod: -551856.7, hasSurface: true, atmosphere: { surfacePressure: 1.0, surfaceDensity: 8.4e-05, scaleHeight: 19000.0 },
+    // The helio row is the Pluto–Charon system barycentre (JPL body 9); ephemeris.ts
+    // shifts Pluto to its true centre via barycenterChild. The barycentre lies
+    // ~2130 km from Pluto's centre — above its 1188 km surface — so the pair reads
+    // as a true binary (bodyViews draws Pluto's loop about that external point).
+    barycenterChild: "charon",
     helio: { a: 39.2643374175, e: 0.2446745123195729, i: 17.15136439626299, node: 110.286929741788, peri: 113.76290248852, M0: 15.0232691500142 },
   },
   {
