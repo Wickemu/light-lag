@@ -10,13 +10,24 @@ import {
   summarizeOrbit,
   hyperbolicBurnDv,
   ellipticalCaptureDv,
+  synchronousRadius,
+  synchronousFeasible,
+  soiRadius,
 } from "./orbit.ts";
 import { elementsToState, period } from "./math/kepler.ts";
 import { dot, length } from "./math/vec3.ts";
-import { BODY_BY_ID } from "./constants.ts";
+import { bodyStateRelative } from "./ephemeris.ts";
+import { BODY_BY_ID, MU_SUN } from "./constants.ts";
 
 const MU_EARTH = BODY_BY_ID.get("earth")!.mu;
 const R_EARTH = BODY_BY_ID.get("earth")!.radius;
+
+/** Sphere-of-influence radius of a body about its parent at t (mirrors commands.ts). */
+function bodySoi(id: string, t = 0): number {
+  const b = BODY_BY_ID.get(id)!;
+  const parentMu = b.parent ? BODY_BY_ID.get(b.parent)!.mu : MU_SUN;
+  return soiRadius(length(bodyStateRelative(b, t).r), b.mu, parentMu);
+}
 
 describe("speeds and energies", () => {
   it("vis-viva reduces to circular speed when r = a", () => {
@@ -99,6 +110,43 @@ describe("elliptical (Oberth-cheap) capture", () => {
     const vInf = 5600;
     expect(ellipticalCaptureDv(vInf, MU_JUP, rPeri, rPeri * 0.5))
       .toBeCloseTo(hyperbolicBurnDv(vInf, MU_JUP, rPeri), 6);
+  });
+});
+
+describe("synchronous (geostationary) orbit", () => {
+  it("Earth's synchronous radius is GEO — ~42,164 km (≈35,786 km altitude)", () => {
+    const a = synchronousRadius(MU_EARTH, 86164.0905);
+    expect(a).toBeGreaterThan(4.21e7);
+    expect(a).toBeLessThan(4.22e7);
+    expect((a - R_EARTH) / 1000).toBeGreaterThan(35700); // ~35,786 km altitude
+    expect((a - R_EARTH) / 1000).toBeLessThan(35870);
+  });
+
+  it("Mars' synchronous radius is areostationary — ~20,428 km", () => {
+    const mars = BODY_BY_ID.get("mars")!;
+    const a = synchronousRadius(mars.mu, mars.rotationPeriod!);
+    expect(a).toBeGreaterThan(2.04e7);
+    expect(a).toBeLessThan(2.05e7);
+  });
+
+  it("ignores the sign of a retrograde rotation period", () => {
+    const venus = BODY_BY_ID.get("venus")!; // rotationPeriod < 0
+    expect(synchronousRadius(venus.mu, venus.rotationPeriod!)).toBeGreaterThan(0);
+  });
+
+  it("is feasible at Earth and Mars but not the Moon (a_sync exceeds the lunar SOI)", () => {
+    const earth = BODY_BY_ID.get("earth")!;
+    const mars = BODY_BY_ID.get("mars")!;
+    const moon = BODY_BY_ID.get("moon")!;
+    expect(synchronousFeasible(earth.mu, earth.rotationPeriod, earth.radius, bodySoi("earth"))).toBe(true);
+    expect(synchronousFeasible(mars.mu, mars.rotationPeriod, mars.radius, bodySoi("mars"))).toBe(true);
+    // The Moon's synchronous radius (~88,000 km) is larger than its SOI (~66,000 km).
+    expect(synchronousRadius(moon.mu, moon.rotationPeriod!)).toBeGreaterThan(bodySoi("moon"));
+    expect(synchronousFeasible(moon.mu, moon.rotationPeriod, moon.radius, bodySoi("moon"))).toBe(false);
+  });
+
+  it("is infeasible for a body with no rotation period", () => {
+    expect(synchronousFeasible(MU_EARTH, undefined, R_EARTH, 1e9)).toBe(false);
   });
 });
 

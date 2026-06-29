@@ -69,6 +69,23 @@ export function distance(a: Vec3, b: Vec3): number {
   return length(sub(a, b));
 }
 
+/**
+ * Rotate `v` by `angle` (rad) about a unit axis `axis` (Rodrigues' rotation formula):
+ * v·cosθ + (axis×v)·sinθ + axis·(axis·v)·(1−cosθ). `axis` must be normalized. Right-handed:
+ * a positive angle turns counter-clockwise when looking down the axis toward the origin.
+ */
+export function rotateAboutAxis(v: Vec3, axis: Vec3, angle: number): Vec3 {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const k = dot(axis, v) * (1 - c);
+  const cr = cross(axis, v);
+  return {
+    x: v.x * c + cr.x * s + axis.x * k,
+    y: v.y * c + cr.y * s + axis.y * k,
+    z: v.z * c + cr.z * s + axis.z * k,
+  };
+}
+
 /** Returns a unit vector. The zero vector maps to itself (no NaN). */
 export function normalize(a: Vec3): Vec3 {
   const len = length(a);

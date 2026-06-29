@@ -9,6 +9,7 @@
 
 import { BODY_BY_ID } from "../constants.ts";
 import { bodyState } from "../ephemeris.ts";
+import { type State } from "../math/kepler.ts";
 import { length, sub } from "../math/vec3.ts";
 import { hyperbolicBurnDv } from "../orbit.ts";
 import { lambert, type LambertSolution } from "./lambert.ts";
@@ -75,35 +76,60 @@ export interface PorkchopParams {
   rParkTo: number;
 }
 
-/** Compute a porkchop grid of heliocentric transfers from one body to another. */
-export function computePorkchop(p: PorkchopParams): Porkchop {
-  const muSun = BODY_BY_ID.get("sun")!.mu;
-  const from = BODY_BY_ID.get(p.fromId)!;
-  const to = BODY_BY_ID.get(p.toId)!;
+/** Where a transfer's destination is, and what arriving there costs. Decouples the porkchop
+ *  sweep from "the target is a body": a body uses `bodyState` + an Oberth capture burn; a
+ *  Lagrange point uses its co-moving ephemeris + a velocity-match (`captureDv: vInf => vInf`). */
+export interface TargetModel {
+  /** Cruise-frame state of the destination at time t. */
+  stateAt: (t: number) => State;
+  /** Capture Δv (m/s) from the arrival excess speed v∞. */
+  captureDv: (vInf: number) => number;
+}
 
-  const depStep = (p.depEnd - p.depStart) / Math.max(1, p.depN - 1);
-  const tofStep = (p.tofMax - p.tofMin) / Math.max(1, p.tofN - 1);
+/** Grid bounds for a porkchop sweep (departure-date span × time-of-flight band). */
+export interface PorkGrid {
+  depStart: number; depEnd: number; depN: number;
+  tofMin: number; tofMax: number; tofN: number;
+}
+
+/**
+ * Core porkchop sweep against an arbitrary cruise frame, departure-state function, and
+ * `TargetModel`. Each cell solves Lambert in `cruiseMu`, costs departure via `injectionDv(v∞)`
+ * (an Oberth escape for an interplanetary leg, a direct burn for an in-SOI leg) and arrival via
+ * `target.captureDv(v∞)`. `computePorkchop` is the heliocentric-body wrapper over this.
+ */
+export function computePorkchopTo(
+  fromId: string,
+  toId: string,
+  cruiseMu: number,
+  depStateAt: (t: number) => State,
+  target: TargetModel,
+  injectionDv: (vInf: number) => number,
+  grid: PorkGrid,
+): Porkchop {
+  const depStep = (grid.depEnd - grid.depStart) / Math.max(1, grid.depN - 1);
+  const tofStep = (grid.tofMax - grid.tofMin) / Math.max(1, grid.tofN - 1);
 
   const cells: PorkCell[][] = [];
   let best: PorkCell | null = null;
   let maxFinite = 0;
 
-  for (let i = 0; i < p.depN; i++) {
-    const depT = p.depStart + i * depStep;
-    const depState = bodyState(from, depT);
+  for (let i = 0; i < grid.depN; i++) {
+    const depT = grid.depStart + i * depStep;
+    const depState = depStateAt(depT);
     const col: PorkCell[] = [];
-    for (let j = 0; j < p.tofN; j++) {
-      const tof = p.tofMin + j * tofStep;
+    for (let j = 0; j < grid.tofN; j++) {
+      const tof = grid.tofMin + j * tofStep;
       const arrT = depT + tof;
-      const arrState = bodyState(to, arrT);
+      const arrState = target.stateAt(arrT);
 
-      const sol = bestLeg(depState.r, arrState.r, tof, muSun, depState.v, arrState.v);
+      const sol = bestLeg(depState.r, arrState.r, tof, cruiseMu, depState.v, arrState.v);
       let dvDepart = Infinity, dvArrive = Infinity, total = Infinity;
       if (sol) {
         const vInfDep = length(sub(sol.v1, depState.v));
         const vInfArr = length(sub(sol.v2, arrState.v));
-        dvDepart = hyperbolicBurnDv(vInfDep, from.mu, p.rParkFrom);
-        dvArrive = hyperbolicBurnDv(vInfArr, to.mu, p.rParkTo);
+        dvDepart = injectionDv(vInfDep);
+        dvArrive = target.captureDv(vInfArr);
         total = dvDepart + dvArrive;
         if (isFinite(total)) {
           if (total > maxFinite) maxFinite = total;
@@ -118,9 +144,25 @@ export function computePorkchop(p: PorkchopParams): Porkchop {
   }
 
   return {
-    fromId: p.fromId, toId: p.toId,
-    depStart: p.depStart, depStep, depN: p.depN,
-    tofStart: p.tofMin, tofStep, tofN: p.tofN,
+    fromId, toId,
+    depStart: grid.depStart, depStep, depN: grid.depN,
+    tofStart: grid.tofMin, tofStep, tofN: grid.tofN,
     cells, best, maxFinite,
   };
+}
+
+/** Compute a porkchop grid of heliocentric transfers from one body to another. A thin wrapper
+ *  over `computePorkchopTo` (behaviour-preserving): heliocentric cruise, Oberth injection from
+ *  the departure body's well, Oberth capture into the target's parking orbit. */
+export function computePorkchop(p: PorkchopParams): Porkchop {
+  const muSun = BODY_BY_ID.get("sun")!.mu;
+  const from = BODY_BY_ID.get(p.fromId)!;
+  const to = BODY_BY_ID.get(p.toId)!;
+  return computePorkchopTo(
+    p.fromId, p.toId, muSun,
+    (t) => bodyState(from, t),
+    { stateAt: (t) => bodyState(to, t), captureDv: (vInf) => hyperbolicBurnDv(vInf, to.mu, p.rParkTo) },
+    (vInf) => hyperbolicBurnDv(vInf, from.mu, p.rParkFrom),
+    { depStart: p.depStart, depEnd: p.depEnd, depN: p.depN, tofMin: p.tofMin, tofMax: p.tofMax, tofN: p.tofN },
+  );
 }

@@ -23,19 +23,20 @@
 import { type WorldState, type Ship, type ShipBurn, type ShipCommand, type BurnDir, type BurnGoal } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
-import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius, visVivaSpeed, j2Rates } from "./orbit.ts";
+import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius, visVivaSpeed, j2Rates, synchronousRadius, combinedPlaneChangeDv, inclinationToEquator, spinPole } from "./orbit.ts";
 import {
   activeStage, applyImpulsiveDv, dvRemaining, primaryMu, shipOsculatingElements, shipRelativeState, shipWorldState,
   interstellarProperTime, spiralElements, buildEntryLeg, buildApproachLeg, inertialDirToSurface, NOMINAL_ENTRY_VEHICLE,
 } from "./ships.ts";
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
-import { stateToElements, meanMotion, wrapTwoPi } from "./math/kepler.ts";
+import { type KeplerElements, stateToElements, meanMotion, wrapTwoPi } from "./math/kepler.ts";
 import { bodyState, bodyElements, bodyStateRelative } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
 import { aimArrival, aimMoonArrival } from "./maneuver/arrival.ts";
 import { searchMoonWindow, moonLooseApoAlt, outboundClearsParent } from "./maneuver/moon.ts";
 import { lambert } from "./maneuver/lambert.ts";
+import { lagrangeState, lagrangeStateRelative } from "./maneuver/lagrange.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
 import { impactParameter } from "./maneuver/flyby.ts";
 import { entryInterfaceAlt, entryInterfaceCrossing } from "./maneuver/entry.ts";
@@ -765,6 +766,7 @@ export class Simulation {
       case "transfer-depart": this.executeDeparture(ship, ev.t); break;
       case "flyby-pass": this.executeFlyby(ship, ev.t); break;
       case "spiral-arrive": this.arriveSpiral(ship); break;
+      case "transfer-arrive": this.arriveTransfer(ship); break;
       case "soi-crossing": this.enterSoi(ship); break;
       case "soi-exit": this.exitSoi(ship); break;
       case "capture": this.captureAtPeriapsis(ship); break;
@@ -940,6 +942,16 @@ export class Simulation {
 
     const t = this.world.t; // == tr.tDepart
 
+    // Lagrange-point arrival: a Lambert leg in the cruise frame to a free co-moving point. There
+    // is no SOI to enter, so it seeds the conic and schedules its own transfer-arrive.
+    if (tr.arrival?.kind === "lagrange") { this.executeLagrangeDeparture(ship, tr, t); return; }
+
+    // Same-primary synchronous (GEO) raise: an in-SOI Hohmann from the current orbit to the
+    // synchronous radius — no Lambert, no SOI change. Identified by `central` == the ship's primary.
+    if (tr.arrival?.kind === "synchronous" && tr.central === ship.primary) {
+      this.executeSyncRaiseDeparture(ship, tr, t); return;
+    }
+
     // Intra-system moon TOUR (most-specific case first): cruises about the parent (tr.central)
     // AND walks a moon-flyby chain inside the parent's SOI. A plain moon transfer sets `central`
     // but no `flybys`; a heliocentric assist sets `flybys` but no `central` — so the tour is the
@@ -966,9 +978,12 @@ export class Simulation {
     }
 
     const depState = bodyState(depBody, t);
-    // Aerocapture aims the arrival periapsis INTO the atmosphere (aeroPeriAlt); a
-    // propulsive arrival aims at the default parking altitude.
-    const rCapture = target.radius + (tr.aeroPeriAlt ?? DEFAULT_CAPTURE_ALT);
+    // A remote SYNCHRONOUS arrival aims the hyperbola straight at the synchronous radius (capture
+    // directly into a circular GEO/areostationary orbit); aerocapture aims the periapsis INTO the
+    // atmosphere (aeroPeriAlt); a plain propulsive arrival aims at the default parking altitude.
+    const rCapture = tr.arrival?.kind === "synchronous"
+      ? synchronousRadius(target.mu, target.rotationPeriod ?? 0)
+      : target.radius + (tr.aeroPeriAlt ?? DEFAULT_CAPTURE_ALT);
     const aim = aimArrival(depBody, target, t, tr.tArrive, rCapture);
     if (!aim) return; // degenerate geometry; leave the transfer un-departed so it can be re-planned
 
@@ -1215,6 +1230,159 @@ export class Simulation {
     ship.epoch = this.world.t;
   }
 
+  // ── Synchronous (GEO) & Lagrange arrivals ────────────────────────────────────
+
+  /** Elements of an equatorial circular orbit of radius `radius` about `body` passing closest to
+   *  the direction `rDir` — the current position projected onto the equator and re-scaled, so the
+   *  established GEO orbit lies in the equator with minimal positional jump. */
+  private synchronousElements(rDir: Vec3, body: BodyDef, radius: number): KeplerElements {
+    const pole = spinPole(body.obliquityDeg ?? 0);
+    const proj = sub(rDir, scale(pole, dot(rDir, pole))); // drop the out-of-equator component
+    const rEq = scale(normalize(proj), radius);
+    const tHat = normalize(cross(pole, rEq)); // prograde direction in the equatorial plane
+    const vEq = scale(tHat, Math.sqrt(body.mu / radius));
+    return stateToElements(rEq, vEq, body.mu);
+  }
+
+  /**
+   * Departure of a same-primary synchronous (GEO) raise: an in-SOI Hohmann from the current
+   * circular orbit. Burn 1 is prograde at the current radius, seeding the transfer ellipse whose
+   * apoapsis is the synchronous radius; the circularization + equatorial plane change (burn 2)
+   * fires at apoapsis via transfer-arrive. The ship never leaves its primary's SOI.
+   */
+  private executeSyncRaiseDeparture(ship: Ship, tr: NonNullable<Ship["transfer"]>, t: number): void {
+    const body = BODY_BY_ID.get(ship.primary);
+    if (!body || !body.rotationPeriod) return;
+    const st = shipRelativeState(ship, t);
+    const rNow = length(st.r);
+    const aSync = synchronousRadius(body.mu, body.rotationPeriod);
+    if (aSync <= rNow) return; // already at/above synchronous — nothing to raise
+    const aGTO = (rNow + aSync) / 2;
+    const vPeri = visVivaSpeed(body.mu, rNow, aGTO); // transfer-ellipse periapsis speed
+    const vPost = scale(normalize(st.v), vPeri); // prograde burn (plane change deferred to apoapsis)
+    const dv = length(sub(vPost, st.v));
+    if (!applyImpulsiveDv(ship, dv)) return; // can't afford — stay parked, un-departed
+    tr.departed = true;
+    tr.dvDepart = dv;
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = stateToElements(st.r, vPost, body.mu); // on the transfer ellipse, at periapsis
+    ship.epoch = t;
+    const tof = Math.PI * Math.sqrt((aGTO * aGTO * aGTO) / body.mu); // half the transfer period
+    this.events.push({ t: t + tof, kind: "transfer-arrive", entityId: ship.id });
+  }
+
+  /**
+   * Departure of a Lagrange-point transfer: a Lambert leg in the cruise frame to the L-point's
+   * co-moving state at arrival. Heliocentric (Sun–planet L-points) pays an Oberth escape from the
+   * departure planet's well and seeds the heliocentric conic; geocentric (planet–moon L-points)
+   * pays a direct injection from the parking orbit and stays in the parent's frame, like a moon
+   * hop. Either way it schedules transfer-arrive — there is no SOI to enter at a free point.
+   */
+  private executeLagrangeDeparture(ship: Ship, tr: NonNullable<Ship["transfer"]>, t: number): void {
+    const secondary = BODY_BY_ID.get(tr.targetId);
+    if (!secondary || tr.arrival?.kind !== "lagrange") return;
+    const point = tr.arrival.point;
+    const geocentric = tr.central !== undefined && tr.central !== "sun";
+    if (geocentric) {
+      const central = BODY_BY_ID.get(tr.central!);
+      if (!central) return;
+      const dep = shipRelativeState(ship, t); // parent-relative parking state
+      const arr = lagrangeStateRelative(secondary, point, tr.tArrive); // parent-relative L-point
+      const sol = lambert(dep.r, arr.r, tr.tArrive - t, central.mu, true);
+      if (!sol) return;
+      if (!outboundClearsParent(dep.r, sol.v1, central.mu, central.radius)) return;
+      const dv = length(sub(sol.v1, dep.v));
+      if (!applyImpulsiveDv(ship, dv)) return; // can't afford — stay parked
+      tr.departed = true;
+      tr.dvDepart = dv;
+      ship.primary = central.id;
+      ship.mode = "coast";
+      ship.r = undefined;
+      ship.v = undefined;
+      ship.elements = stateToElements(dep.r, sol.v1, central.mu);
+      ship.epoch = t;
+    } else {
+      const depBody = BODY_BY_ID.get(ship.primary);
+      if (!depBody) return;
+      const depState = bodyState(depBody, t);
+      const arr = lagrangeState(secondary, point, tr.tArrive); // heliocentric absolute
+      const sol = lambert(depState.r, arr.r, tr.tArrive - t, MU_SUN, true);
+      if (!sol) return;
+      const vInf = length(sub(sol.v1, depState.v));
+      const parkEl = shipOsculatingElements(ship, t);
+      const rPark = periapsisRadius(parkEl.a, parkEl.e);
+      const dv = hyperbolicBurnDv(vInf, depBody.mu, rPark); // Oberth escape from the planet's well
+      if (!applyImpulsiveDv(ship, dv)) return; // can't afford injection — stay parked
+      tr.departed = true;
+      tr.dvDepart = dv;
+      ship.primary = "sun";
+      ship.mode = "coast";
+      ship.r = undefined;
+      ship.v = undefined;
+      ship.elements = stateToElements(depState.r, sol.v1, MU_SUN);
+      ship.epoch = t;
+    }
+    this.events.push({ t: tr.tArrive, kind: "transfer-arrive", entityId: ship.id });
+  }
+
+  /** transfer-arrive dispatch: a Lagrange velocity match, or the circularization of a GEO raise. */
+  private arriveTransfer(ship: Ship): void {
+    const tr = ship.transfer;
+    if (!tr || tr.arrived) return;
+    if (tr.arrival?.kind === "lagrange") this.arriveAtLagrange(ship, tr);
+    else if (tr.arrival?.kind === "synchronous") this.arriveSyncRaise(ship, tr);
+  }
+
+  /**
+   * Arrive at a Lagrange point: match the point's co-moving velocity (a single impulse — no
+   * gravity well, no Oberth) and park the ship on the secondary's displaced Keplerian arc, which
+   * tracks the point over the timescales that matter. Halo/libration & station-keeping are not
+   * modelled. The cruise frame is read off `tr.central` (geocentric for planet–moon L-points).
+   */
+  private arriveAtLagrange(ship: Ship, tr: NonNullable<Ship["transfer"]>): void {
+    const secondary = BODY_BY_ID.get(tr.targetId);
+    if (!secondary || tr.arrival?.kind !== "lagrange") return;
+    const point = tr.arrival.point;
+    const t = this.world.t;
+    const geocentric = tr.central !== undefined && tr.central !== "sun";
+    const cruiseMu = geocentric ? BODY_BY_ID.get(tr.central!)!.mu : MU_SUN;
+    const pointState = geocentric
+      ? lagrangeStateRelative(secondary, point, t)
+      : lagrangeState(secondary, point, t);
+    const st = shipRelativeState(ship, t); // relative to ship.primary (the cruise centre)
+    const dv = length(sub(pointState.v, st.v)); // velocity match
+    if (!applyImpulsiveDv(ship, dv)) return; // can't afford — coasts past the point
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = stateToElements(pointState.r, pointState.v, cruiseMu);
+    ship.epoch = t;
+    tr.arrived = true;
+    tr.dvArrive = dv;
+  }
+
+  /** Circularize a same-primary GEO raise at apoapsis: a combined burn that circularizes at the
+   *  synchronous radius and rotates the orbit into the body's equator. */
+  private arriveSyncRaise(ship: Ship, tr: NonNullable<Ship["transfer"]>): void {
+    const body = BODY_BY_ID.get(ship.primary);
+    if (!body || !body.rotationPeriod) return;
+    const t = this.world.t;
+    const st = shipRelativeState(ship, t); // ≈ apoapsis at the synchronous radius
+    const aSync = synchronousRadius(body.mu, body.rotationPeriod);
+    const di = inclinationToEquator(cross(st.r, st.v), body.obliquityDeg ?? 0);
+    const dv = combinedPlaneChangeDv(length(st.v), Math.sqrt(body.mu / aSync), di);
+    if (!applyImpulsiveDv(ship, dv)) return; // can't afford — stays on the transfer ellipse
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    ship.elements = this.synchronousElements(st.r, body, aSync);
+    ship.epoch = t;
+    tr.arrived = true;
+    tr.dvArrive = dv;
+  }
+
   /**
    * Sphere-of-influence crossing: switch the reference body using the CONTINUOUS
    * state vector (never interpolated elements), re-derive the now-hyperbolic
@@ -1368,6 +1536,24 @@ export class Simulation {
     const t = this.world.t;
     const st = shipRelativeState(ship, t); // at periapsis (coast about target)
     const r = length(st.r);
+
+    // SYNCHRONOUS (GEO/areostationary) arrival: the hyperbola was aimed straight at the synchronous
+    // radius, so capture here circularizes AND rotates into the body's equator in one combined burn
+    // (cheap at the low synchronous speed). The final orbit is equatorial and circular at a_sync.
+    if (tr.arrival?.kind === "synchronous") {
+      const aSync = synchronousRadius(body.mu, body.rotationPeriod ?? 0);
+      const di = inclinationToEquator(cross(st.r, st.v), body.obliquityDeg ?? 0);
+      const captureDv = combinedPlaneChangeDv(length(st.v), Math.sqrt(body.mu / aSync), di);
+      if (!applyImpulsiveDv(ship, captureDv)) return; // can't afford — stays on the hyperbola
+      ship.elements = this.synchronousElements(st.r, body, aSync);
+      ship.epoch = t;
+      ship.mode = "coast";
+      ship.approachLeg = undefined;
+      tr.arrived = true;
+      tr.dvArrive = captureDv;
+      this.maybeChainMoonLeg(ship, tr);
+      return;
+    }
 
     // Capture speed at periapsis: circularize (vCirc) by default, or — for an ELLIPTICAL capture
     // (tr.captureApoAlt set) — only slow to the periapsis speed of a bound ellipse reaching that

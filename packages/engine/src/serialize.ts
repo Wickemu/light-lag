@@ -96,6 +96,13 @@ function qTransfer(t: ShipTransfer) {
   if (t.captureApoAlt !== undefined) o.captureApoAlt = q(t.captureApoAlt);
   if (t.central) o.central = t.central;
   if (t.thenMoonId) o.thenMoonId = t.thenMoonId;
+  // A synchronous (GEO) / Lagrange arrival descriptor — plain string fields, absent from a default
+  // transfer so existing scenarios round-trip byte-for-byte (hash-neutral).
+  if (t.arrival) {
+    o.arrival = t.arrival.kind === "lagrange"
+      ? { kind: t.arrival.kind, point: t.arrival.point }
+      : { kind: t.arrival.kind };
+  }
   return o;
 }
 
@@ -263,7 +270,7 @@ export function hashWorld(world: WorldState): string {
  *  field that happens to equal a token (e.g. a ship named "Inf") is left alone. */
 const STRING_KEYS = new Set([
   "id", "name", "primary", "mode", "targetId", "shipId", "label", "kind", "dir", "type", "controlNode", "status",
-  "goalPrimary",
+  "goalPrimary", "point",
 ]);
 
 /** Inverse of q()'s non-finite tokens, applied during JSON.parse. */
