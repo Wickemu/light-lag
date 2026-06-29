@@ -8,6 +8,12 @@ function portFromEnv(): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+/** Absolute path to a file under the LOCAL engine source. `import.meta.dirname`
+ *  (Node ≥20.11) is this config's own directory, i.e. the current checkout —
+ *  cast because vite/client doesn't type the Node-only field. */
+const here = (import.meta as unknown as { dirname: string }).dirname;
+const engineSrc = (rel: string): string => `${here}/packages/engine/src/${rel}`;
+
 export default defineConfig({
   // Solar-system distances overflow nothing in f64, but we keep the build simple.
   build: {
@@ -19,6 +25,19 @@ export default defineConfig({
   // entry), which only the dev server — not the es2022 production build — hit.
   esbuild: { target: "es2022" },
   optimizeDeps: { esbuildOptions: { target: "es2022" } },
+  // Resolve `@lightlag/engine[/sub]` to the LOCAL packages/engine/src, not via a
+  // node_modules symlink. The workspace symlink hoists to the repo that owns
+  // node_modules — which, in a git WORKTREE that shares the parent's node_modules,
+  // is the MAIN checkout, so engine edits in the worktree were silently ignored by
+  // the dev server and tests. Aliasing to this config's own dir makes every checkout
+  // (main or worktree) use its own engine source. (Mirrored by tsconfig `paths` for
+  // tsc.) The engine's package `exports` map still serves real external consumers.
+  resolve: {
+    alias: [
+      { find: /^@lightlag\/engine$/, replacement: engineSrc("index.ts") },
+      { find: /^@lightlag\/engine\/(.*)$/, replacement: engineSrc("$1") },
+    ],
+  },
   // Honour a PORT from the environment so dev/preview tooling can place the
   // server on an assigned free port; falls back to Vite's default otherwise.
   // Read via globalThis so this typechecks without pulling in @types/node.

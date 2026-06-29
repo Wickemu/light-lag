@@ -12,6 +12,15 @@
     "moduleDetection": "force",
     "noEmit": true,
 
+    // Resolve @lightlag/engine to the LOCAL engine source, matching the vite alias.
+    // Without this, tsc resolves the package through node_modules, which in a git
+    // worktree sharing the parent's node_modules points at the MAIN checkout's engine.
+    "baseUrl": ".",
+    "paths": {
+      "@lightlag/engine": ["packages/engine/src/index.ts"],
+      "@lightlag/engine/*": ["packages/engine/src/*"]
+    },
+
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
