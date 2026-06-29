@@ -26,7 +26,7 @@ import { ConstellationLines } from "./constellationLines.ts";
 import { makeGlowTexture } from "./bodyTextures.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
-import { overlayPalette, dopplerTint } from "./overlayUtil.ts";
+import { overlayPalette, dopplerTint, pickNearest } from "./overlayUtil.ts";
 
 /** Render units per light-year. 1 ly = 40 units puts the farthest system (~12 ly)
  *  at ~480 units — a comfortable framing distance, well inside float32 and the
@@ -48,31 +48,6 @@ const THRUST_COLOR = 0xff8a30;
  *  point — a comfortable radius around the screen-fixed, only-a-few-pixel sprite. */
 const DRAG_PX = 5;
 const PICK_PX = 18;
-
-/** The nearest screen-space marker to a click. Returns the entry within `threshold`
- *  pixels of (cx, cy) that is closest to it, or `undefined` if none is in range.
- *  Pure (no THREE / DOM) so it is unit-testable; an exact distance tie keeps the
- *  earlier array entry, for a deterministic pick. */
-export function pickNearest<T extends { x: number; y: number }>(
-  pts: T[],
-  cx: number,
-  cy: number,
-  threshold: number,
-): T | undefined {
-  const max2 = threshold * threshold;
-  let best: T | undefined;
-  let bestD2 = Infinity;
-  for (const p of pts) {
-    const dx = p.x - cx;
-    const dy = p.y - cy;
-    const d2 = dx * dx + dy * dy;
-    if (d2 <= max2 && d2 < bestD2) {
-      best = p;
-      bestD2 = d2;
-    }
-  }
-  return best;
-}
 
 interface StarVisual {
   def: StarDef;

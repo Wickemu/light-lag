@@ -20,6 +20,7 @@ import { period as orbitalPeriod } from "@lightlag/engine/math/kepler";
 import { length, distance } from "@lightlag/engine/math/vec3";
 import { formatDate } from "@lightlag/engine/time";
 import { STAR_BY_ID, starPosition, LIGHT_YEAR, type StarDef } from "@lightlag/engine/stars";
+import { pickNearest } from "../render/overlayUtil.ts";
 import { interstellarFleet, interstellarStarList } from "../app/commands.ts";
 import { el, button, kv } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
@@ -69,6 +70,13 @@ const LAYER_CHIPS: { key: LayerKey; label: string }[] = [
   { key: "forces", label: "Forces" },
 ];
 
+/** Pointer-pick tuning for the orrery (mirrors the interstellar map). A press that
+ *  travels more than DRAG_PX between down and up was an OrbitControls orbit/zoom,
+ *  not a tap, so it never selects; a tap focuses the nearest body within PICK_PX of
+ *  the release point — a comfortable radius around the screen-fixed marker. */
+const DRAG_PX = 5;
+const PICK_PX = 18;
+
 export class Hud {
   private dateEl!: HTMLElement;
   private warpEl!: HTMLElement;
@@ -112,6 +120,11 @@ export class Hud {
   // frames that system, the same `setInterstellarFocus` path a marker-click uses.
   private starSection!: HTMLElement;
   private starButtons = new Map<string, HTMLButtonElement>();
+  // Click-any-body-to-focus (orrery): the latest BodyViews instance (its
+  // `labelAnchors()` supplies the per-frame screen projection the pick reuses) and
+  // the tap-vs-drag pointer origin.
+  private bodyViews?: BodyViews;
+  private bodyPointerDown: { x: number; y: number } | null = null;
 
   constructor(
     private root: HTMLElement,
@@ -126,6 +139,50 @@ export class Hud {
     this.vis.onChange(() => this.refreshVisibilityUI());
     this.refreshVisibilityUI();
     this.refreshViewSwitch();
+
+    // Click any body in the orrery to focus it — the in-system twin of the
+    // interstellar star-pick. OrbitControls owns drag/zoom on the same canvas, so
+    // we act only on a tap (down+up with little travel) in the system view, routed
+    // through the same `focus(id)` the body list and keyboard shortcuts use.
+    const canvas = this.sm.renderer.domElement;
+    canvas.addEventListener("pointerdown", (e) => {
+      this.bodyPointerDown = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
+    });
+    canvas.addEventListener("pointerup", (e) => this.onSystemPointerUp(e));
+  }
+
+  /** A left-button tap in the orrery focuses the nearest body, reusing `focus(id)`
+   *  (the body-list / keyboard path: camera fly-to + nav-list sync). A press that
+   *  travelled more than DRAG_PX was an orbit/zoom and is ignored; so is a tap on
+   *  empty space (no accidental deselect). */
+  private onSystemPointerUp(e: PointerEvent): void {
+    const down = this.bodyPointerDown;
+    this.bodyPointerDown = null;
+    if (!down || e.button !== 0 || this.sm.viewMode !== "system") return;
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > DRAG_PX) return;
+    const hit = this.pickBody(e.clientX, e.clientY);
+    if (hit) this.focus(hit.id);
+  }
+
+  /** Project every on-screen, visible body to screen pixels (the `updateLabels`
+   *  math, via `BodyViews.labelAnchors`) and return the nearest within PICK_PX of
+   *  the click, or undefined. Reuses the same NDC anchors and visibility filter the
+   *  label layer uses, so only currently-drawn bodies are pickable. */
+  private pickBody(clientX: number, clientY: number): { id: string } | undefined {
+    const views = this.bodyViews;
+    if (!views) return undefined;
+    const rect = this.sm.renderer.domElement.getBoundingClientRect();
+    const w = rect.width || window.innerWidth;
+    const h = rect.height || window.innerHeight;
+    const pts: { id: string; x: number; y: number }[] = [];
+    for (const a of views.labelAnchors()) {
+      const def = BODY_BY_ID.get(a.id);
+      if (!def || !this.vis.bodyVisible(a.id, def.kind)) continue;
+      const ndc = a.ndc;
+      if (ndc.z >= 1 || Math.abs(ndc.x) > 1 || Math.abs(ndc.y) > 1) continue;
+      pts.push({ id: a.id, x: (ndc.x * 0.5 + 0.5) * w, y: (-ndc.y * 0.5 + 0.5) * h });
+    }
+    return pickNearest(pts, clientX - rect.left, clientY - rect.top, PICK_PX);
   }
 
   private build(): void {
@@ -556,6 +613,7 @@ export class Hud {
 
   /** Called once per frame. */
   update(fps: number, views: BodyViews): void {
+    this.bodyViews = views; // stash the (stable) instance for the body-pick handler
     const t = this.sim.world.t;
     this.dateEl.textContent = formatDate(t);
     this.warpEl.textContent = this.sim.paused ? "paused" : this.sim.warpLabel;

@@ -74,11 +74,12 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-*(Last round's candidate #2 — **Click-to-focus a star in the interstellar view** — is now DONE: you can
-click a star marker (or pick from a new HUD **STARS** list) to frame that system and read its
-name/distance/spectral class, reusing the same focus plumbing the ship follow uses. See "Done since
-last round" and "Interstellar sky / camera". The round before, candidate #1 — **Follow ships in the
-interstellar view** — landed.)*
+*(Most recent: **click-to-focus extended to the in-system orrery** — click any body (planet, moon,
+dwarf, asteroid, comet, satellite, the Sun) to frame it, the in-system twin of last round's
+**Click-to-focus a star in the interstellar view**. Both reuse one shared `pickNearest`
+(`render/overlayUtil.ts`); the body pick routes through the existing `hud.focus`/`focusBody` fly-to,
+the star pick through `setInterstellarFocus`/`followInterstellar`. See the two "Done since last round"
+notes. The round before, candidate #1 — **Follow ships in the interstellar view** — landed.)*
 
 1. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
    DONE (a first cut — `packages/engine/src/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
@@ -94,6 +95,23 @@ interstellar view** — landed.)*
 
 *(**Animated launch / landing trajectories** — candidate #3 two rounds ago — is now DONE; see the
 "Done since last round" note below.)*
+
+*(Done since last round: **Click-to-focus extended to the in-system orrery**. The interstellar map
+gained a star-pick last round; this brings the same affordance to the system view — click any body
+(planet, moon, dwarf, asteroid, comet, satellite, or the Sun) to frame it, instead of only the
+nav-list buttons / keyboard (1–8, Tab). The pure screen-space selector `pickNearest` moved from the
+interstellar view to the shared `render/overlayUtil.ts` so both picks import it without coupling. A
+tap-vs-drag pointer handler on the canvas (`ui/hud.ts`, gated to the system view; an OrbitControls
+drag of more than a few px never selects, and a tap on empty space is a no-op) projects every
+on-screen, *visible* body via `BodyViews.labelAnchors()` — reusing the exact NDC anchors and the
+`vis.bodyVisible` filter the label layer already uses — and routes the nearest hit through the
+existing `hud.focus(id)` → `SceneManager.focusBody` animated fly-to (which already frames every kind)
+plus the nav-list active-button sync, so a click behaves identically to a list/keyboard focus.
+**Render/UI only — nothing reaches `WorldState`, so the golden hash is unmoved (`11f2c9fc7a5876`).**
+The 6 pure `pickNearest` specs moved with it into `render/overlayUtil.test.ts` (suite still 733
+green); the canvas projection / pointer handling / fly-to need a WebGL+DOM context, so they are
+verified manually, as the interstellar pick and the rest of the camera code are. Still to do: pick a
+specific body when several project to one pixel (nearest-to-cursor wins today), and a hover highlight.)*
 
 *(Done since last round: **Click-to-focus a star in the interstellar view**. Last round taught the
 interstellar camera to lock onto a ship in transit, but a STAR could not be selected — there was no

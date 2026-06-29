@@ -256,3 +256,30 @@ export function dopplerTint(
   base.lerp(endpoint, mag); // hue slide toward red/blue, brightness preserved
   return base.getHex();
 }
+
+// ── Screen-space marker picking ──────────────────────────────────────────────
+/** The nearest screen-space marker to a click. Returns the entry within `threshold`
+ *  pixels of (cx, cy) that is closest to it, or `undefined` if none is in range.
+ *  Pure (no THREE / DOM) so it is unit-testable; an exact distance tie keeps the
+ *  earlier array entry, for a deterministic pick. Shared by the click-to-focus
+ *  picks in both the interstellar (star) and in-system (body) views. */
+export function pickNearest<T extends { x: number; y: number }>(
+  pts: T[],
+  cx: number,
+  cy: number,
+  threshold: number,
+): T | undefined {
+  const max2 = threshold * threshold;
+  let best: T | undefined;
+  let bestD2 = Infinity;
+  for (const p of pts) {
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 <= max2 && d2 < bestD2) {
+      best = p;
+      bestD2 = d2;
+    }
+  }
+  return best;
+}
