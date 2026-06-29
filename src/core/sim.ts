@@ -34,7 +34,7 @@ import { stateToElements, meanMotion, wrapTwoPi } from "./math/kepler.ts";
 import { bodyState, bodyElements, bodyStateRelative } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
 import { aimArrival, aimMoonArrival } from "./maneuver/arrival.ts";
-import { searchMoonWindow, outboundClearsParent } from "./maneuver/moon.ts";
+import { searchMoonWindow, moonLooseApoAlt, outboundClearsParent } from "./maneuver/moon.ts";
 import { lambert } from "./maneuver/lambert.ts";
 import { flybyManeuver } from "./maneuver/assist.ts";
 import { impactParameter } from "./maneuver/flyby.ts";
@@ -1345,14 +1345,20 @@ export class Simulation {
     tr.thenMoonId = undefined;
     const moon = BODY_BY_ID.get(moonId);
     if (!moon || moon.parent !== ship.primary) return; // not at the moon's planet
+    const parent = BODY_BY_ID.get(ship.primary);
     const t = this.world.t;
     const aPark = shipOsculatingElements(ship, t).a;
-    const win = searchMoonWindow(ship.primary, moonId, t, (tt) => shipRelativeState(ship, tt), aPark);
+    // If the mission captured at the planet into a loose ellipse, the moon leg should capture into
+    // a loose ellipse too — but sized to the MOON's own well (reusing the planet's apoapsis altitude
+    // would be physically wrong). A circular Stage-1 keeps the moon leg circular.
+    const apo = parent && tr.captureApoAlt !== undefined ? moonLooseApoAlt(parent, moon, t) : undefined;
+    const win = searchMoonWindow(ship.primary, moonId, t, (tt) => shipRelativeState(ship, tt), aPark, apo);
     if (!win) return;
     ship.transfer = {
       targetId: moonId, tDepart: win.tDepart, tArrive: win.tArrive,
       dvDepart: win.dvDepart, dvArrive: win.dvArrive,
       departed: false, inSoi: false, arrived: false, central: ship.primary,
+      ...(apo !== undefined ? { captureApoAlt: apo } : {}),
     };
     this.events.push({ t: win.tDepart, kind: "transfer-depart", entityId: ship.id });
   }

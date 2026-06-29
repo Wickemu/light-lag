@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createWorld } from "../core/world.ts";
 import { Simulation } from "../core/sim.ts";
-import { spawnShip, planMoonTransfer, searchMoonWindow, type ShipDesign } from "./commands.ts";
+import { spawnShip, planMoonTransfer, searchMoonWindow, looseCaptureApoAlt, type ShipDesign } from "./commands.ts";
 import { shipRelativeState, shipOsculatingElements, dvRemaining } from "../core/ships.ts";
 import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
 import { circularOrbit } from "../core/orbit.ts";
@@ -118,6 +118,32 @@ describe("intra-system (moon) transfers", () => {
     expect(ship.status ?? "ok").toBe("ok");
     expect(ship.primary).toBe("moon");
     expect(ship.transfer!.arrived).toBe(true);
+  });
+
+  it("captures into the cheap loose ellipse when planMoonTransfer is given an apoapsis", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = leoShip(sim);
+    const ship = sim.world.ships.get(id)!;
+    const win = searchMoonWindow("earth", "moon", 0, (t) => shipRelativeState(ship, t), shipOsculatingElements(ship, 0).a)!;
+    const apoAlt = looseCaptureApoAlt("moon", win.tArrive); // half the Moon's SOI above the surface
+
+    const circular = planMoonTransfer(sim, id, "moon", win.tDepart, win.tArrive)!;
+    // Re-plan the same window on a fresh ship with the loose ellipse — strictly cheaper capture.
+    const sim2 = new Simulation(createWorld(1, 0));
+    const id2 = leoShip(sim2);
+    const elliptical = planMoonTransfer(sim2, id2, "moon", win.tDepart, win.tArrive, apoAlt)!;
+    expect(elliptical.dvArrive).toBeLessThan(circular.dvArrive);
+    // The field is stored so the sim's capture flies the ellipse, not a circularization.
+    expect(sim2.world.ships.get(id2)!.transfer!.captureApoAlt).toBe(apoAlt);
+
+    // Fly it: it captures into a bound, eccentric orbit reaching near the requested apoapsis.
+    sim2.step(win.tArrive + 2 * DAY - sim2.world.t);
+    const ship2 = sim2.world.ships.get(id2)!;
+    expect(ship2.transfer!.arrived).toBe(true);
+    expect(ship2.primary).toBe("moon");
+    const el = shipOsculatingElements(ship2, sim2.world.t);
+    expect(el.e).toBeGreaterThan(0.1); // a real ellipse, not circular
+    expect(el.e).toBeLessThan(1);      // still bound
   });
 
   it("rejects a moon whose parent isn't the ship's current primary", () => {

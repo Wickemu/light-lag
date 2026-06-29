@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createWorld } from "../core/world.ts";
 import { Simulation } from "../core/sim.ts";
-import { spawnShip, planMoonMission, type ShipDesign } from "./commands.ts";
+import { spawnShip, planMoonMission, looseCaptureApoAlt, type ShipDesign } from "./commands.ts";
 import { shipOsculatingElements, dvRemaining } from "../core/ships.ts";
 import { computePorkchop } from "../core/maneuver/porkchop.ts";
 import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
@@ -97,6 +97,39 @@ describe("cross-system two-stage moon missions (Earth → Jupiter → Europa)", 
     const ser = serializeWorld(sim.world);
     expect(serializeWorld(deserializeWorld(ser))).toBe(ser);
     expect(hashWorld(deserializeWorld(ser))).toBe(hashWorld(sim.world));
+  });
+
+  it("an elliptical Stage-1 capture auto-chains a LOOSE moon leg sized to the moon's own well", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, design());
+    const ship = sim.world.ships.get(id)!;
+    // Capture at Jupiter into the cheap loose ellipse (the realistic deep-well insertion).
+    const jupApo = looseCaptureApoAlt("jupiter", win.arrT);
+    planMoonMission(sim, id, "europa", win.depT, win.arrT, "propulsive", jupApo);
+    expect(ship.transfer!.captureApoAlt).toBe(jupApo); // Stage 1 carries the Jupiter ellipse
+
+    // Step past the Jupiter capture so the chain fires. (A loose Jupiter ellipse has a long period,
+    // so the Europa leg DEPARTS much later than the circular case — we assert the chain CONFIGURED
+    // the loose Europa leg, not that it has already arrived.)
+    sim.step(win.arrT + 5 * DAY - sim.world.t);
+    expect(ship.transfer!.targetId).toBe("europa");
+    expect(ship.transfer!.central).toBe("jupiter");
+    expect(ship.transfer!.thenMoonId).toBeUndefined(); // consumed by the chain
+    // The chained Europa leg captures loose too — but sized to EUROPA's own well, not reusing the
+    // (vast) Jupiter apoapsis altitude.
+    expect(ship.transfer!.captureApoAlt).toBeDefined();
+    expect(ship.transfer!.captureApoAlt!).toBeLessThan(jupApo);
+  });
+
+  it("a circular Stage-1 capture leaves the auto-chained moon leg circular (no captureApoAlt)", () => {
+    const sim = new Simulation(createWorld(1, 0));
+    const id = spawnShip(sim, design());
+    const ship = sim.world.ships.get(id)!;
+    planMoonMission(sim, id, "europa", win.depT, win.arrT); // default circular
+    expect(ship.transfer!.captureApoAlt).toBeUndefined();
+    sim.step(win.arrT + 5 * DAY - sim.world.t);
+    expect(ship.primary).toBe("europa");
+    expect(ship.transfer!.captureApoAlt).toBeUndefined(); // moon leg stayed circular
   });
 
   it("rejects a same-system moon (use planMoonTransfer) and a non-moon target", () => {

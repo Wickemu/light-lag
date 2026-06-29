@@ -73,31 +73,56 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-*(Last round's candidate #1 — **J2 on the planetary approach (the honest single-pass version)** — is
-now DONE: the heliocentric→planet capture hyperbola flies a J2-perturbed `ApproachLeg` and the aim
-integrates the same model. See "Done since last round" and "J2 oblateness".)*
+*(Last round's candidate #1 — **Parent-centric porkchop + eccentric capture everywhere** — is now
+DONE: a single moon hop reads off a real parent-centric porkchop (`computeMoonPorkchop`) with a
+circular / loose-ellipse capture choice, and `captureApoAlt` now threads through `searchMoonWindow`
+and the cross-system auto-chain `maybeChainMoonLeg`. See "Done since last round" and "Gravity
+assists" / "Transfer toolkit". The round before, **J2 on the planetary approach** landed.)*
 
-1. **Parent-centric porkchop + eccentric capture everywhere** — moon legs (`searchMoonWindow`)
-   pick a single coarse-grid window and the auto-chained / same-parent moon captures still
-   circularize; give moon transfers a proper porkchop plot (like the heliocentric one) and thread
-   the existing optional `captureApoAlt` through `searchMoonWindow` / `maybeChainMoonLeg` so a
-   moon capture can also choose the cheap loose ellipse. (The moon flyby TOUR already threads
-   `captureApoAlt` and searches a small parent-centric grid; this brings the single-hop window
-   to parity.) *(see "Transfer toolkit".)*
-2. **Follow ships (and other objects) in the interstellar view** — entering the interstellar map
+1. **Follow ships (and other objects) in the interstellar view** — entering the interstellar map
    hard-locks the camera target to Sol (`SceneManager.frameInterstellar` sets `controls.target` to
    the origin). Let it follow an interstellar-leg ship instead: add an optional focus id to
    `setViewMode` / a per-frame `updateFocus()` hook the interstellar view calls, have
    `interstellarView.update` drive `setFocusTarget` from the scaled ship position when one is
    selected, and surface ship selection in the HUD. Respect the view-mode isolation invariant
    (the interstellar view computes its own positions about Sol). *(Observation #2.)*
-3. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
+2. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
    DONE (a first cut — `core/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
    persistent depot stations, propellant boil-off, and a colony supplied within a transfer window.
    *(see Phase 7.)*
 
-*(**Animated launch / landing trajectories** — candidate #3 last round — is now DONE; see the
+*(**Animated launch / landing trajectories** — candidate #3 two rounds ago — is now DONE; see the
 "Done since last round" note below.)*
+
+*(Done since last round: **Parent-centric porkchop + eccentric capture everywhere**. A single moon
+hop used to call `searchMoonWindow` once and pick one coarse window — no porkchop, always a low
+circular capture — while the moon flyby TOUR already searched a parent-centric grid AND could
+capture into the Oberth-cheap loose ellipse. This brings the single hop to parity. New pure
+`computeMoonPorkchop` (`core/maneuver/moon.ts`) is the intra-system twin of `computePorkchop`,
+returning the SAME `Porkchop` shape so the planner's canvas/crosshair/`selectBest` render it
+unchanged: departure axis = one moon period, TOF axis = the Hohmann band, and — because a parking
+orbit is fast (a LEO is ~90 min) next to the moon geometry (~27 days), so the cheap in-plane
+injection lives only at a narrow, fast-recurring departure node — each cell scans the parking-orbit
+phase within its column and keeps the cheapest injection, storing the REFINED departure instant that
+achieved it (the same anti-aliasing `searchMoonWindow` does, now presented as a grid). Cells use the
+cheap centre-aimed Lambert; `planMoonTransfer` does the exact J2-aware `aimMoonArrival` at commit —
+the same porkchop-estimate / real-plan split the heliocentric planner uses. `captureApoAlt` now
+threads through `searchMoonWindow` (a `captureDv` closure: `ellipticalCaptureDv` when set, else
+`hyperbolicBurnDv`) and through the cross-system auto-chain `maybeChainMoonLeg` (`sim.ts`): when the
+Stage-1 planet capture was elliptical, the chained moon leg captures loose too — but sized to the
+MOON's own well via a new core `moonLooseApoAlt` (= half the moon's SOI above its surface; reusing
+the vast Jupiter apoapsis altitude would be physically wrong), not the planet's. The planner's
+moon-direct path now shows the porkchop + a CAPTURE MODE control (circular vs loose ellipse;
+aerocapture stays heliocentric/tour-only); commit flies the selected cell with the chosen capture.
+All new state is optional and the golden scenario has no moon mission / `captureApoAlt`, so the
+**golden hash is unmoved** (`11f2c9fc7a5876`). +13 tests (`core/maneuver/moonPorkchop.test.ts`:
+grid shape + finite best, loose-ellipse-cheaper, determinism, null guard, `moonLooseApoAlt`
+magnitude, `searchMoonWindow` elliptical < circular; `app/moonTransfer.test.ts`: `planMoonTransfer`
+with an apoapsis captures cheaper and flies a bound ellipse; `app/moonMission.test.ts`: an elliptical
+Stage-1 mission auto-chains a loose Europa leg sized to Europa, a circular one stays circular). Still
+to do: a parent-centric chain/flyby porkchop (the tour search is still a bounded grid, not an
+exhaustive sweep), and the exact J2 aim in the grid cells (the cells use the cheap Lambert; commit
+re-aims). *(Candidate #1.)*)*
 
 *(Done since last round: **J2 on the planetary approach — the honest single-pass version**. The
 heliocentric→planet capture hyperbola (`aimArrival`) was pure two-body even at an oblate giant.
