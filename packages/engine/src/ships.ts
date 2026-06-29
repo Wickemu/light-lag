@@ -6,7 +6,7 @@
  */
 
 import { type Ship, type InterstellarLeg, type EntryLeg, type LaunchLeg, type DescentLeg, type PoweredSample, type ApproachLeg } from "./world.ts";
-import { type Stage, deltaVBudget, exhaustVelocity, stageWetMass, consumeStageDv, boosterCount } from "./propulsion.ts";
+import { type Stage, deltaVBudget, stageWetMass, consumeStageDv, boosterCount, liveJetPowerW } from "./propulsion.ts";
 import {
   type State,
   type KeplerElements,
@@ -636,14 +636,14 @@ export function shipThermalState(ship: Ship, t: number): ShipThermal {
   // Reflected sunlight — the optical channel that dominates cold-hull detection.
   const reflectedSignatureW = flux * cross * (1 - absorptivity);
 
-  // Drive waste heat (radiators + plume), only while thrusting.
+  // Drive waste heat (radiators + plume), only while thrusting. Uses the SAME live
+  // engine set the burn integrator flies — the core's distance-derated thrust (a
+  // solar-electric drive far from the Sun is power-starved and radiates less, not the
+  // full rated heat) plus every live strap-on booster — via `liveJetPowerW`.
   let driveWasteW = 0;
   if (ship.mode === "thrust") {
     const stage = activeStage(ship);
-    if (stage) {
-      const jet = 0.5 * stage.thrust * exhaustVelocity(stage.isp); // ½·F·vₑ
-      driveWasteW = (jet * (1 - driveEfficiency)) / driveEfficiency;
-    }
+    if (stage) driveWasteW = (liveJetPowerW(stage, r) * (1 - driveEfficiency)) / driveEfficiency;
   }
 
   const signatureW = thermalSignatureW + reflectedSignatureW + driveWasteW;

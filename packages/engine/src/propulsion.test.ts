@@ -14,9 +14,10 @@ import {
   jetPower,
   exhaustForThrust,
   variableIspBurn,
+  liveJetPowerW,
   type Stage,
 } from "./propulsion.ts";
-import { G0 } from "./constants.ts";
+import { G0, AU } from "./constants.ts";
 
 describe("the rocket equation", () => {
   it("exhaust velocity is Isp·g0", () => {
@@ -267,6 +268,39 @@ describe("parallel staging — review regressions", () => {
     expect(b.total).toBeGreaterThan(0);
     // Core dry drops; only the inert 22 t booster remains as ballast on the payload.
     expect(b.finalMass).toBeCloseTo(3000 + 22000, 6);
+  });
+});
+
+describe("live jet power (liveJetPowerW)", () => {
+  it("a chemical stage is ½·F·vₑ and distance-independent (no solar derating)", () => {
+    const s: Stage = { name: "core", dryMass: 5000, propMass: 40000, isp: 320, thrust: 9e5 };
+    const expected = 0.5 * 9e5 * exhaustVelocity(320);
+    expect(liveJetPowerW(s, AU)).toBeCloseTo(expected, 3);
+    expect(liveJetPowerW(s, 5 * AU)).toBeCloseTo(expected, 3); // a chemical core does not power-starve
+  });
+
+  it("a solar-electric stage derates as 1/r² — far from the Sun it puts out less", () => {
+    // Rated thrust set high so the power-limited electric thrust always binds (never
+    // capped), exposing the pure 1/r² solar fall-off.
+    const s: Stage = {
+      name: "ion", dryMass: 1000, propMass: 5000, isp: 3000, thrust: 1,
+      electric: { powerW: 5000, eta: 0.6, solar: true },
+    };
+    const near = liveJetPowerW(s, AU);
+    const far = liveJetPowerW(s, 3 * AU);
+    expect(far).toBeLessThan(near);
+    expect(far).toBeCloseTo(near / 9, 3); // P ∝ 1/r² ⇒ F ∝ 1/r² ⇒ jet ∝ 1/r²
+  });
+
+  it("sums every live strap-on booster and drops them once spent", () => {
+    const core = { name: "core", dryMass: 8000, propMass: 60000, isp: 300, thrust: 8e5 };
+    const coreJet = 0.5 * 8e5 * exhaustVelocity(300);
+    const boosterJet = 0.5 * (5e5 * 2) * exhaustVelocity(280);
+    const live: Stage = { ...core, boosters: [{ name: "SRB", dryMass: 2000, propMass: 20000, isp: 280, thrust: 5e5, count: 2 }] };
+    expect(liveJetPowerW(live, AU)).toBeCloseTo(coreJet + boosterJet, 3);
+    // A spent booster (propMass 0) contributes no jet power — only the core's.
+    const spent: Stage = { ...core, boosters: [{ name: "SRB", dryMass: 2000, propMass: 0, isp: 280, thrust: 5e5, count: 2 }] };
+    expect(liveJetPowerW(spent, AU)).toBeCloseTo(coreJet, 3);
   });
 });
 
