@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, defaultDesign, flyEntry } from "./commands.ts";
-import { shipRelativeState, shipEntryReadout, buildEntryLeg } from "../core/ships.ts";
-import { entryInterfaceAlt } from "../core/maneuver/entry.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { BODY_BY_ID } from "../core/constants.ts";
-import { length } from "../core/math/vec3.ts";
+import { shipRelativeState, shipEntryReadout, buildEntryLeg } from "@lightlag/engine/ships";
+import { entryInterfaceAlt } from "@lightlag/engine/maneuver/entry";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { BODY_BY_ID } from "@lightlag/engine/constants";
+import { length } from "@lightlag/engine/math/vec3";
 
 const EARTH = BODY_BY_ID.get("earth")!;
 const R = EARTH.radius;

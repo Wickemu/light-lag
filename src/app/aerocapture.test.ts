@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, planTransfer, type ShipDesign } from "./commands.ts";
-import { shipOsculatingElements, dvRemaining } from "../core/ships.ts";
-import { marsWindow } from "../core/test-helpers.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { entryInterfaceAlt } from "../core/maneuver/entry.ts";
-import { BODY_BY_ID, DAY } from "../core/constants.ts";
+import { shipOsculatingElements, dvRemaining } from "@lightlag/engine/ships";
+import { marsWindow } from "../integration/test-helpers.ts";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { entryInterfaceAlt } from "@lightlag/engine/maneuver/entry";
+import { BODY_BY_ID, DAY } from "@lightlag/engine/constants";
 
 const MARS = BODY_BY_ID.get("mars")!;
 

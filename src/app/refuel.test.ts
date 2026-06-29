@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createWorld, type Ship } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld, type Ship } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import {
   spawnShip, defaultDesign, transferPropellant, assembleShips, dockCandidates, shipPropStatus,
 } from "./commands.ts";
-import { dvRemaining, totalMass, applyImpulsiveDv } from "../core/ships.ts";
-import { dockState, shipPropHeadroom, DOCK_DISTANCE } from "../core/refuel.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
+import { dvRemaining, totalMass, applyImpulsiveDv } from "@lightlag/engine/ships";
+import { dockState, shipPropHeadroom, DOCK_DISTANCE } from "@lightlag/engine/refuel";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
 
 /** Total propellant aboard a ship (all stages). */
 function totalProp(ship: Ship): number {

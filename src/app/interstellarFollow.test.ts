@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, defaultDesign, dispatchInterstellar, interstellarFleet } from "./commands.ts";
-import { hashWorld } from "../core/serialize.ts";
-import { G0 } from "../core/constants.ts";
+import { hashWorld } from "@lightlag/engine/serialize";
+import { G0 } from "@lightlag/engine/constants";
 
 /** A default design with a custom name, for ordering assertions. */
 const named = (name: string) => ({ ...defaultDesign(), name });

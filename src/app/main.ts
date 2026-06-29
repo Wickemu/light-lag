@@ -8,8 +8,8 @@
  */
 
 import "../styles.css";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { SceneManager } from "../render/SceneManager.ts";
 import { Visibility, LAYER_KEYS } from "../render/visibility.ts";
 import { BodyViews } from "../render/bodyViews.ts";

@@ -15,8 +15,8 @@
  */
 
 import * as THREE from "three";
-import { STARS, BACKDROP_STARS, type StarDef, starPosition } from "../core/stars.ts";
-import { length } from "../core/math/vec3.ts";
+import { STARS, BACKDROP_STARS, type StarDef, starPosition } from "@lightlag/engine/stars";
+import { length } from "@lightlag/engine/math/vec3";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
 import { SkyBackdrop } from "./skyBackdrop.ts";

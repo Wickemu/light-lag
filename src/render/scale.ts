@@ -14,7 +14,7 @@
  */
 
 import * as THREE from "three";
-import { type Vec3 } from "../core/math/vec3.ts";
+import { type Vec3 } from "@lightlag/engine/math/vec3";
 
 /** Metres per render unit. 1 unit = 1,000,000 km. At this scale 1 AU ≈ 149.6
  *  units and Neptune ≈ 4488 units — all well within float32's safe range. */

@@ -8,8 +8,8 @@
  * a rolling log / alerts; the feed is stepped once per frame from the render loop.
  */
 
-import { type WorldState, type Ship } from "../core/world.ts";
-import { BODY_BY_ID } from "../core/constants.ts";
+import { type WorldState, type Ship } from "@lightlag/engine/world";
+import { BODY_BY_ID } from "@lightlag/engine/constants";
 import { type InstrumentState } from "./instruments.ts";
 
 export interface MissionEvent {

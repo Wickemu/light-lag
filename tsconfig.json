@@ -21,5 +21,10 @@
 
     "types": ["vite/client"]
   },
-  "include": ["src", "vite.config.ts"]
+  // The root program covers the game layer (src) and the engine source
+  // (packages/engine/src) so one `tsc --noEmit` checks everything the app and
+  // its tests touch. The engine ALSO has its own DOM-free tsconfig, run via
+  // `npm run typecheck:engine`, which is the boundary gate (it fails if the
+  // engine ever reaches into the game or the browser).
+  "include": ["src", "packages/engine/src", "vite.config.ts"]
 }

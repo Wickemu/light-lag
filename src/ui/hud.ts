@@ -8,17 +8,17 @@
  * Earth — the first taste of the light-lag that defines everything later.
  */
 
-import { Simulation } from "../core/sim.ts";
+import { Simulation } from "@lightlag/engine/sim";
 import { SceneManager } from "../render/SceneManager.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { type Visibility, type LayerKey } from "../render/visibility.ts";
-import { BODIES, BODY_BY_ID, AU, C, MU_SUN, type BodyKind } from "../core/constants.ts";
-import { bodyState, bodyElements } from "../core/ephemeris.ts";
-import { solarFlux } from "../core/thermal.ts";
-import { surfaceGravity, escapeVelocity } from "../core/surface.ts";
-import { period as orbitalPeriod } from "../core/math/kepler.ts";
-import { length, distance } from "../core/math/vec3.ts";
-import { formatDate } from "../core/time.ts";
+import { BODIES, BODY_BY_ID, AU, C, MU_SUN, type BodyKind } from "@lightlag/engine/constants";
+import { bodyState, bodyElements } from "@lightlag/engine/ephemeris";
+import { solarFlux } from "@lightlag/engine/thermal";
+import { surfaceGravity, escapeVelocity } from "@lightlag/engine/surface";
+import { period as orbitalPeriod } from "@lightlag/engine/math/kepler";
+import { length, distance } from "@lightlag/engine/math/vec3";
+import { formatDate } from "@lightlag/engine/time";
 import { interstellarFleet } from "../app/commands.ts";
 import { el, button, kv } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";

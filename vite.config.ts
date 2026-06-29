@@ -20,8 +20,10 @@ export default defineConfig({
     port: portFromEnv() ?? 5173,
   },
   test: {
-    // The physics core is pure and runs headless in Node.
+    // The physics engine is pure and runs headless in Node. One runner covers
+    // both the engine package and the game layer (incl. the app↔engine
+    // integration tests under src/integration).
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "packages/engine/src/**/*.test.ts"],
   },
 });

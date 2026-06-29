@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, defaultDesign, landShip, launchShip } from "./commands.ts";
-import { dvRemaining, shipRelativeState } from "../core/ships.ts";
-import { circularOrbit } from "../core/orbit.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { BODY_BY_ID } from "../core/constants.ts";
-import { length } from "../core/math/vec3.ts";
+import { dvRemaining, shipRelativeState } from "@lightlag/engine/ships";
+import { circularOrbit } from "@lightlag/engine/orbit";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { BODY_BY_ID } from "@lightlag/engine/constants";
+import { length } from "@lightlag/engine/math/vec3";
 
 const MOON = BODY_BY_ID.get("moon")!;
 

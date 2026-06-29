@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, defaultDesign, deleteShip, planTransfer, sendBurn } from "./commands.ts";
-import { flyUntilCoast, marsWindow } from "../core/test-helpers.ts";
-import { orbitalPeriod } from "../core/orbit.ts";
-import { shipRelativeState } from "../core/ships.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { BODY_BY_ID, DAY } from "../core/constants.ts";
-import { length } from "../core/math/vec3.ts";
+import { flyUntilCoast, marsWindow } from "../integration/test-helpers.ts";
+import { orbitalPeriod } from "@lightlag/engine/orbit";
+import { shipRelativeState } from "@lightlag/engine/ships";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { BODY_BY_ID, DAY } from "@lightlag/engine/constants";
+import { length } from "@lightlag/engine/math/vec3";
 
 const EARTH = BODY_BY_ID.get("earth")!;
 

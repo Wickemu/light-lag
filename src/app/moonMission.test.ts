@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, planMoonMission, looseCaptureApoAlt, type ShipDesign } from "./commands.ts";
-import { shipOsculatingElements, dvRemaining } from "../core/ships.ts";
-import { computePorkchop } from "../core/maneuver/porkchop.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { BODY_BY_ID, DAY } from "../core/constants.ts";
+import { shipOsculatingElements, dvRemaining } from "@lightlag/engine/ships";
+import { computePorkchop } from "@lightlag/engine/maneuver/porkchop";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { BODY_BY_ID, DAY } from "@lightlag/engine/constants";
 
 const EARTH = BODY_BY_ID.get("earth")!;
 const JUPITER = BODY_BY_ID.get("jupiter")!;

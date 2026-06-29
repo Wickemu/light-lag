@@ -7,20 +7,20 @@
  * strings. No DOM, no mutation.
  */
 
-import { type Ship } from "../core/world.ts";
+import { type Ship } from "@lightlag/engine/world";
 import {
   shipOsculatingElements,
   shipRelativeState,
   shipEntryReadout,
   primaryMu,
   type TelemetryDoppler,
-} from "../core/ships.ts";
-import { summarizeOrbit, type OrbitSummary } from "../core/orbit.ts";
-import { STAR_BY_ID } from "../core/stars.ts";
-import { BODY_BY_ID, AU, DAY, JULIAN_YEAR, IR_BAND_WAVELENGTH, type BodyDef } from "../core/constants.ts";
-import { solveKeplerElliptic, solveKeplerHyperbolic, trueAnomalyFromE, trueAnomalyFromF } from "../core/math/kepler.ts";
-import { shiftedWavelength } from "../core/comms.ts";
-import { length } from "../core/math/vec3.ts";
+} from "@lightlag/engine/ships";
+import { summarizeOrbit, type OrbitSummary } from "@lightlag/engine/orbit";
+import { STAR_BY_ID } from "@lightlag/engine/stars";
+import { BODY_BY_ID, AU, DAY, JULIAN_YEAR, IR_BAND_WAVELENGTH, type BodyDef } from "@lightlag/engine/constants";
+import { solveKeplerElliptic, solveKeplerHyperbolic, trueAnomalyFromE, trueAnomalyFromF } from "@lightlag/engine/math/kepler";
+import { shiftedWavelength } from "@lightlag/engine/comms";
+import { length } from "@lightlag/engine/math/vec3";
 import { type OrbitView, type InstrumentState } from "./instruments.ts";
 
 export function clamp01(x: number): number { return Math.max(0, Math.min(1, isFinite(x) ? x : 0)); }

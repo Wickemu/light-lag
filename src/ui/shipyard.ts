@@ -16,7 +16,7 @@
  * user edits, so it may rebuild its readout freely.
  */
 
-import { type Simulation } from "../core/sim.ts";
+import { type Simulation } from "@lightlag/engine/sim";
 import {
   type ShipDesign,
   defaultDesign,
@@ -31,7 +31,7 @@ import {
   presetsByCategory,
   presetToDesign,
 } from "../app/shipCatalog.ts";
-import { deltaVBudget, initialTWR, stageLiftoffThrust } from "../core/propulsion.ts";
+import { deltaVBudget, initialTWR, stageLiftoffThrust } from "@lightlag/engine/propulsion";
 import { el, button, numberField, compactField, setDisabled } from "./dom.ts";
 import { radialGauge } from "./instruments.ts";
 

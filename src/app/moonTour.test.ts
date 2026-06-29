@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, planMoonTour, searchMoonTour, type ShipDesign } from "./commands.ts";
-import { shipOsculatingElements, shipRelativeState } from "../core/ships.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { bodyElements, bodyStateRelative } from "../core/ephemeris.ts";
-import { lambert } from "../core/maneuver/lambert.ts";
-import { outboundClearsParent } from "../core/maneuver/moon.ts";
-import { BODY_BY_ID, DAY } from "../core/constants.ts";
+import { shipOsculatingElements, shipRelativeState } from "@lightlag/engine/ships";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { bodyElements, bodyStateRelative } from "@lightlag/engine/ephemeris";
+import { lambert } from "@lightlag/engine/maneuver/lambert";
+import { outboundClearsParent } from "@lightlag/engine/maneuver/moon";
+import { BODY_BY_ID, DAY } from "@lightlag/engine/constants";
 
 const JUPITER = BODY_BY_ID.get("jupiter")!;
 const EUROPA = BODY_BY_ID.get("europa")!;

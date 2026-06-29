@@ -17,9 +17,9 @@
  */
 
 import * as THREE from "three";
-import { STARS, STAR_BY_ID, BACKDROP_STARS, starPosition, LIGHT_YEAR, type StarDef } from "../core/stars.ts";
-import { type WorldState } from "../core/world.ts";
-import { shipWorldState, shipTelemetryDoppler } from "../core/ships.ts";
+import { STARS, STAR_BY_ID, BACKDROP_STARS, starPosition, LIGHT_YEAR, type StarDef } from "@lightlag/engine/stars";
+import { type WorldState } from "@lightlag/engine/world";
+import { shipWorldState, shipTelemetryDoppler } from "@lightlag/engine/ships";
 import { spectralColor, makeStarTexture } from "./starViews.ts";
 import { SkyBackdrop } from "./skyBackdrop.ts";
 import { ConstellationLines } from "./constellationLines.ts";

@@ -1,0 +1,16 @@
+{
+  "name": "@lightlag/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LIGHTLAG physics engine — pure, deterministic, double-precision SI Solar-System mechanics. No renderer, no DOM, no framework, no game assumptions.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "sideEffects": false
+}

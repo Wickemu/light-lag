@@ -6,7 +6,7 @@
  */
 
 import * as THREE from "three";
-import { type WorldState } from "../core/world.ts";
+import { type WorldState } from "@lightlag/engine/world";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
 

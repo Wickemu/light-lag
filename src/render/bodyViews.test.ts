@@ -20,10 +20,10 @@ import { describe, it, expect } from "vitest";
 import * as THREE from "three";
 import { fillOrbitLoopWorld, tidalLockOrientation } from "./bodyViews.ts";
 import { SCENE_SCALE } from "./scale.ts";
-import { BODY_BY_ID } from "../core/constants.ts";
-import { bodyState, bodyStateRelative, bodyElements } from "../core/ephemeris.ts";
-import { orbitPath } from "../core/math/kepler.ts";
-import { type Vec3 } from "../core/math/vec3.ts";
+import { BODY_BY_ID } from "@lightlag/engine/constants";
+import { bodyState, bodyStateRelative, bodyElements } from "@lightlag/engine/ephemeris";
+import { orbitPath } from "@lightlag/engine/math/kepler";
+import { type Vec3 } from "@lightlag/engine/math/vec3";
 
 const f = Math.fround;
 const KM = (units: number) => units * SCENE_SCALE / 1000;

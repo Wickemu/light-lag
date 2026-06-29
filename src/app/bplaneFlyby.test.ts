@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, planAssist, planMoonTour, searchMoonTour, type ShipDesign } from "./commands.ts";
-import { searchAssist, minFlybyRadius } from "../core/maneuver/assist.ts";
-import { shipRelativeState } from "../core/ships.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { bodyElements } from "../core/ephemeris.ts";
-import { BODY_BY_ID, JULIAN_YEAR, DAY } from "../core/constants.ts";
+import { searchAssist, minFlybyRadius } from "@lightlag/engine/maneuver/assist";
+import { shipRelativeState } from "@lightlag/engine/ships";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { bodyElements } from "@lightlag/engine/ephemeris";
+import { BODY_BY_ID, JULIAN_YEAR, DAY } from "@lightlag/engine/constants";
 
 // A high-Δv courier (mirrors gravityAssist.test.ts) so it can afford an Earth→Jupiter
 // injection plus the flyby residual and reach the outer system.

@@ -13,10 +13,10 @@
  */
 
 import * as THREE from "three";
-import { BODIES, BODY_BY_ID, type BodyDef, type BodyKind } from "../core/constants.ts";
-import { bodyState, bodyStateRelative, bodyElements } from "../core/ephemeris.ts";
-import { orbitPath, period, type State } from "../core/math/kepler.ts";
-import { type Vec3 } from "../core/math/vec3.ts";
+import { BODIES, BODY_BY_ID, type BodyDef, type BodyKind } from "@lightlag/engine/constants";
+import { bodyState, bodyStateRelative, bodyElements } from "@lightlag/engine/ephemeris";
+import { orbitPath, period, type State } from "@lightlag/engine/math/kepler";
+import { type Vec3 } from "@lightlag/engine/math/vec3";
 import { metersToUnits, SCENE_SCALE } from "./scale.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";

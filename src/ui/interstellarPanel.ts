@@ -9,14 +9,14 @@
  * an analytic flip-and-burn.
  */
 
-import { type Simulation } from "../core/sim.ts";
+import { type Simulation } from "@lightlag/engine/sim";
 import { type SceneManager } from "../render/SceneManager.ts";
-import { STARS, STAR_BY_ID } from "../core/stars.ts";
-import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
+import { STARS, STAR_BY_ID } from "@lightlag/engine/stars";
+import { torchTransit, type InterstellarTransit } from "@lightlag/engine/maneuver/interstellar";
 import { INTERSTELLAR_CRAFT } from "../app/shipCatalog.ts";
 import { dispatchInterstellar } from "../app/commands.ts";
-import { shipWorldState } from "../core/ships.ts";
-import { C } from "../core/constants.ts";
+import { shipWorldState } from "@lightlag/engine/ships";
+import { C } from "@lightlag/engine/constants";
 import { div, btn, kv, setDisabled } from "./dom.ts";
 
 export class InterstellarPanel {

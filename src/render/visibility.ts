@@ -16,7 +16,7 @@
  * lines, name labels, the nearby-star sky, ships, and in-flight comms packets.
  */
 
-import { type BodyKind } from "../core/constants.ts";
+import { type BodyKind } from "@lightlag/engine/constants";
 
 /** Cross-cutting overlay toggles (not tied to a single body kind). */
 export type LayerKey =

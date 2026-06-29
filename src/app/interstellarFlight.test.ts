@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, defaultDesign, dispatchInterstellar } from "./commands.ts";
-import { shipWorldState } from "../core/ships.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { STAR_BY_ID, starPosition } from "../core/stars.ts";
-import { C, G0, JULIAN_YEAR } from "../core/constants.ts";
-import { distance, length } from "../core/math/vec3.ts";
+import { shipWorldState } from "@lightlag/engine/ships";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { STAR_BY_ID, starPosition } from "@lightlag/engine/stars";
+import { C, G0, JULIAN_YEAR } from "@lightlag/engine/constants";
+import { distance, length } from "@lightlag/engine/math/vec3";
 
 const proxima = STAR_BY_ID.get("proxima")!;
 

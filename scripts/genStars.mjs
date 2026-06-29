@@ -16,13 +16,13 @@
  *            License BSD-2-Clause. https://github.com/ofrohn/d3-celestial
  *
  * The two tiers it produces (a clean distance split, so no overlap with the 27
- * hand-curated systems in src/core/stars.ts, all of which are <= ~12 ly):
+ * hand-curated systems in packages/engine/src/stars.ts, all of which are <= ~12 ly):
  *   - NAVIGABLE additions: notable stars in (CURATED_MAX, REACH_LY] ly — new
  *     interstellar travel destinations (Altair, Vega, Fomalhaut, 40 Eridani, …).
  *   - BACKDROP: bright stars beyond REACH_LY down to MAG_LIMIT — a fixed sky.
  *
  * Constellation lines are emitted as ecliptic-J2000 unit-direction polylines
- * (precomputed here with the SAME obliquity rotation as src/core/stars.ts), so the
+ * (precomputed here with the SAME obliquity rotation as packages/engine/src/stars.ts), so the
  * renderer just draws them on the camera-anchored sky sphere — no coupling to which
  * stars are in the catalog.
  */
@@ -32,7 +32,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT_DIR = resolve(HERE, "../src/core");
+const OUT_DIR = resolve(HERE, "../packages/engine/src");
 
 const HYG_URL =
   "https://raw.githubusercontent.com/astronexus/HYG-Database/main/hyg/CURRENT/hygdata_v41.csv";
@@ -47,7 +47,7 @@ const MAG_LIMIT = 4.0; // backdrop faint limit (constellation-filling)
 const ADDITION_MAG = 4.5; // a 12–26 ly star this bright is a "notable" destination
 const DEDUP_ARCMIN = 1.0; // collapse split double-star rows closer than this
 
-// ── Frame conversion (must match src/core/stars.ts exactly) ─────────────────
+// ── Frame conversion (must match packages/engine/src/stars.ts exactly) ─────────────────
 const OBLIQUITY = (23.4392911 * Math.PI) / 180;
 const CO = Math.cos(OBLIQUITY), SO = Math.sin(OBLIQUITY);
 /** Equatorial-J2000 unit direction (ra, dec in rad) → ecliptic-J2000 unit vector. */
