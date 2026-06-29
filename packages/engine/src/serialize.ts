@@ -151,6 +151,7 @@ function qShip(s: Ship): Record<string, unknown> {
   };
   if (s.epoch !== undefined) o.epoch = q(s.epoch);
   if (s.elements) o.elements = qEl(s.elements);
+  if (s.drag) o.drag = { nDot: q(s.drag.nDot) };
   if (s.r) o.r = qv(s.r);
   if (s.v) o.v = qv(s.v);
   if (s.burn) o.burn = qBurn(s.burn);

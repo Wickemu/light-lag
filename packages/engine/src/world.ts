@@ -223,6 +223,23 @@ export interface Ship {
   /** Coast: osculating elements about `primary`, valid at time `epoch`. */
   elements?: KeplerElements;
   epoch?: number; // s, the time `elements` were set
+  /**
+   * Secular atmospheric-drag decay for a coasting orbit (rung-1 model): a CONSTANT
+   * rate of change of mean motion, ṅ (rad/s²), captured once from the orbit's source
+   * (a TLE's first time-derivative of mean motion). `coastElements` applies it in
+   * closed form — an along-track advance (½·ṅ·dt²) plus the consistent semi-major-axis
+   * decay (n²a³ = μ) — so it stays exact at any time-warp, needing no integration.
+   * Present only on satellites ingested from a TLE; absent ⇒ a drag-free conic.
+   *
+   * NEXT STEP — rung 2 (not yet built): replace the constant ṅ with an altitude- and
+   * space-weather-dependent rate — a King-Hele averaged-element decay from an
+   * exponential/Harris-Priester atmosphere ρ(a), scaled by the object's ballistic
+   * coefficient (recoverable from the TLE's B*) and modulated by solar flux (F10.7)
+   * and the geomagnetic index. That captures the decay RUNAWAY as perigee drops and
+   * gives a physical home for solar-activity fluctuation, at the cost of a cheap
+   * per-orbit integration (this constant-rate model needs none).
+   */
+  drag?: { nDot: number };
   /** Thrust: integrated state about `primary` (valid at world.t). */
   r?: Vec3;
   v?: Vec3;

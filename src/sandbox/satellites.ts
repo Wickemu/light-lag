@@ -15,8 +15,11 @@
  * ingested satellites inconsistent with those.
  *
  * Accuracy: a TLE is exact only near its epoch; an analytically-propagated orbit
- * drifts from the true satellite over days (SGP4 models drag/resonance the engine
- * doesn't). The sandbox surfaces this rather than hiding it.
+ * still drifts from the true satellite over days. The engine now coasts with the
+ * TLE's measured secular drag (a constant ṅ → ½·ṅ·dt² along-track + SMA decay; see
+ * `Ship.drag`), which captures the DOMINANT along-track drift but not what SGP4's
+ * full density/resonance model does (the runaway as perigee drops, space-weather
+ * swings). The sandbox surfaces the residual rather than hiding it.
  *
  * App-layer (the engine never imports satellite.js).
  */
@@ -51,6 +54,22 @@ function worldTimeToDate(t: number): Date {
 /** NORAD catalog number from line 1 (columns 3–7), e.g. "25544". */
 function noradId(line1: string): string {
   return line1.slice(2, 7).trim();
+}
+
+const DAY_S = 86400;
+
+/**
+ * Secular mean-motion rate ṅ (rad/s²) from TLE line 1's first time-derivative of
+ * mean motion (columns 34–43), the orbit's measured drag signature. The field is
+ * ṅ/2 in rev/day²; convert to SI by ×2 (undo the half), ×2π (rev→rad), ÷86400²
+ * (day²→s²). This single constant rate is the rung-1 drag model the engine coasts
+ * with (see `Ship.drag`). Returns 0 for a missing/garbled field, so a malformed TLE
+ * just yields a drag-free conic rather than failing ingestion.
+ */
+function tleMeanMotionRate(line1: string): number {
+  const halfRevPerDay2 = Number.parseFloat(line1.slice(33, 43).trim());
+  if (!Number.isFinite(halfRevPerDay2)) return 0;
+  return (halfRevPerDay2 * 2 * 2 * Math.PI) / (DAY_S * DAY_S);
 }
 
 /** TEME state (km, km/s) → engine osculating Kepler elements about Earth (SI). */
@@ -101,6 +120,11 @@ export function spawnSatellite(sim: Simulation, tle: Tle): string | null {
     activeStage: 0,
     tau: 0,
   };
+  // Carry the TLE's measured secular drag so the coast decays its orbit (rung-1),
+  // approximating the dominant along-track drift instead of coasting drag-free.
+  // Omit a zero rate so a drag-free object serializes like any other coasting ship.
+  const nDot = tleMeanMotionRate(tle.line1);
+  if (nDot !== 0) ship.drag = { nDot };
   sim.world.ships.set(id, ship);
   return id;
 }
