@@ -1093,6 +1093,50 @@ button.danger:hover {
   margin-top: 4px;
   line-height: 1.35;
 }
+
+/* ── Sandbox (orbital playground) panel + dock tab ─────────────────────────── */
+/* A centred modal, like the transfer / interstellar planners (opened on demand
+   from the dock tab), so it never collides with the docked HUD panels. */
+.sandbox-panel {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 320px;
+  flex-direction: column;
+  gap: 6px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  z-index: 21;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+.sandbox-panel .note-line {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 4px 0;
+  line-height: 1.35;
+}
+.sandbox-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sandbox-wide-btn {
+  width: 100%;
+  margin-top: 4px;
+}
+.sandbox-scrub {
+  width: 100%;
+  margin: 6px 0 2px;
+  accent-color: var(--accent, #6fe0ff);
+}
+.sandbox-tab {
+  bottom: 18px;
+  right: 16px;
+}
+.sandbox-tab.active {
+  color: var(--text);
+  border-color: var(--text);
+}
 .transfer-head {
   display: flex;
   align-items: center;

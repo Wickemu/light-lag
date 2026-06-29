@@ -79,7 +79,8 @@ under a namespace for the `import { orbit, sim } from "@lightlag/engine"` form.
 | `stars.ts` | Nearest ~24 star systems in ecliptic-J2000 frame (interstellar destinations). |
 | `comms.ts` | Light-time, signal propagation at `c`, retarded (delayed) state of a moving target. |
 | `serialize.ts` | Canonical, deterministic world serialization (sorted Maps, 12-sig-fig quantization) + `hashWorld` (the golden-state CI oracle). Foundation for Phase-8 save/load. |
-| `time.ts` | Clock, time-warp levels, deterministic event queue, calendar formatting. |
+| `scenario.ts` | Deterministic **snapshots & scenarios**: a lossless (full-f64) `SimSnapshot` of world + pending events + warp; `snapshot`/`restore`/`restoreInto` (bit-exact resume — the save/load + replay-scrub foundation); a serializable `Scenario` (seed + objectives) and `evaluateObjective`. The event queue is snapshotted as data, not re-derived. |
+| `time.ts` | Clock, time-warp levels, deterministic event queue (with `snapshot`/`load`), calendar formatting. |
 | `world.ts` | `WorldState` — plain serializable data (ships, stations, maneuvers, messages). |
 | `sim.ts` | The deterministic step kernel: time advance, RK4 sub-stepping, event dispatch, **light-lag command delivery** (commands propagate at `c`, resolved against the ship's live state at delivery). |
 
@@ -121,6 +122,14 @@ These live at the repo root under `src/` and depend on `@lightlag/engine`. This 
 the current game (the strategy sim). A second purpose would be a sibling — a new
 `apps/<name>/` (or its own `src/`) consuming the same engine. The modules here are
 *views and intent*, never physics.
+
+`src/sandbox/` is the first additional purpose growing in place (per the
+multi-product plan): an orbital playground that adds **live-satellite ingestion**
+(TLE→SGP4→read-only ships, `satellites.ts`), **mission replay/scrub** over the
+deterministic engine (`replay.ts`, on `scenario.ts`), and **informative light-lag**
+(`Simulation.commandPolicy`). It reuses the existing render/UI; its panel
+(`ui/sandboxPanel.ts`) is purely additive. Shared packages (`viz`, `ui-kit`, …) get
+extracted only when a *second* consuming app needs them.
 
 ### `render/` — Three.js read-only view
 

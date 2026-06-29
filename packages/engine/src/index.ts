@@ -42,6 +42,7 @@ export * as thermal from "./thermal.ts";
 export * as stars from "./stars.ts";
 export * as comms from "./comms.ts";
 export * as serialize from "./serialize.ts";
+export * as scenario from "./scenario.ts";
 export * as time from "./time.ts";
 export * as world from "./world.ts";
 export * as sim from "./sim.ts";
