@@ -140,6 +140,25 @@ export class EventQueue {
   toArray(): SimEvent[] {
     return [...this.heap].sort((a, b) => a.t - b.t);
   }
+
+  /** A shallow copy of every pending event (carrying its `seq`), for snapshot /
+   *  save. Order is heap order, not time order — `load` rebuilds the heap. */
+  snapshot(): SimEvent[] {
+    return this.heap.map((e) => ({ ...e }));
+  }
+
+  /** Replace all pending events from a snapshot (the save/load + replay restore
+   *  path). Each event's `seq` is preserved so equal-time ordering is reproduced
+   *  exactly, and the insertion counter is advanced past them so anything pushed
+   *  afterward orders strictly after — making a restored sim step byte-identically
+   *  to the run it was snapshotted from. */
+  load(events: SimEvent[]): void {
+    this.heap = events.map((e) => ({ ...e }));
+    let maxSeq = -1;
+    for (const e of this.heap) if ((e.seq ?? 0) > maxSeq) maxSeq = e.seq ?? 0;
+    this.counter = maxSeq + 1;
+    for (let i = (this.heap.length >> 1) - 1; i >= 0; i--) this.siftDown(i);
+  }
 }
 
 // ── Calendar conversion (for display only — the sim runs on f64 seconds) ─────
