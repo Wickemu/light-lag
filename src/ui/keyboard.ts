@@ -24,6 +24,7 @@ import type { Simulation } from "../core/sim.ts";
 import type { SceneManager } from "../render/SceneManager.ts";
 import type { Hud } from "./hud.ts";
 import type { ShipPanel } from "./shipPanel.ts";
+import type { Shipyard } from "./shipyard.ts";
 import type { TransferPanel } from "./transferPanel.ts";
 import type { InterstellarPanel } from "./interstellarPanel.ts";
 
@@ -59,6 +60,7 @@ export class KeyboardManager {
     private shipPanel: ShipPanel,
     private transferPanel: TransferPanel,
     private interstellarPanel: InterstellarPanel,
+    private shipyard: Shipyard,
   ) {
     window.addEventListener("keydown", (e) => {
       if (this.isTyping(e.target)) return;
@@ -116,12 +118,16 @@ export class KeyboardManager {
     // ── Panel toggles ────────────────────────────────────────────────────────
     if (k === "f" || k === "F") { this.shipPanel.toggle(); return; }
 
+    if (k === "b" || k === "B") { this.shipyard.toggle(); return; }
+
     if (k === "?") { this.hud.toggleHelp(); return; }
 
     if (k === "Escape") {
-      // Close, in order: interstellar planner, transfer planner, help overlay,
-      // then the ship panel.
-      if (this.interstellarPanel.isOpen()) {
+      // Close, in order: the Shipyard (full-viewport), interstellar planner,
+      // transfer planner, help overlay, then the ship panel.
+      if (this.shipyard.isOpen()) {
+        this.shipyard.close();
+      } else if (this.interstellarPanel.isOpen()) {
         this.interstellarPanel.close();
       } else if (this.transferPanel.isOpen()) {
         this.transferPanel.close();

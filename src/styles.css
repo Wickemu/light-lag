@@ -1360,6 +1360,91 @@ button.danger:hover {
 .ins-orbit-arc, .ins-orbit-line { fill: none; stroke: color-mix(in srgb, var(--accent) 55%, transparent); stroke-width: 1.2; stroke-dasharray: 4 3; }
 .ins-orbit-caption { fill: var(--text-dim); font-family: var(--font); font-size: 9px; letter-spacing: 0.5px; }
 
+/* ── SHIPYARD (full-viewport build mode) ─────────────────────────────────────
+   A large centred workspace that temporarily takes over the viewport: a preset +
+   name row, then two columns (stack editor | live performance instruments), then
+   the role-aware launch row. Floats above the docked panels and the planner
+   modals. ─────────────────────────────────────────────────────────────────── */
+.shipyard {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(960px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 40; /* above docked panels (implicit) and the planner modals (20–30) */
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+}
+.yard-top {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+.yard-top .preset-sel { flex: 1 1 auto; }
+.yard-top .name-field { flex: 0 0 220px; }
+
+.yard-cols {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.yard-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.yard-stack { flex: 1 1 56%; }
+.yard-perf { flex: 1 1 44%; }
+.yard-perf-body { display: flex; flex-direction: column; gap: 10px; }
+
+.yard-launch { display: flex; gap: 8px; }
+.yard-launch .wide-btn { flex: 1 1 0; }
+
+.yard-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.yard-dv { display: flex; flex-direction: column; }
+.yard-dv-num { font-size: 26px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.yard-dv-unit { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); }
+
+.yard-bars { display: flex; flex-direction: column; gap: 4px; }
+.yard-bar-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.yard-bar-label { width: 24px; color: var(--text-dim); }
+.yard-bar-track {
+  flex: 1 1 auto;
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  overflow: hidden;
+}
+.yard-bar-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.yard-bar-val { width: 46px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.yard-stats { display: flex; flex-direction: column; }
+.yard-ascent { margin-top: 2px; }
+.yard-ok { color: var(--ok); font-size: 12px; margin-top: 3px; }
+.yard-warn { color: var(--warn); font-size: 12px; margin-top: 3px; }
+
+.yard-rocket { display: block; max-height: 250px; margin: 0 auto; }
+.yard-rk-label { fill: var(--text); font-family: var(--font); font-size: 10px; font-weight: 600; }
+.yard-rk-mini { fill: var(--text-dim); font-family: var(--font); font-size: 9px; }
+
+/* Build entry point in the Mission panel + the empty-fleet prompt. */
+.yard-open-btn { text-align: center; font-weight: 600; }
+.ship-empty-btn { font-style: italic; color: var(--text-dim); text-align: left; }
+
+@media (max-width: 760px) {
+  .yard-cols { flex-direction: column; }
+  .yard-top { flex-direction: column; align-items: stretch; }
+  .yard-top .name-field { flex: 1 1 auto; }
+}
+
 /* ── Responsive: this is a desktop-first sim. These breakpoints keep the
    panels from overlapping or running off-screen on narrow windows/tablets,
    not a full mobile redesign. ─────────────────────────────────────────────── */
