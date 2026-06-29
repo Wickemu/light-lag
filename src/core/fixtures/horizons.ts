@@ -72,9 +72,11 @@ export const HORIZONS_EARTH_EMB: HorizonsRecord[] = [
 
 /** Heliocentric (CENTER=Sun) ground truth for the added dwarf planets & asteroids
  *  — cross-checks the FixedHelioRow conic. Horizons COMMAND: Ceres `1;`, Pluto
- *  `9` (system barycentre, matching our barycentre-point placement), Vesta `4;`,
- *  Eris `136199;`. A fixed two-body conic drifts from the perturbed truth over a
- *  decade, so the test tolerances widen with epoch (see ephemeris.bodies.test.ts). */
+ *  `9` (the Pluto–Charon system barycentre — what the helio row encodes; the test
+ *  recombines our true-centre Pluto + Charon back to this point, since ephemeris.ts
+ *  now shifts Pluto ~2130 km off the barycentre), Vesta `4;`, Eris `136199;`. A
+ *  fixed two-body conic drifts from the perturbed truth over a decade, so the test
+ *  tolerances widen with epoch (see ephemeris.bodies.test.ts). */
 export const HORIZONS_SMALL_BODIES: HorizonsRecord[] = [
   { body: "ceres", jd: 2451545.0, r_km: [-3.5594235850e+08, 1.1900301759e+08, 6.9264647632e+07], v_kms: [-6.2059365483e+00, -1.8329113104e+01, 5.7805313156e-01] },
   { body: "ceres", jd: 2455197.5, r_km: [-2.4782176426e+08, -3.1806943693e+08, 3.5747563993e+07], v_kms: [1.3190841498e+01, -1.2369658018e+01, -2.8165398483e+00] },

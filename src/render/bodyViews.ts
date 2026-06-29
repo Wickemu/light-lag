@@ -14,7 +14,7 @@
 
 import * as THREE from "three";
 import { BODIES, BODY_BY_ID, type BodyDef, type BodyKind } from "../core/constants.ts";
-import { bodyState, bodyElements } from "../core/ephemeris.ts";
+import { bodyState, bodyStateRelative, bodyElements } from "../core/ephemeris.ts";
 import { orbitPath } from "../core/math/kepler.ts";
 import { type Vec3 } from "../core/math/vec3.ts";
 import { metersToUnits, SCENE_SCALE } from "./scale.ts";
@@ -185,6 +185,11 @@ interface BodyVisual {
   cloudSpinRate: number;
   orbit?: THREE.LineLoop;
   orbitArray?: Float32Array;
+  /** Set on both members of a barycentric binary (Earth–Moon, Pluto–Charon). */
+  binary?: BinaryInfo;
+  /** The primary's small loop about an EXTERNAL barycentre (Pluto only). */
+  baryOrbit?: THREE.LineLoop;
+  baryOrbitArray?: Float32Array;
   // Precomputed marker colours (avoid per-frame allocation in update()).
   baseColor: THREE.Color;
   focusColor: THREE.Color;
@@ -329,6 +334,30 @@ export class BodyViews {
       visual.orbitArray = arr;
     }
 
+    // Barycentric binary: tag both members, and for a system whose barycentre sits
+    // OUTSIDE the primary (Pluto–Charon) give the primary a second small loop about
+    // that external point. The satellite's existing loop is re-homed onto the
+    // barycentre in update(); the primary keeps its heliocentric loop (the
+    // barycentre's smooth path) and gains this wobble loop. Earth–Moon's barycentre
+    // is inside Earth, so it is not flagged external and renders as a plain moon.
+    const bin = binaryInfo(def);
+    if (bin) visual.binary = bin;
+    if (bin && bin.external && bin.primary.id === def.id) {
+      const arr = new Float32Array((ORBIT_SEGMENTS + 1) * 3);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+      const mat = new THREE.LineBasicMaterial({
+        color: color.clone().multiplyScalar(0.6),
+        transparent: true,
+        opacity: 0.5,
+      });
+      const baryOrbit = new THREE.LineLoop(geo, mat);
+      baryOrbit.frustumCulled = false;
+      this.sm.scene.add(baryOrbit);
+      visual.baryOrbit = baryOrbit;
+      visual.baryOrbitArray = arr;
+    }
+
     this.visuals.push(visual);
   }
 
@@ -397,6 +426,7 @@ export class BodyViews {
       vis.marker.visible = false;
       vis.node.visible = false;
       if (vis.orbit) vis.orbit.visible = false;
+      if (vis.baryOrbit) vis.baryOrbit.visible = false;
     }
   }
 
@@ -418,6 +448,7 @@ export class BodyViews {
       vis.marker.visible = shown;
       vis.node.visible = shown;
       if (vis.orbit) vis.orbit.visible = shown && orbitsOn;
+      if (vis.baryOrbit) vis.baryOrbit.visible = shown && orbitsOn;
       if (!shown) continue;
 
       const state = bodyState(def, t);
@@ -447,21 +478,40 @@ export class BodyViews {
       vis.marker.scale.setScalar(MARKER_SCALE[def.kind] * (focused ? FOCUS_MARKER_GAIN : 1));
       (vis.marker.material as THREE.SpriteMaterial).color.copy(focused ? vis.focusColor : vis.baseColor);
 
+      const bin = vis.binary;
       if (orbitsOn && vis.orbit && vis.orbitArray && def.parent) {
         // The loop sits at the render origin; each vertex is folded through the
         // floating origin in f64 (fillOrbitLoopWorld) rather than the cheaper
         // "loop .position = parent, vertices = parent-relative" trick — see that
         // helper for why the trick makes the line jitter.
-        const parent = BODY_BY_ID.get(def.parent)!;
-        const parentState = bodyState(parent, t);
         vis.orbit.position.set(0, 0, 0);
-
         const el = bodyElements(def, t);
         if (el) {
           const pts = orbitPath(el, ORBIT_SEGMENTS);
-          fillOrbitLoopWorld(vis.orbitArray, pts, parentState.r, this.sm.origin);
-          const attr = vis.orbit.geometry.getAttribute("position") as THREE.BufferAttribute;
-          attr.needsUpdate = true;
+          if (bin && bin.external && def.id === bin.sat.id) {
+            // Binary satellite (Charon): its orbit is about the system BARYCENTRE,
+            // not the wobbling primary's centre. Re-home the loop there and scale
+            // the parent-centre ellipse by (1−f) so it passes through the satellite.
+            fillOrbitLoopWorld(vis.orbitArray, pts, systemBary(bin, t), this.sm.origin, 1 - bin.f);
+          } else {
+            const parentState = bodyState(BODY_BY_ID.get(def.parent)!, t);
+            fillOrbitLoopWorld(vis.orbitArray, pts, parentState.r, this.sm.origin);
+          }
+          (vis.orbit.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+        }
+      }
+
+      // Binary primary (Pluto): the small loop it traces about the EXTERNAL
+      // barycentre — Charon's ellipse scaled by −f (opposite side, mass-ratio
+      // smaller). Drawn alongside the heliocentric loop so the marker's offset from
+      // that line reads as Pluto genuinely orbiting a point outside itself.
+      if (orbitsOn && vis.baryOrbit && vis.baryOrbitArray && bin && def.id === bin.primary.id) {
+        vis.baryOrbit.position.set(0, 0, 0);
+        const satEl = bodyElements(bin.sat, t);
+        if (satEl) {
+          const pts = orbitPath(satEl, ORBIT_SEGMENTS);
+          fillOrbitLoopWorld(vis.baryOrbitArray, pts, systemBary(bin, t), this.sm.origin, -bin.f);
+          (vis.baryOrbit.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
         }
       }
     }
@@ -501,11 +551,56 @@ export class BodyViews {
  * vertex coincident with the marker to f64 precision; only the far side (off-camera,
  * sub-pixel) is left at float32. Same per-vertex transform fillPolylineWorld uses.
  */
-export function fillOrbitLoopWorld(arr: Float32Array, pts: readonly Vec3[], parent: Vec3, origin: Vec3): void {
+export function fillOrbitLoopWorld(
+  arr: Float32Array,
+  pts: readonly Vec3[],
+  anchor: Vec3,
+  origin: Vec3,
+  scale = 1,
+): void {
   for (let k = 0; k < pts.length; k++) {
     const p = pts[k]!;
-    arr[k * 3] = (parent.x + p.x - origin.x) / SCENE_SCALE;
-    arr[k * 3 + 1] = (parent.y + p.y - origin.y) / SCENE_SCALE;
-    arr[k * 3 + 2] = (parent.z + p.z - origin.z) / SCENE_SCALE;
+    arr[k * 3] = (anchor.x + scale * p.x - origin.x) / SCENE_SCALE;
+    arr[k * 3 + 1] = (anchor.y + scale * p.y - origin.y) / SCENE_SCALE;
+    arr[k * 3 + 2] = (anchor.z + scale * p.z - origin.z) / SCENE_SCALE;
   }
+}
+
+/** Primary/satellite roles of a barycentric binary, with the satellite mass
+ *  fraction and whether the barycentre clears the primary's surface. */
+interface BinaryInfo {
+  primary: BodyDef;
+  sat: BodyDef;
+  /** f = μ_sat/(μ_primary+μ_sat): the primary orbits the barycentre at f·a, the
+   *  satellite at (1−f)·a, 180° apart (a = their centre-to-centre separation). */
+  f: number;
+  /** True when the barycentre lies above the primary's surface — a visible binary
+   *  (Pluto–Charon). Earth–Moon's barycentre is inside Earth, so it stays false. */
+  external: boolean;
+}
+
+/** Classify `body` as the primary or satellite of a barycentric binary (Earth–Moon,
+ *  Pluto–Charon), or null for an ordinary body. Drives the barycentre-relative
+ *  orbit loops in update(). */
+function binaryInfo(body: BodyDef): BinaryInfo | null {
+  let primary: BodyDef | undefined;
+  let sat: BodyDef | undefined;
+  if (body.barycenterChild) {
+    primary = body;
+    sat = BODY_BY_ID.get(body.barycenterChild);
+  } else if (body.parent) {
+    const p = BODY_BY_ID.get(body.parent);
+    if (p?.barycenterChild === body.id) { primary = p; sat = body; }
+  }
+  if (!primary || !sat || !sat.moon) return null;
+  const f = sat.mu / (primary.mu + sat.mu);
+  return { primary, sat, f, external: f * sat.moon.a > primary.radius };
+}
+
+/** World position of a binary's barycentre at time t: the primary's true centre
+ *  plus f·(satellite relative to the primary's centre). */
+function systemBary(bin: BinaryInfo, t: number): Vec3 {
+  const p = bodyState(bin.primary, t).r;
+  const s = bodyStateRelative(bin.sat, t).r; // satellite relative to the primary's centre
+  return { x: p.x + bin.f * s.x, y: p.y + bin.f * s.y, z: p.z + bin.f * s.z };
 }

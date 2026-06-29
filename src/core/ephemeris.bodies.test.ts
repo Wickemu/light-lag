@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { bodyState, bodyStateRelative, bodyElements } from "./ephemeris.ts";
-import { BODY_BY_ID, J2000_JD, DAY, AU, MU_SUN } from "./constants.ts";
+import { BODY_BY_ID, J2000_JD, DAY, AU, MU_SUN, type BodyDef } from "./constants.ts";
 import {
   HORIZONS_SMALL_BODIES, HORIZONS_MOONS_REL, type HorizonsRecord,
 } from "./fixtures/horizons.ts";
@@ -16,6 +16,21 @@ function ref(rec: HorizonsRecord) {
   };
 }
 
+/** Heliocentric state to compare against Horizons. For a body whose row is a
+ *  barycentre (Pluto, Earth), ephemeris.ts places the body at its true centre, so
+ *  recombine the mass-weighted pair back to the barycentre the fixture encodes. */
+function heliocentricRef(body: BodyDef, t: number) {
+  if (!body.barycenterChild) return bodyState(body, t);
+  const sat = BODY_BY_ID.get(body.barycenterChild)!;
+  const f = sat.mu / (body.mu + sat.mu);
+  const p = bodyState(body, t), s = bodyState(sat, t);
+  const mix = (pc: number, sc: number) => pc * (1 - f) + sc * f;
+  return {
+    r: { x: mix(p.r.x, s.r.x), y: mix(p.r.y, s.r.y), z: mix(p.r.z, s.r.z) },
+    v: { x: mix(p.v.x, s.v.x), y: mix(p.v.y, s.v.y), z: mix(p.v.z, s.v.z) },
+  };
+}
+
 describe("added dwarf planets & asteroids vs JPL Horizons (heliocentric)", () => {
   // The J2000 osculating conic reproduces position to machine precision AT the
   // epoch (validating every element + the ω/Ω convention); thereafter a pure
@@ -26,7 +41,7 @@ describe("added dwarf planets & asteroids vs JPL Horizons (heliocentric)", () =>
     const epoch = rec.jd === J2000_JD;
     it(`${rec.body} @ JD ${rec.jd} matches Horizons`, () => {
       const body = BODY_BY_ID.get(rec.body)!;
-      const st = bodyState(body, tOf(rec.jd));
+      const st = heliocentricRef(body, tOf(rec.jd)); // barycentre for a binary primary
       const { r, v } = ref(rec);
       const a = bodyElements(body, 0)!.a; // m
       const tol = epoch ? 1e4 : 0.03 * a; // tight at epoch; ≤3% of a out to 2025
@@ -99,6 +114,41 @@ describe("new moons orbit their parent at the right distance", () => {
   }
 });
 
+describe("Pluto–Charon is a barycentric binary", () => {
+  const PLUTO = BODY_BY_ID.get("pluto")!;
+  const CHARON = BODY_BY_ID.get("charon")!;
+  const f = CHARON.mu / (PLUTO.mu + CHARON.mu);
+  const SAMPLE = [0, 30 * DAY, 1000 * DAY];
+  const baryOf = (t: number) => {
+    const p = bodyState(PLUTO, t).r, s = bodyState(CHARON, t).r;
+    return { x: p.x * (1 - f) + s.x * f, y: p.y * (1 - f) + s.y * f, z: p.z * (1 - f) + s.z * f };
+  };
+
+  it("recombines our true-centre Pluto + Charon to the JPL system barycentre at epoch", () => {
+    const bary = ref(HORIZONS_SMALL_BODIES.find((r) => r.body === "pluto" && r.jd === J2000_JD)!).r;
+    expect(distance(baryOf(0), bary)).toBeLessThan(1e4); // 10 km — the conic's epoch precision
+  });
+
+  it("puts the barycentre ABOVE Pluto's surface — a true binary, unlike Earth–Moon", () => {
+    for (const t of SAMPLE) {
+      const plutoToBary = distance(bodyState(PLUTO, t).r, baryOf(t));
+      expect(plutoToBary).toBeGreaterThan(PLUTO.radius); // ~2130 km > 1188 km radius
+    }
+    // Earth's barycentre, by contrast, sits inside Earth (so it reads as a normal moon).
+    const earth = BODY_BY_ID.get("earth")!, moon = BODY_BY_ID.get("moon")!;
+    const fE = moon.mu / (earth.mu + moon.mu);
+    expect(fE * length(bodyStateRelative(moon, 0).r)).toBeLessThan(earth.radius);
+  });
+
+  it("preserves the centre-to-centre separation after the shift", () => {
+    for (const t of SAMPLE) {
+      const d = distance(bodyState(CHARON, t).r, bodyState(PLUTO, t).r) / 1000;
+      expect(d).toBeGreaterThan(19_500);
+      expect(d).toBeLessThan(19_700);
+    }
+  });
+});
+
 describe("Kepler's third law from the published semi-major axis", () => {
   // Real sidereal periods (days).
   const helioDays: Record<string, number> = {
@@ -153,7 +203,7 @@ it("diagnostic: worst-case errors vs Horizons", () => {
   const lines: string[] = [];
   for (const rec of HORIZONS_SMALL_BODIES) {
     const body = BODY_BY_ID.get(rec.body)!;
-    const d = distance(bodyState(body, tOf(rec.jd)).r, ref(rec).r);
+    const d = distance(heliocentricRef(body, tOf(rec.jd)).r, ref(rec).r);
     lines.push(`${rec.body.padEnd(9)} JD${rec.jd}  ${(d / 1000).toFixed(0).padStart(9)} km  (${(d / AU).toExponential(2)} AU)`);
   }
   for (const rec of HORIZONS_MOONS_REL) {

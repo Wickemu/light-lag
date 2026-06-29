@@ -92,17 +92,19 @@ export function bodyStateRelative(body: BodyDef, t: number): State {
   const mu = (parent ? parent.mu : MU_SUN) + body.mu;
   const state = elementsToState(el, mu);
 
-  // The Standish "earth" row is the Earth–Moon BARYCENTRE. Shift to Earth's true
-  // centre: r_earth = r_EMB − f·r_moon(rel Earth), f = μ_moon/(μ_earth+μ_moon).
-  // The Moon's own row is already relative to Earth's centre, so the parent chain
-  // then lands it at true_earth + moonRel, and the two recombine to the original
-  // EMB exactly (mass-weighted barycentre invariant preserved).
-  if (body.id === "earth") {
-    const moon = BODY_BY_ID.get("moon");
-    if (moon) {
-      const moonRel = bodyStateRelative(moon, t); // Moon relative to Earth's centre
-      const f = moon.mu / (body.mu + moon.mu);
-      return { r: sub(state.r, scale(moonRel.r, f)), v: sub(state.v, scale(moonRel.v, f)) };
+  // Some bodies' rows are the BARYCENTRE of the body and a massive satellite, not
+  // the body's own centre (Earth–Moon, Pluto–Charon). Shift to the true centre:
+  // r_body = r_bary − f·r_sat(rel body), f = μ_sat/(μ_body+μ_sat). The satellite's
+  // own row is already relative to the body's centre, so the parent chain lands it
+  // at true_body + satRel and the two recombine to the original barycentre exactly
+  // (mass-weighted barycentre invariant preserved). For Pluto the barycentre lies
+  // above the surface, so Pluto visibly orbits a point outside itself — a binary.
+  if (body.barycenterChild) {
+    const sat = BODY_BY_ID.get(body.barycenterChild);
+    if (sat) {
+      const satRel = bodyStateRelative(sat, t); // satellite relative to body's centre
+      const f = sat.mu / (body.mu + sat.mu);
+      return { r: sub(state.r, scale(satRel.r, f)), v: sub(state.v, scale(satRel.v, f)) };
     }
   }
   return state;
