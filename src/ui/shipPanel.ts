@@ -1,22 +1,28 @@
 /**
- * The flight console — the docked "Mission" panel.
+ * The ship designer and flight console.
  *
- * Select a launched ship to command it. The console leads with a status banner (the
- * one headline state — BURNING / IN TRANSIT / LANDED / …) and a tight primary readout
- * (signal delay, orbit, speed, mass, Δv); the deep telemetry (J2 precession & Doppler,
- * electric drive, transfer & flybys, thermal & detection) tucks behind disclosure so
- * it's there when wanted, out of the way when not. Contextual actions appear only when
- * viable: the planners, the OPERATIONS card (land / launch / fly-entry / electric
- * spiral), and a Dock button when another craft is at rendezvous.
+ * Designer: edit a staged stack (dry mass, propellant, Isp, thrust) and watch
+ * the Δv budget, masses, and thrust-to-weight update live from the rocket
+ * equation. Launch is role-aware: an in-space craft deploys directly into a
+ * circular LEO (full propellant); a launch vehicle rolls out to the Earth pad and
+ * flies (or expresses) the ascent, expending its boost stages — the designer shows
+ * the live ascent budget and the projected orbital survivor, and gates launch on it.
  *
- * Building a ship lives in the separate {@link DesignerPanel} modal (opened from the
- * header); propellant transfer / assembly lives in the {@link DockPanel} modal.
+ * Flight: select a ship to see its real osculating orbit (periapsis/apoapsis
+ * altitude, period, speed), its remaining mass and Δv, then spend Δv in a chosen
+ * direction and watch the orbit reshape as the burn runs.
  */
 
 import { type Simulation } from "../core/sim.ts";
 import { type SceneManager } from "../render/SceneManager.ts";
 import { type BurnDir, type BurnGoal, type Ship } from "../core/world.ts";
 import {
+  type ShipDesign,
+  defaultDesign,
+  spawnShip,
+  spawnOnPad,
+  expressToOrbit,
+  ascentPreview,
   sendBurn,
   landShip,
   launchShip,
@@ -25,6 +31,9 @@ import {
   deleteShip,
   shipSurfaceParams,
   dockCandidates,
+  transferPropellant,
+  assembleShips,
+  shipPropStatus,
 } from "../app/commands.ts";
 import {
   ascentBudget,
@@ -34,30 +43,35 @@ import {
 } from "../core/surface.ts";
 import { entryTrajectory, entryInterfaceAlt, type EntryVehicle } from "../core/maneuver/entry.ts";
 import {
+  type ShipPreset,
+  PRESETS_BY_ID,
+  presetsByCategory,
+  presetToDesign,
+} from "../app/shipCatalog.ts";
+import { deltaVBudget, initialTWR, stageLiftoffThrust, availablePowerW, thrustAt } from "../core/propulsion.ts";
+import {
+  totalMass,
+  dvRemaining,
   activeStage,
   shipOsculatingElements,
+  shipRelativeState,
   shipWorldState,
+  shipThermalState,
   shipEntryReadout,
+  shipTelemetryDoppler,
+  type TelemetryDoppler,
   primaryMu,
 } from "../core/ships.ts";
-import { periapsisRadius, orbitalPeriod } from "../core/orbit.ts";
-import { type BodyDef, BODY_BY_ID, DEG } from "../core/constants.ts";
+import { summarizeOrbit, periapsisRadius, orbitalPeriod, j2Rates } from "../core/orbit.ts";
+import { bodyPosition } from "../core/ephemeris.ts";
+import { retardedTime, shiftedWavelength } from "../core/comms.ts";
+import { STAR_BY_ID } from "../core/stars.ts";
+import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR, IR_BAND_WAVELENGTH, j2RefRadius } from "../core/constants.ts";
 import { formatDate } from "../core/time.ts";
-import { el, button, kv, setDisabled, numberField } from "./dom.ts";
+import { length } from "../core/math/vec3.ts";
+import { el, button, kv, setDisabled, numberField, compactField, formatDur } from "./dom.ts";
 import { collapsible, type Collapsible } from "./collapsible.ts";
 import { markTerm } from "./tooltip.ts";
-import {
-  flightCtx,
-  statusBanner,
-  statusChips,
-  primaryLines,
-  transferSummaryLine,
-  orbitDetailGroup,
-  driveDetailGroup,
-  transferDetailGroup,
-  thermalDetailGroup,
-  type ReadoutGroup,
-} from "./flightReadout.ts";
 
 /** A `.section-label` div tagged as a hover term (SURFACE OPS, ELECTRIC SPIRAL). */
 function sectionLabel(text: string): HTMLElement {
@@ -77,32 +91,40 @@ const DIR_LABEL: Record<BurnDir, string> = {
 };
 
 export class ShipPanel {
+  private design: ShipDesign = defaultDesign();
   private selectedId: string | null = null;
   private dir: BurnDir = "prograde";
   private guidanceMode: "open" | "closed" = "open";
   private goalType: "periapsis" | "apoapsis" | "circularize" = "periapsis";
   private lastShipCount = -1;
 
-  /** Open the ship designer modal (wired in main.ts after both panels exist). */
-  onOpenDesigner?: () => void;
-  /** Open the dock/transfer modal for the given ship (wired in main.ts). */
-  onOpenDock?: (shipId: string) => void;
-
   private panelEl!: HTMLElement;
+  private stagesEl!: HTMLElement;
+  private budgetEl!: HTMLElement;
+  private presetSelect!: HTMLSelectElement;
+  private presetCaption!: HTMLElement;
+  private nameInput!: HTMLInputElement;
+  private payloadInput!: HTMLInputElement;
+  private altInput!: HTMLInputElement;
+  private inclInput!: HTMLInputElement;
+  private fromSurfaceToggle!: HTMLInputElement;
+  private launchArea!: HTMLElement;
+  private expressBtn: HTMLButtonElement | null = null;
   private shipListEl!: HTMLElement;
-  private fleetSection!: Collapsible;
   private flightEl!: HTMLElement;
-  private statusEl!: HTMLElement;
-  private chipsEl!: HTMLElement;
   private readoutEl!: HTMLElement;
-  private orbitGroup!: Collapsible;
-  private driveGroup!: Collapsible;
-  private transferGroup!: Collapsible;
-  private thermalGroup!: Collapsible;
+  private dvInput!: HTMLInputElement;
+  private dirRow!: HTMLElement;
+  private guidanceRow!: HTMLElement;
+  private goalRow!: HTMLElement;
+  private goalTypeRow!: HTMLElement;
+  private goalAltInput!: HTMLInputElement;
+  private guidanceHint!: HTMLElement;
+  private executeBtn!: HTMLButtonElement;
   private planBtn!: HTMLButtonElement;
   private interstellarBtn!: HTMLButtonElement;
   private warpDepartBtn!: HTMLButtonElement;
-  private operationsEl!: HTMLElement;
+  private deleteBtn!: HTMLButtonElement;
   private surfaceEl!: HTMLElement;
   private surfaceReadout!: HTMLElement;
   private surfaceAltInput!: HTMLInputElement;
@@ -112,16 +134,22 @@ export class ShipPanel {
   private electricEl!: HTMLElement;
   private spiralAltInput!: HTMLInputElement;
   private spiralBtn!: HTMLButtonElement;
-  private dockBtn!: HTMLButtonElement;
-  private dvInput!: HTMLInputElement;
-  private dirRow!: HTMLElement;
-  private guidanceRow!: HTMLElement;
-  private goalRow!: HTMLElement;
-  private goalTypeRow!: HTMLElement;
-  private goalAltInput!: HTMLInputElement;
-  private guidanceHint!: HTMLElement;
-  private executeBtn!: HTMLButtonElement;
-  private deleteBtn!: HTMLButtonElement;
+  private dockEl!: HTMLElement;
+  private dockReadout!: HTMLElement;
+  private dockSelect!: HTMLSelectElement;
+  private dockAmountInput!: HTMLInputElement;
+  private sendBtn!: HTMLButtonElement;
+  private receiveBtn!: HTMLButtonElement;
+  private assembleBtn!: HTMLButtonElement;
+  /** The currently-chosen dock partner, kept across per-frame refreshes. */
+  private dockPartnerId: string | null = null;
+  /** Signature of the last candidate set, so the <select> is rebuilt only on change. */
+  private lastDockSig = "";
+  private designerSection!: Collapsible;
+  private fleetSection!: Collapsible;
+  /** Collapse the designer once, the first time a ship is selected, to surface
+   *  the flight controls — without permanently overriding the user's choice. */
+  private autoCollapsedDesigner = false;
 
   constructor(
     private root: HTMLElement,
@@ -141,33 +169,98 @@ export class ShipPanel {
     return this.panelEl.style.display !== "none";
   }
 
-  /** Select + frame a ship just launched from the designer modal. */
-  selectFromDesigner(id: string): void {
-    this.select(id);
-  }
-
-  /** Re-frame + refresh after the dock modal merged a partner into a ship. */
-  onPartnerAssembled(shipId: string, wasFocused: boolean): void {
-    if (wasFocused) this.frameShip(shipId);
-    this.refreshShipList();
-  }
-
   private build(): void {
     const panel = el("div", "panel ship-panel");
     this.panelEl = panel;
 
-    // Title row: MISSION + a button to open the designer, then a ✕ close affordance.
+    // Title row with a ✕ close button (mirrors the planners' Close affordance).
     const head = el("div", "panel-head");
     head.appendChild(el("div", "panel-title", "MISSION"));
-    const design = button("✚ Design", () => this.onOpenDesigner?.());
-    design.className = "head-btn";
-    design.title = "Open the ship designer (N) — build and launch a ship.";
-    head.appendChild(design);
     const close = button("✕", () => this.toggle());
     close.className = "panel-close";
     close.title = "Close (F or Esc)";
     head.appendChild(close);
     panel.appendChild(head);
+
+    // ── Designer section ──────────────────────────────────────────────────────
+    this.designerSection = collapsible("Designer", { id: "designer", open: true });
+    const dsn = this.designerSection.body;
+    panel.appendChild(this.designerSection.root);
+
+    // Preset fleet picker — load a real or inferred design, then tweak freely.
+    this.presetSelect = this.buildPresetSelect();
+    dsn.appendChild(this.presetSelect);
+    this.presetCaption = el("div", "preset-caption");
+    dsn.appendChild(this.presetCaption);
+
+    // Editable name (mirrors the loaded preset; the launched ship takes it).
+    const nameField = el("label", "field name-field");
+    nameField.appendChild(el("span", "field-label", "Name"));
+    this.nameInput = document.createElement("input");
+    this.nameInput.type = "text";
+    this.nameInput.value = this.design.name;
+    this.nameInput.oninput = () => { this.design.name = this.nameInput.value; };
+    nameField.appendChild(this.nameInput);
+    dsn.appendChild(nameField);
+
+    this.stagesEl = el("div", "stages");
+    dsn.appendChild(this.stagesEl);
+    const addBtn = button("+ add stage", () => {
+      this.design.stages.push({ name: `Stage ${this.design.stages.length + 1}`, dryMass: 1000, propMass: 8000, isp: 320, thrust: 1e5 });
+      this.markCustom();
+      this.renderStages();
+      this.refreshBudget();
+    });
+    addBtn.className = "wide-btn";
+    addBtn.title = "Add another stage to the stack.";
+    dsn.appendChild(addBtn);
+
+    const params = el("div", "design-params");
+    this.payloadInput = numberField(params, "Payload (t)", this.design.payloadMass / 1000, (v) => {
+      this.design.payloadMass = v * 1000;
+      this.markCustom();
+      this.refreshBudget();
+    });
+    this.altInput = numberField(params, "LEO alt (km)", this.design.altitudeKm, (v) => {
+      this.design.altitudeKm = v;
+      this.markCustom();
+      this.refreshBudget();
+    });
+    // Inclination doubles as the launch-pad LATITUDE for a launch vehicle (the minimum
+    // inclination a pad can reach is its latitude), so it drives both the parking-orbit
+    // plane and where a from-surface ship lifts off.
+    this.inclInput = numberField(params, "Incl / pad lat (°)", this.design.inclinationDeg, (v) => {
+      this.design.inclinationDeg = Math.max(0, Math.min(90, v));
+      this.markCustom();
+      this.refreshBudget();
+    });
+    dsn.appendChild(params);
+
+    // Start-on-pad toggle: a LAUNCH VEHICLE starts on the Earth pad and flies the ascent
+    // (its boost stages are expended in the climb); an IN-SPACE craft deploys directly in
+    // LEO. Set automatically when a preset is loaded; the player can override for a custom
+    // design. Default off (the legacy in-orbit deploy, and what every default/custom ship is).
+    const padRow = el("label", "field pad-field");
+    this.fromSurfaceToggle = document.createElement("input");
+    this.fromSurfaceToggle.type = "checkbox";
+    this.fromSurfaceToggle.checked = !!this.design.fromSurface;
+    this.fromSurfaceToggle.onchange = () => {
+      this.design.fromSurface = this.fromSurfaceToggle.checked;
+      this.markCustom();
+      this.renderLaunchArea();
+      this.refreshBudget();
+    };
+    padRow.append(this.fromSurfaceToggle, el("span", "field-label", "Launch vehicle (starts on the pad, flies the ascent)"));
+    padRow.title = "On: a launch vehicle — fly the ascent to LEO, expending its boost stages. Off: an in-space craft deployed directly in LEO with full propellant.";
+    dsn.appendChild(padRow);
+
+    this.budgetEl = el("div", "budget");
+    dsn.appendChild(this.budgetEl);
+
+    // Role-aware launch controls (rebuilt by renderLaunchArea on toggle / preset load).
+    this.launchArea = el("div", "launch-area");
+    dsn.appendChild(this.launchArea);
+    this.renderLaunchArea();
 
     // ── Fleet section (launched ships) ────────────────────────────────────────
     this.fleetSection = collapsible("Fleet", { id: "fleet", open: true });
@@ -175,31 +268,14 @@ export class ShipPanel {
     this.fleetSection.body.appendChild(this.shipListEl);
     panel.appendChild(this.fleetSection.root);
 
-    // ── Flight + Maneuver (only shown once a ship is selected) ─────────────────
+    // ── Flight + Maneuver sections (only shown once a ship is selected) ────────
     this.flightEl = el("div", "flight");
 
     const flightSection = collapsible("Flight", { id: "flight", open: true });
     const flt = flightSection.body;
-
-    // Headline status + cross-cutting chips, then the always-on primary readout.
-    this.statusEl = el("div", "flight-status");
-    flt.appendChild(this.statusEl);
-    this.chipsEl = el("div", "chip-row");
-    flt.appendChild(this.chipsEl);
     this.readoutEl = el("div", "flight-readout");
     flt.appendChild(this.readoutEl);
 
-    // Advanced telemetry behind disclosure (each hidden when it has nothing to show).
-    this.orbitGroup = collapsible("Orbit detail", { id: "flight.orbit", open: false });
-    this.driveGroup = collapsible("Drive", { id: "flight.drive", open: true });
-    this.transferGroup = collapsible("Transfer detail", { id: "flight.transfer", open: false });
-    this.thermalGroup = collapsible("Thermal & signature", { id: "flight.thermal", open: false });
-    for (const g of [this.orbitGroup, this.driveGroup, this.transferGroup, this.thermalGroup]) {
-      g.root.classList.add("flight-group");
-      flt.appendChild(g.root);
-    }
-
-    // Planner actions.
     this.planBtn = button("Plan transfer ▸", () => {
       if (this.selectedId && this.onPlanTransfer) this.onPlanTransfer(this.selectedId);
     });
@@ -218,12 +294,9 @@ export class ShipPanel {
     this.warpDepartBtn.style.display = "none";
     flt.appendChild(this.warpDepartBtn);
 
-    // OPERATIONS — surface ops + electric spiral, shown only when the ship's state
-    // makes them viable (hidden together when neither is).
-    this.operationsEl = el("div", "operations");
-    this.operationsEl.appendChild(sectionLabel("OPERATIONS"));
-
-    this.surfaceEl = el("div", "ops-card");
+    // Surface ops — landing & takeoff Δv budgeting (shown only when the ship is
+    // coasting in the SOI of a body with a surface, or already landed).
+    this.surfaceEl = el("div", "surface-ops");
     this.surfaceEl.appendChild(sectionLabel("SURFACE OPS"));
     this.surfaceReadout = el("div", "surface-readout");
     this.surfaceEl.appendChild(this.surfaceReadout);
@@ -242,9 +315,11 @@ export class ShipPanel {
     this.flyEntryBtn = button("🜂 Fly entry", () => this.doFlyEntry());
     entryRow.append(this.flyEntryBtn);
     this.surfaceEl.appendChild(entryRow);
-    this.operationsEl.appendChild(this.surfaceEl);
+    flt.appendChild(this.surfaceEl);
 
-    this.electricEl = el("div", "ops-card");
+    // Electric drive — commit a low-thrust spiral to a target orbit (shown only
+    // when the active stage is electric and the ship is coasting about a body).
+    this.electricEl = el("div", "surface-ops");
     this.electricEl.appendChild(sectionLabel("ELECTRIC SPIRAL"));
     const elRow = el("div", "dv-row");
     this.spiralAltInput = document.createElement("input");
@@ -255,20 +330,39 @@ export class ShipPanel {
     this.spiralBtn = button("⟳ Spiral", () => this.doSpiral());
     elRow.append(el("span", "dv-label", "to (km)"), this.spiralAltInput, this.spiralBtn);
     this.electricEl.appendChild(elRow);
-    this.operationsEl.appendChild(this.electricEl);
-    flt.appendChild(this.operationsEl);
+    flt.appendChild(this.electricEl);
 
-    // Dock / transfer lives in its own modal — surfaced here only at rendezvous.
-    this.dockBtn = button("⛽ Dock / transfer ▸", () => {
-      if (this.selectedId && this.onOpenDock) this.onOpenDock(this.selectedId);
-    });
-    this.dockBtn.className = "wide-btn";
-    this.dockBtn.style.display = "none";
-    flt.appendChild(this.dockBtn);
+    // Dock / transfer — propellant transfer and in-orbit assembly between two
+    // docked craft (shown only when another free-coasting ship is at rendezvous in
+    // the same SOI). The receiver's m₀ — and so its Δv — rises by exactly what the
+    // donor gives; assembly stacks two vehicles into one.
+    this.dockEl = el("div", "surface-ops");
+    this.dockEl.appendChild(sectionLabel("DOCK / TRANSFER"));
+    this.dockReadout = el("div", "surface-readout");
+    this.dockEl.appendChild(this.dockReadout);
+    this.dockSelect = document.createElement("select");
+    this.dockSelect.className = "preset-sel";
+    this.dockSelect.onchange = () => { this.dockPartnerId = this.dockSelect.value || null; };
+    this.dockEl.appendChild(this.dockSelect);
+    const dockRow = el("div", "dv-row");
+    this.dockAmountInput = document.createElement("input");
+    this.dockAmountInput.type = "number";
+    this.dockAmountInput.placeholder = "max";
+    this.dockAmountInput.min = "0";
+    this.dockAmountInput.className = "dv-input";
+    this.receiveBtn = button("⛽ Receive", () => this.doTransfer("receive"));
+    this.sendBtn = button("⛽ Send", () => this.doTransfer("send"));
+    dockRow.append(el("span", "dv-label", "prop (t)"), this.dockAmountInput, this.receiveBtn, this.sendBtn);
+    this.dockEl.appendChild(dockRow);
+    this.assembleBtn = button("⊕ Assemble (merge)", () => this.doAssemble());
+    this.assembleBtn.className = "wide-btn";
+    this.assembleBtn.title = "Dock-merge the selected ship into this one — its stages and payload join this vehicle and it is consumed. In-orbit construction; cannot be undone.";
+    this.dockEl.appendChild(this.assembleBtn);
+    flt.appendChild(this.dockEl);
 
     this.flightEl.appendChild(flightSection.root);
 
-    // ── Maneuver section — burn direction + guidance + Δv. ─────────────────────
+    // Maneuver section — burn direction + Δv.
     const maneuverSection = collapsible("Maneuver", { id: "maneuver", open: true });
     const mnv = maneuverSection.body;
     this.dirRow = el("div", "dir-row");
@@ -343,27 +437,229 @@ export class ShipPanel {
 
     this.flightEl.appendChild(maneuverSection.root);
 
-    // Quiet footer — a destructive action kept clear of "Execute burn".
-    const footer = el("div", "console-footer");
+    // Scrap/abandon the selected ship (removes it from the sim entirely).
     this.deleteBtn = button("🗑 Delete ship", () => this.doDelete());
     this.deleteBtn.className = "wide-btn danger";
     this.deleteBtn.title = "Remove this ship from the simulation. Cannot be undone.";
-    footer.appendChild(this.deleteBtn);
-    this.flightEl.appendChild(footer);
+    this.flightEl.appendChild(this.deleteBtn);
 
     panel.appendChild(this.flightEl);
 
     this.root.appendChild(panel);
 
+    this.renderStages();
+    this.refreshBudget();
     this.syncDirButtons();
     this.syncGuidanceButtons();
     this.flightEl.style.display = "none";
+  }
+
+  private renderStages(): void {
+    this.stagesEl.innerHTML = "";
+    this.design.stages.forEach((s, i) => {
+      const block = el("div", "stage-block");
+      const row = el("div", "stage-row");
+      row.appendChild(el("span", "stage-name", `${i + 1}`));
+      compactField(row, "dry t", s.dryMass / 1000, (v) => { s.dryMass = v * 1000; this.markCustom(); this.refreshBudget(); });
+      compactField(row, "prop t", s.propMass / 1000, (v) => { s.propMass = v * 1000; this.markCustom(); this.refreshBudget(); });
+      // Isp and thrust must stay positive — vₑ = 0 / thrust = 0 would divide by zero.
+      compactField(row, "Isp s", s.isp, (v) => { s.isp = Math.max(v, 1); this.markCustom(); this.refreshBudget(); });
+      compactField(row, "kN", s.thrust / 1000, (v) => { s.thrust = Math.max(v * 1000, 1); this.markCustom(); this.refreshBudget(); });
+      if (this.design.stages.length > 1) {
+        const rm = button("✕", () => {
+          this.design.stages.splice(i, 1);
+          this.markCustom();
+          this.renderStages();
+          this.refreshBudget();
+        });
+        rm.className = "rm-btn";
+        row.appendChild(rm);
+      }
+      block.appendChild(row);
+
+      // Strap-on boosters: ignite WITH this stage and burn in parallel (×N units
+      // that drop together when spent). The core keeps firing after they drop.
+      (s.boosters ?? []).forEach((bst, j) => {
+        const brow = el("div", "stage-row booster-row");
+        brow.appendChild(el("span", "stage-name", "↳"));
+        compactField(brow, "×N", bst.count ?? 1, (v) => { bst.count = Math.max(1, Math.round(v)); this.markCustom(); this.refreshBudget(); });
+        compactField(brow, "dry t", bst.dryMass / 1000, (v) => { bst.dryMass = v * 1000; this.markCustom(); this.refreshBudget(); });
+        compactField(brow, "prop t", bst.propMass / 1000, (v) => { bst.propMass = v * 1000; this.markCustom(); this.refreshBudget(); });
+        compactField(brow, "Isp s", bst.isp, (v) => { bst.isp = Math.max(v, 1); this.markCustom(); this.refreshBudget(); });
+        compactField(brow, "kN", bst.thrust / 1000, (v) => { bst.thrust = Math.max(v * 1000, 1); this.markCustom(); this.refreshBudget(); });
+        const rm = button("✕", () => {
+          s.boosters!.splice(j, 1);
+          if (s.boosters!.length === 0) delete s.boosters;
+          this.markCustom();
+          this.renderStages();
+          this.refreshBudget();
+        });
+        rm.className = "rm-btn";
+        brow.appendChild(rm);
+        block.appendChild(brow);
+      });
+
+      const addB = button("+ booster", () => {
+        (s.boosters ??= []).push({ name: "Booster", dryMass: 2000, propMass: 20000, isp: 280, thrust: 5e5, count: 2 });
+        this.markCustom();
+        this.renderStages();
+        this.refreshBudget();
+      });
+      addB.className = "add-booster";
+      // Electric (power-limited) stages can't carry chemical strap-ons honestly:
+      // the budget would use rated thrust while the sim derates it, so disallow it.
+      if (s.electric) {
+        setDisabled(addB, true, "Electric stages can't carry strap-on boosters.");
+      } else {
+        addB.title = "Add strap-on boosters that ignite with this stage and burn in parallel.";
+      }
+      block.appendChild(addB);
+
+      this.stagesEl.appendChild(block);
+    });
+  }
+
+  private refreshBudget(): void {
+    const b = deltaVBudget(this.design.stages, this.design.payloadMass);
+    const twr = initialTWR(this.design.stages, this.design.payloadMass);
+    const perStage = b.perStage.map((d, i) => `S${i + 1}: ${(d / 1000).toFixed(2)}`).join("  ");
+    const first = this.design.stages[0];
+    const hasBoosters = !!(first && first.boosters && first.boosters.length > 0);
+    let html =
+      kv("Total Δv", `${(b.total / 1000).toFixed(2)} km/s`) +
+      kv("Wet / final mass", `${(b.wetMass / 1000).toFixed(1)} / ${(b.finalMass / 1000).toFixed(1)} t`) +
+      kv("Initial T/W", twr.toFixed(2) + (twr < 1 ? " (low thrust)" : "")) +
+      (hasBoosters ? kv("Liftoff thrust", `${(stageLiftoffThrust(first!) / 1000).toFixed(0)} kN (core + boosters)`) : "") +
+      `<div class="per-stage">${perStage} km/s</div>`;
+
+    // Launch vehicle: show the honest Earth→LEO ascent budget and what survives into
+    // orbit once the boost stages are expended (and gate the express button on it).
+    if (this.design.fromSurface) {
+      const pv = ascentPreview(this.design);
+      if (pv) {
+        html += kv("Ascent to LEO", `${(pv.ascentDv / 1000).toFixed(2)} km/s`);
+        html += pv.reachesOrbit
+          ? `<div class="ok">✓ reaches LEO — survivor ${(pv.survivorMass / 1000).toFixed(1)} t, ${(pv.survivorDv / 1000).toFixed(2)} km/s in orbit</div>`
+          : `<div class="warn">✗ ${((pv.ascentDv - pv.stackDv) / 1000).toFixed(2)} km/s short of LEO — trim payload or lower the target orbit</div>`;
+      }
+      if (this.expressBtn) setDisabled(this.expressBtn, !pv?.reachesOrbit, "This design can't reach LEO — trim payload or lower the target orbit.");
+    }
+    this.budgetEl.innerHTML = html;
+  }
+
+  /** A category-grouped <select> over the whole preset fleet. */
+  private buildPresetSelect(): HTMLSelectElement {
+    const sel = document.createElement("select");
+    sel.className = "preset-sel";
+    const custom = document.createElement("option");
+    custom.value = "";
+    custom.textContent = "— Custom / from scratch —";
+    sel.appendChild(custom);
+    for (const group of presetsByCategory()) {
+      const og = document.createElement("optgroup");
+      og.label = group.category;
+      for (const p of group.presets) {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.name;
+        og.appendChild(opt);
+      }
+      sel.appendChild(og);
+    }
+    sel.onchange = () => {
+      if (sel.value) this.loadPreset(sel.value);
+      else this.clearCaption();
+    };
+    return sel;
+  }
+
+  /** Load a preset into the live (editable) design and re-sync the controls. */
+  private loadPreset(id: string): void {
+    const preset = PRESETS_BY_ID.get(id);
+    if (!preset) return;
+    this.design = presetToDesign(preset);
+    this.nameInput.value = this.design.name;
+    this.payloadInput.value = String(this.design.payloadMass / 1000);
+    this.altInput.value = String(this.design.altitudeKm);
+    this.inclInput.value = String(this.design.inclinationDeg);
+    this.fromSurfaceToggle.checked = !!this.design.fromSurface;
+    this.renderStages();
+    this.renderLaunchArea();
+    this.refreshBudget();
+    this.showCaption(preset);
+  }
+
+  private showCaption(p: ShipPreset): void {
+    const role = p.role === "launcher" ? "launch vehicle" : "in-space craft";
+    this.presetCaption.innerHTML =
+      `<span class="preset-meta">${p.category} · ${p.era} · ${role}</span>` +
+      `<span class="preset-blurb">${p.blurb}</span>`;
+  }
+
+  private clearCaption(): void {
+    this.presetCaption.innerHTML = "";
+  }
+
+  /** Any manual edit drops the "this is preset X" framing — it's now bespoke. */
+  private markCustom(): void {
+    if (this.presetSelect.value !== "") {
+      this.presetSelect.value = "";
+      this.clearCaption();
+    }
+  }
+
+  private launch(): void {
+    const id = spawnShip(this.sim, this.design);
+    this.select(id);
+  }
+
+  /** Rebuild the launch controls for the design's role: a launch vehicle rolls out to
+   *  the pad (then flies the ascent) or expresses straight to LEO; an in-space craft
+   *  deploys directly in LEO. */
+  private renderLaunchArea(): void {
+    this.launchArea.innerHTML = "";
+    this.expressBtn = null;
+    if (this.design.fromSurface) {
+      const pad = button("🚀 Roll out to pad", () => this.rollOut());
+      pad.className = "wide-btn";
+      pad.title = "Stand this launch vehicle on the Earth pad. Fly the ascent (⬆ Launch in the flight console) — the boost stages are expended and only the survivor reaches LEO.";
+      const express = button("⏩ Express to LEO", () => this.express());
+      express.className = "wide-btn primary";
+      express.title = "Resolve the ascent instantly: expend the boost stages and seat the surviving stack in a LEO parking orbit.";
+      this.expressBtn = express;
+      this.launchArea.append(pad, express);
+    } else {
+      const deploy = button("▶ Deploy in LEO", () => this.launch());
+      deploy.className = "wide-btn primary";
+      deploy.title = "Place this in-space craft directly in a circular low orbit, fully fuelled.";
+      this.launchArea.append(deploy);
+    }
+  }
+
+  /** Stand a launch vehicle on the Earth pad (fly the ascent from the flight console). */
+  private rollOut(): void {
+    this.select(spawnOnPad(this.sim, this.design));
+  }
+
+  /** Resolve the ascent instantly and seat the survivor in LEO. The express button is
+   *  gated off when the design can't reach orbit; if a stale click still slips through,
+   *  refresh the budget so the "✗ short of LEO" readout is shown rather than failing silently. */
+  private express(): void {
+    const { id } = expressToOrbit(this.sim, this.design);
+    if (id) this.select(id);
+    else this.refreshBudget();
   }
 
   private select(id: string): void {
     this.selectedId = id;
     if (this.sim.world.ships.get(id)) this.frameShip(id);
     this.flightEl.style.display = "block";
+    // First time a ship is selected this session, fold the designer to surface
+    // the flight controls — a convenience nudge, not a persisted override.
+    if (!this.autoCollapsedDesigner) {
+      this.autoCollapsedDesigner = true;
+      this.designerSection.setOpen(false);
+    }
     this.refreshShipList();
   }
 
@@ -381,8 +677,8 @@ export class ShipPanel {
     // DEGENERATE osculating conic at the arc endpoints (zero-speed liftoff/touchdown ⇒ a→∞),
     // which would hand the camera a non-finite framing distance and black out the whole view.
     // Fall back to a body-scaled distance whenever the apoapsis isn't a finite, positive length.
-    const elements = shipOsculatingElements(ship, this.sim.world.t);
-    const ra = elements.a * (1 + elements.e);
+    const el = shipOsculatingElements(ship, this.sim.world.t);
+    const ra = el.a * (1 + el.e);
     const body = BODY_BY_ID.get(ship.primary);
     const scaleMeters = Number.isFinite(ra) && ra > 0 ? ra : (body ? body.radius * 3 : 1e7);
     const distUnits = Math.max((scaleMeters / 1e9) * 2.2, 0.02);
@@ -397,9 +693,9 @@ export class ShipPanel {
   private shouldFrameParent(ship: Ship): boolean {
     if (ship.primary === "sun" || ship.interstellarLeg || ship.landed || ship.mode === "thrust") return false;
     if (!BODY_BY_ID.get(ship.primary)) return false;
-    const elements = shipOsculatingElements(ship, this.sim.world.t);
-    if (elements.e >= 1 || elements.a <= 0) return false; // unbound — not a tight fast loop
-    const period = orbitalPeriod(elements.a, primaryMu(ship));
+    const el = shipOsculatingElements(ship, this.sim.world.t);
+    if (el.e >= 1 || el.a <= 0) return false; // unbound — not a tight fast loop
+    const period = orbitalPeriod(el.a, primaryMu(ship));
     // Revolutions swept per real second at the current warp; past ~¼ rev/s the chase strobes.
     return period > 0 && this.sim.warp / period > 0.25;
   }
@@ -469,7 +765,7 @@ export class ShipPanel {
     const count = this.sim.world.ships.size;
     this.fleetSection.badge.textContent = count ? String(count) : "";
     if (count === 0) {
-      this.shipListEl.appendChild(el("div", "ship-empty", "No ships yet — ✚ Design one to launch."));
+      this.shipListEl.appendChild(el("div", "ship-empty", "No ships yet — launch one above."));
     }
     for (const ship of this.sim.world.ships.values()) {
       const b = button(ship.name, () => this.select(ship.id));
@@ -489,48 +785,153 @@ export class ShipPanel {
       this.flightEl.style.display = "none";
       return;
     }
-    // A destroyed ship has no live orbit to read — show the loss, offer only deletion.
+    // A destroyed ship has no live orbit to read — show the loss and offer only deletion.
     if (ship.status === "lost") {
       this.renderLost(ship);
       return;
     }
 
-    const ctx = flightCtx(ship, this.sim, t);
+    // Light-lag: what you KNOW is the ship's retarded state — its state at the
+    // instant whose light is only now reaching the control node.
+    const controlPos = bodyPosition(this.sim.world.controlNode, t);
+    const tKnown = retardedTime(controlPos, (tt) => shipWorldState(ship, tt).r, t);
+    const age = t - tKnown; // one-way light delay
 
-    // Headline + chips.
-    const banner = statusBanner(ctx);
-    this.statusEl.className = `flight-status ${banner.cls}`;
-    this.statusEl.textContent = banner.text;
-    const chips = statusChips(ctx, this.sim);
-    this.chipsEl.innerHTML = "";
-    for (const c of chips) this.chipsEl.appendChild(el("span", "chip" + (c.cls ? ` ${c.cls}` : ""), c.text));
-    this.chipsEl.style.display = chips.length ? "flex" : "none";
+    const mu = primaryMu(ship);
+    const primary = BODY_BY_ID.get(ship.primary)!;
+    const el = shipOsculatingElements(ship, tKnown);
+    const rel = shipRelativeState(ship, tKnown);
+    const speed = length(rel.v);
 
-    // Primary readout (+ a planned-transfer one-liner).
-    this.readoutEl.innerHTML = primaryLines(ctx) + transferSummaryLine(ctx);
+    const lines: string[] = [];
+    lines.push(kv("Signal delay (1-way)", fmtDelay(age)));
+    const dop = shipTelemetryDoppler(ship, this.sim.world.controlNode, t);
+    if (dop) lines.push(kv("Telemetry Doppler", fmtDoppler(dop)));
+    if (ship.primary === "sun") {
+      // Heliocentric (in/after a transfer): show distance from the Sun, not an
+      // altitude above the Sun's surface.
+      lines.push(kv("Frame", "heliocentric"));
+      lines.push(kv("Distance from Sun", `${(length(rel.r) / AU).toFixed(3)} AU`));
+    } else {
+      const sum = summarizeOrbit(el, mu, primary.radius);
+      lines.push(kv("Orbiting", primary.name));
+      lines.push(kv("Periapsis alt", `${(sum.periapsisAlt / 1000).toFixed(0)} km`));
+      lines.push(kv("Apoapsis alt", sum.bound ? `${(sum.apoapsisAlt / 1000).toFixed(0)} km` : "escape"));
+      lines.push(kv("Period", sum.bound ? formatDur(sum.period) : "—"));
+      // J2 oblateness precession (the plane and apsides slowly rotate).
+      if (sum.bound && primary.J2) {
+        const r = j2Rates(mu, j2RefRadius(primary), primary.J2, el.a, el.e, el.i);
+        lines.push(kv("Node precession", `${(r.nodeDot * RAD * DAY).toFixed(3)}°/day`));
+        lines.push(kv("Apsidal precession", `${(r.periDot * RAD * DAY).toFixed(3)}°/day`));
+      }
+    }
+    lines.push(kv("Speed", `${(speed / 1000).toFixed(3)} km/s`));
+    lines.push(kv("Mass", `${(totalMass(ship) / 1000).toFixed(2)} t`));
+    lines.push(kv("Δv remaining", `${(dvRemaining(ship) / 1000).toFixed(2)} km/s`));
 
-    // Advanced groups — populate + show only when they carry content this frame.
-    this.applyGroup(this.orbitGroup, orbitDetailGroup(ctx));
-    this.applyGroup(this.driveGroup, driveDetailGroup(ctx));
-    this.applyGroup(this.transferGroup, transferDetailGroup(ctx));
-    this.applyGroup(this.thermalGroup, thermalDetailGroup(ctx));
+    // Electric drive: power-limited thrust falls with solar distance; a transfer
+    // is a long Edelbaum spiral, not an impulsive burn.
+    const stage = activeStage(ship);
+    if (stage?.electric) {
+      const rHelio = length(shipWorldState(ship, tKnown).r);
+      const power = availablePowerW(stage.electric, rHelio);
+      const thr = thrustAt(stage, rHelio);
+      const accel = thr / totalMass(ship);
+      lines.push(kv("Drive power", `${(power / 1000).toFixed(2)} kW${stage.electric.solar ? ` @ ${(rHelio / AU).toFixed(2)} AU` : " (reactor)"}`));
+      lines.push(kv("Drive thrust", `${(thr * 1000).toFixed(1)} mN · a = ${(accel * 1e6).toFixed(2)} mm/s²`));
+    }
+    if (ship.spiral) {
+      const left = (ship.spiral.tEnd - t) / DAY;
+      lines.push(kv("Spiraling", `to ${((ship.spiral.endRadius - BODY_BY_ID.get(ship.primary)!.radius) / 1000).toFixed(0)} km · ${left.toFixed(0)} d left`));
+    }
+    // Show/enable the spiral control only when a spiral can be started here.
+    const canSpiral = !!stage?.electric && ship.mode === "coast" && ship.primary !== "sun"
+      && !ship.landed && !ship.interstellarLeg && !ship.spiral;
+    this.electricEl.style.display = canSpiral ? "block" : "none";
+    setDisabled(this.spiralBtn, !canSpiral,
+      "Available only with an electric drive while coasting in orbit around a body.");
 
-    // Planner gating (a transfer can only be planned from a parking orbit; etc.).
+    // A command you've sent is still crawling out to the ship at c.
+    const inbound = this.sim.world.messages.find(
+      (m) => m.kind === "command" && m.targetId === ship.id && m.tArrive > t,
+    );
+    if (inbound) lines.push(kv("Order en route", `arrives in ${fmtDelay(inbound.tArrive - t)}`));
+
+    // Transfer status.
     const tr = ship.transfer;
-    const leg = ship.interstellarLeg;
-    setDisabled(this.planBtn, ship.primary === "sun" || !!leg || !!ship.landed || (!!tr && tr.departed),
-      ship.landed ? "Launch to a parking orbit first." : "Plan a transfer only from a parking orbit around a body (not mid-transfer or interstellar).");
-    setDisabled(this.interstellarBtn, !!leg || !!ship.landed,
-      ship.landed ? "Launch to a parking orbit first." : "Already on an interstellar leg.");
+    if (tr) {
+      const tName = BODY_BY_ID.get(tr.targetId)?.name ?? tr.targetId;
+      if (!tr.departed) {
+        lines.push(kv("Transfer", `→ ${tName}, depart ${formatDate(tr.tDepart)}`));
+      } else if (tr.arrived) {
+        lines.push(kv("Captured", `${tName} orbit · capture Δv ${(tr.dvArrive / 1000).toFixed(2)} km/s`));
+      } else if (tr.inSoi) {
+        lines.push(kv("Arrival", `in ${tName} SOI — capturing`));
+      } else {
+        lines.push(kv("In transit", `→ ${tName}, arrive in ${((tr.tArrive - t) / DAY).toFixed(0)} d`));
+        lines.push(kv("Capture Δv", `${(tr.dvArrive / 1000).toFixed(2)} km/s`));
+      }
+      // Per-flyby B-plane geometry: once a pass is flown the leg carries the targeting it
+      // actually flew — periapsis altitude, impact parameter b (in body radii), the bend,
+      // and whether the bend was free or bought with a periapsis burn. Pending passes show
+      // their scheduled time.
+      if (tr.flybys) {
+        for (const f of tr.flybys) {
+          const fb = BODY_BY_ID.get(f.bodyId);
+          const fName = fb?.name ?? f.bodyId;
+          if (f.done && f.rpAchieved !== undefined) {
+            const periAlt = (f.rpAchieved - (fb?.radius ?? 0)) / 1000;
+            const bRadii = fb ? f.bMag! / fb.radius : 0;
+            const free = (f.residualTurn ?? 0) < 1e-6 && f.dvBurn < 1;
+            lines.push(kv(`Flyby ${fName}`,
+              `peri ${periAlt.toFixed(0)} km · b ${bRadii.toFixed(1)} R · turn ${((f.turn ?? 0) * RAD).toFixed(0)}°` +
+              (free ? " · free" : ` · burn ${f.dvBurn.toFixed(0)} m/s`)));
+          } else {
+            lines.push(kv(`Flyby ${fName}`, `pending · ${formatDate(f.tFlyby)}`));
+          }
+        }
+      }
+    }
+    // "Warp to departure": only meaningful for a planned, not-yet-departed transfer.
     const planned = !!tr && !tr.departed;
     this.warpDepartBtn.style.display = planned ? "block" : "none";
     if (planned) {
       setDisabled(this.warpDepartBtn, this.sim.anyThrust(), "Can't skip time while a burn is running.");
       this.warpDepartBtn.textContent = `⏩ Warp to ${formatDate(tr!.tDepart)}`;
     }
+    // Interstellar leg status.
+    const leg = ship.interstellarLeg;
+    if (leg) {
+      const starName = STAR_BY_ID.get(leg.targetStar)?.name ?? leg.targetStar;
+      const arrived = t >= leg.tArrive;
+      lines.push(kv("Interstellar", arrived
+        ? `arrived at ${starName}`
+        : `→ ${starName} · ${((leg.tArrive - t) / JULIAN_YEAR).toFixed(2)} yr left (Earth frame)`));
+      lines.push(kv("Crew clock (τ)", `${(ship.tau / JULIAN_YEAR).toFixed(2)} yr elapsed`));
+    }
 
-    // Burn gating.
+    // A transfer can only be planned from a planet (not mid-flight or interstellar).
+    setDisabled(this.planBtn, ship.primary === "sun" || !!leg || !!ship.landed || (!!tr && tr.departed),
+      ship.landed ? "Launch to a parking orbit first." : "Plan a transfer only from a parking orbit around a body (not mid-transfer or interstellar).");
+    setDisabled(this.interstellarBtn, !!leg || !!ship.landed, ship.landed ? "Launch to a parking orbit first." : "Already on an interstellar leg.");
+
+    // Thermal & detection — there is no stealth in space.
+    const th = shipThermalState(ship, t);
+    lines.push(kv("Solar flux", `${th.solarFlux.toFixed(0)} W/m² @ ${(th.distanceFromSun / AU).toFixed(2)} AU`));
+    lines.push(kv("Hull temp", `${th.hullTempK.toFixed(0)} K`));
+    lines.push(kv("IR signature", fmtPower(th.signatureW) + (th.thrusting ? " — drive HOT" : "")));
+    lines.push(kv("Detectable to", `${fmtRange(th.detectionRangeM)} (${th.snrThreshold}σ, τ=${(th.integrationTimeS / 3600).toFixed(0)}h)`));
+    lines.push(kv("Min signal", `${(th.minDetectablePowerW * 1e18).toFixed(1)} aW`));
+    if (th.thrusting) {
+      lines.push(kv("Drive waste heat", fmtPower(th.driveWasteW)));
+      lines.push(kv("Radiator needed", `${Math.round(th.radiatorAreaM2).toLocaleString("en-US")} m²`));
+    }
+
+    if (ship.landed) lines.unshift(kv("Surface", `landed on ${BODY_BY_ID.get(ship.landed.bodyId)?.name ?? ship.landed.bodyId}`));
+
     if (ship.mode === "thrust" && ship.burn) {
+      const pct = (100 * ship.burn.dvDone) / ship.burn.dvTarget;
+      lines.push(kv("BURNING", `${ship.burn.dvDone.toFixed(0)} / ${ship.burn.dvTarget.toFixed(0)} m/s (${pct.toFixed(0)}%)`));
       setDisabled(this.executeBtn, true, "Burn in progress.");
       this.executeBtn.textContent = "Burning…";
       this.setGuidanceDisabled(true);
@@ -540,23 +941,81 @@ export class ShipPanel {
       this.setGuidanceDisabled(false);
     }
 
-    // Contextual actions: surface ops, electric spiral, dock.
     this.updateSurfaceOps(ship);
-    const stage = activeStage(ship);
-    const canSpiral = !!stage?.electric && ship.mode === "coast" && ship.primary !== "sun"
-      && !ship.landed && !ship.interstellarLeg && !ship.spiral;
-    this.electricEl.style.display = canSpiral ? "block" : "none";
-    setDisabled(this.spiralBtn, !canSpiral,
-      "Available only with an electric drive while coasting in orbit around a body.");
-    this.operationsEl.style.display = (this.surfaceEl.style.display !== "none" || canSpiral) ? "flex" : "none";
-
-    this.dockBtn.style.display = dockCandidates(this.sim, ship.id).length > 0 ? "block" : "none";
+    this.updateDocking(ship);
+    this.readoutEl.innerHTML = lines.join("");
   }
 
-  /** Populate a disclosure group and show it only when it has content this frame. */
-  private applyGroup(group: Collapsible, g: ReadoutGroup): void {
-    group.root.style.display = g.show ? "" : "none";
-    if (g.show) group.body.innerHTML = g.html;
+  /** Propellant-transfer / assembly controls for the selected ship, shown only when
+   *  another free-coasting ship is docked with it (same SOI, at rendezvous). Donor →
+   *  receiver raises the receiver's m₀ → Δv; Assemble merges the partner into this ship. */
+  private updateDocking(ship: Ship): void {
+    const candidates = dockCandidates(this.sim, ship.id);
+    if (candidates.length === 0) {
+      this.dockEl.style.display = "none";
+      this.dockPartnerId = null;
+      this.lastDockSig = "";
+      return;
+    }
+    this.dockEl.style.display = "block";
+
+    // Rebuild the partner <select> only when the candidate set actually changes, so
+    // a per-frame refresh doesn't fight the user's selection.
+    const sig = candidates.map((c) => c.id).join(",");
+    if (sig !== this.lastDockSig) {
+      this.lastDockSig = sig;
+      this.dockSelect.innerHTML = "";
+      for (const c of candidates) {
+        const opt = document.createElement("option");
+        opt.value = c.id;
+        opt.textContent = c.name;
+        this.dockSelect.appendChild(opt);
+      }
+    }
+    if (!this.dockPartnerId || !candidates.some((c) => c.id === this.dockPartnerId)) {
+      this.dockPartnerId = candidates[0]!.id;
+    }
+    this.dockSelect.value = this.dockPartnerId;
+
+    const partner = candidates.find((c) => c.id === this.dockPartnerId)!;
+    const me = shipPropStatus(this.sim, ship.id)!;
+    const them = shipPropStatus(this.sim, partner.id)!;
+    this.dockReadout.innerHTML =
+      kv("Docked with", `${partner.name} · ${partner.distance.toFixed(0)} m, ${partner.relSpeed.toFixed(2)} m/s`) +
+      kv("This ship", `prop ${(me.available / 1000).toFixed(1)} t · room ${(me.headroom / 1000).toFixed(1)} t`) +
+      kv(partner.name, `prop ${(them.available / 1000).toFixed(1)} t · room ${(them.headroom / 1000).toFixed(1)} t`);
+
+    // Receive needs propellant on the partner and room on this ship; Send is the reverse.
+    setDisabled(this.receiveBtn, !(them.available > 1 && me.headroom > 1),
+      "Partner has no propellant to give, or this ship's tanks are full.");
+    setDisabled(this.sendBtn, !(me.available > 1 && them.headroom > 1),
+      "This ship has no propellant to give, or the partner's tanks are full.");
+  }
+
+  /** Transfer propellant between the selected ship and its dock partner. The amount
+   *  field is tonnes; blank ⇒ fill the receiver as much as the pair allows. */
+  private doTransfer(dir: "send" | "receive"): void {
+    if (!this.selectedId || !this.dockPartnerId) return;
+    const raw = this.dockAmountInput.value.trim();
+    const amountKg = raw === "" ? undefined : Math.max(0, Number(raw) * 1000) || undefined;
+    const [from, to] = dir === "send"
+      ? [this.selectedId, this.dockPartnerId]
+      : [this.dockPartnerId, this.selectedId];
+    transferPropellant(this.sim, from, to, amountKg);
+  }
+
+  /** Assemble (dock-merge) the dock partner into the selected ship — the partner is
+   *  consumed. In-orbit construction; the merged vehicle keeps this ship's identity. */
+  private doAssemble(): void {
+    if (!this.selectedId || !this.dockPartnerId) return;
+    const partnerId = this.dockPartnerId;
+    const wasFocused = this.sm.focusId === partnerId;
+    if (assembleShips(this.sim, this.selectedId, partnerId)) {
+      this.dockPartnerId = null;
+      this.lastDockSig = "";
+      if (wasFocused) this.frameShip(this.selectedId);
+      this.refreshShipList();
+    }
   }
 
   /** Landing/takeoff Δv budget for the selected ship, shown only when it is
@@ -676,16 +1135,12 @@ export class ShipPanel {
    *  disabled, and only the Delete button live to clear the wreck. */
   private renderLost(ship: Ship): void {
     const where = BODY_BY_ID.get(ship.landed?.bodyId ?? ship.primary)?.name ?? "a body";
-    this.statusEl.className = "flight-status lost";
-    this.statusEl.textContent = `CONTACT LOST · impact with ${where}`;
-    this.chipsEl.innerHTML = "";
-    this.chipsEl.style.display = "none";
-    this.readoutEl.innerHTML = `<div class="warn">✗ ${ship.name} was destroyed — impact with ${where}.</div>`;
-    for (const g of [this.orbitGroup, this.driveGroup, this.transferGroup, this.thermalGroup]) {
-      g.root.style.display = "none";
-    }
-    this.operationsEl.style.display = "none";
-    this.dockBtn.style.display = "none";
+    this.readoutEl.innerHTML =
+      kv("Status", "CONTACT LOST") +
+      `<div class="warn">✗ ${ship.name} was destroyed — impact with ${where}.</div>`;
+    this.surfaceEl.style.display = "none";
+    this.electricEl.style.display = "none";
+    this.dockEl.style.display = "none";
     this.warpDepartBtn.style.display = "none";
     setDisabled(this.planBtn, true, "Ship lost.");
     setDisabled(this.interstellarBtn, true, "Ship lost.");
@@ -699,6 +1154,38 @@ export class ShipPanel {
   private doSpiral(): void {
     if (this.selectedId) planSpiral(this.sim, this.selectedId, Math.max(0, Number(this.spiralAltInput.value) || 0));
   }
+}
+
+// ── ship-specific formatters ─────────────────────────────────────────────────
+/** Light-delay readout: live for the local case, then seconds → minutes → hours. */
+function fmtDelay(s: number): string {
+  if (s < 1) return "live";
+  if (s < 90) return `${s.toFixed(0)} s`;
+  if (s < 5400) return `${(s / 60).toFixed(1)} min`;
+  return `${(s / 3600).toFixed(2)} hr`;
+}
+
+/** The telemetry Doppler shift: redshift z (scientific for the tiny in-system
+ *  values, decimal for a relativistic torchship) and where the 10 µm sensing band
+ *  lands when the signal arrives. z > 0 reddens (receding), z < 0 blues. */
+function fmtDoppler(d: TelemetryDoppler): string {
+  const word = d.z > 0 ? "redshift" : d.z < 0 ? "blueshift" : "none";
+  const zStr = Math.abs(d.z) >= 1e-3 ? d.z.toFixed(3) : d.z.toExponential(1);
+  const sign = d.z >= 0 ? "+" : "";
+  const lamObs = (shiftedWavelength(IR_BAND_WAVELENGTH, d.factor) * 1e6).toFixed(2); // µm
+  return `z ${sign}${zStr} (${word}) · 10 → ${lamObs} µm`;
+}
+
+function fmtPower(w: number): string {
+  if (w < 1e3) return `${w.toFixed(0)} W`;
+  if (w < 1e6) return `${(w / 1e3).toFixed(1)} kW`;
+  if (w < 1e9) return `${(w / 1e6).toFixed(1)} MW`;
+  return `${(w / 1e9).toFixed(2)} GW`;
+}
+
+function fmtRange(m: number): string {
+  if (m < 1e9) return `${(m / 1e3).toLocaleString("en-US", { maximumFractionDigits: 0 })} km`;
+  return `${(m / 1.495978707e11).toFixed(3)} AU`;
 }
 
 /** Heat/decel budget of a nominal blunt-body entry, for the descent readout: a

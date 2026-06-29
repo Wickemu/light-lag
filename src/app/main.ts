@@ -22,8 +22,6 @@ import { CommsViews } from "../render/commsViews.ts";
 import { Hud } from "../ui/hud.ts";
 import { ScaleBar } from "../ui/scaleBar.ts";
 import { ShipPanel } from "../ui/shipPanel.ts";
-import { DesignerPanel } from "../ui/designerPanel.ts";
-import { DockPanel } from "../ui/dockPanel.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
 import { InterstellarPanel } from "../ui/interstellarPanel.ts";
 import { KeyboardManager } from "../ui/keyboard.ts";
@@ -65,13 +63,7 @@ const shipPanel = new ShipPanel(
   (shipId) => transferPanel.open(shipId),
   (shipId) => interstellarPanel.open(shipId),
 );
-// Build-time and rendezvous workflows live in their own modals (opened from the
-// console), so the docked panel can stay a lean flight readout.
-const designerPanel = new DesignerPanel(uiRoot, sim, (id) => shipPanel.selectFromDesigner(id));
-const dockPanel = new DockPanel(uiRoot, sim, sm, (id, wasFocused) => shipPanel.onPartnerAssembled(id, wasFocused));
-shipPanel.onOpenDesigner = () => designerPanel.open();
-shipPanel.onOpenDock = (shipId) => dockPanel.open(shipId);
-const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel, interstellarPanel, designerPanel, dockPanel);
+const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel, interstellarPanel);
 
 // Hover/focus glossary: one delegated listener over the whole overlay surfaces a
 // definition card for any term-tagged label (kv readouts, fields, headers, …).
@@ -101,7 +93,6 @@ function renderOnce(): void {
   hud.update(fps, views);
   scaleBar.update();
   shipPanel.update(world.t);
-  dockPanel.update(); // live readout while a dock modal is open
 }
 
 function frame(now: number): void {
@@ -134,8 +125,6 @@ if (import.meta.env.DEV) {
     commsViews,
     hud,
     shipPanel,
-    designerPanel,
-    dockPanel,
     transferPanel,
     interstellarPanel,
     km,

@@ -15,9 +15,8 @@
  *   V            — cycle view presets (isometric → top-down → edge-on)
  *   M            — toggle in-system orrery ⇄ interstellar map
  *   F            — toggle ship / flight panel
- *   N            — open the ship designer
  *   ?            — toggle the help overlay
- *   Escape       — close designer / dock / planner / help (then ship panel)
+ *   Escape       — close planner / help (then ship panel if already closed)
  */
 
 import * as THREE from "three";
@@ -25,8 +24,6 @@ import type { Simulation } from "../core/sim.ts";
 import type { SceneManager } from "../render/SceneManager.ts";
 import type { Hud } from "./hud.ts";
 import type { ShipPanel } from "./shipPanel.ts";
-import type { DesignerPanel } from "./designerPanel.ts";
-import type { DockPanel } from "./dockPanel.ts";
 import type { TransferPanel } from "./transferPanel.ts";
 import type { InterstellarPanel } from "./interstellarPanel.ts";
 
@@ -62,8 +59,6 @@ export class KeyboardManager {
     private shipPanel: ShipPanel,
     private transferPanel: TransferPanel,
     private interstellarPanel: InterstellarPanel,
-    private designerPanel: DesignerPanel,
-    private dockPanel: DockPanel,
   ) {
     window.addEventListener("keydown", (e) => {
       if (this.isTyping(e.target)) return;
@@ -121,18 +116,12 @@ export class KeyboardManager {
     // ── Panel toggles ────────────────────────────────────────────────────────
     if (k === "f" || k === "F") { this.shipPanel.toggle(); return; }
 
-    if (k === "n" || k === "N") { this.designerPanel.open(); return; }
-
     if (k === "?") { this.hud.toggleHelp(); return; }
 
     if (k === "Escape") {
-      // Close, topmost first: designer, dock, interstellar planner, transfer
-      // planner, help overlay, then the ship panel.
-      if (this.designerPanel.isOpen()) {
-        this.designerPanel.close();
-      } else if (this.dockPanel.isOpen()) {
-        this.dockPanel.close();
-      } else if (this.interstellarPanel.isOpen()) {
+      // Close, in order: interstellar planner, transfer planner, help overlay,
+      // then the ship panel.
+      if (this.interstellarPanel.isOpen()) {
         this.interstellarPanel.close();
       } else if (this.transferPanel.isOpen()) {
         this.transferPanel.close();
