@@ -635,6 +635,40 @@ describe("Phase 6: ship thermal & detection model", () => {
     // A burning drive is a far brighter beacon than a coasting hull.
     expect(burn.detectionRangeM).toBeGreaterThan(coast.detectionRangeM * 5);
   });
+
+  it("a solar-electric drive's waste heat derates with solar distance, not the rated thrust", () => {
+    // Same tug as the burn-derating test: at 1 AU the array is at rated power, at
+    // 3 AU it is power-starved to ~1/9. Pre-fix the thermal model used the RATED
+    // thrust and reported the same waste heat at both distances; now it tracks the
+    // live (derated) drive, so the far signature is correspondingly fainter.
+    const design = {
+      name: "Tug", payloadMass: 1000, altitudeKm: 400, inclinationDeg: 0,
+      stages: [{
+        name: "Hall", dryMass: 4000, propMass: 2500, isp: 2600, thrust: 0.6,
+        electric: { powerW: (0.6 * 2600 * 9.80665) / 1.2, eta: 0.6, solar: true },
+      }],
+    };
+    const wasteAt = (r: number): number => {
+      const sim = new Simulation(createWorld(1, 0));
+      const id = spawnShip(sim, design);
+      const ship = sim.world.ships.get(id)!;
+      ship.primary = "sun";
+      ship.elements = circularOrbit(r);
+      ship.epoch = 0;
+      ship.r = undefined;
+      ship.v = undefined;
+      sendBurn(sim, id, 5000, "prograde");
+      let guard = 0;
+      while (ship.mode !== "thrust" && guard++ < 200) sim.step(200);
+      expect(ship.mode).toBe("thrust");
+      return shipThermalState(ship, sim.world.t).driveWasteW;
+    };
+    const near = wasteAt(AU);
+    const far = wasteAt(3 * AU);
+    expect(far).toBeGreaterThan(0);
+    expect(far).toBeCloseTo(near / 9, 5); // power ∝ 1/r² ⇒ waste ∝ 1/r²
+    expect(far).toBeLessThan(near / 5); // unmistakably derated, not the flat rated value
+  });
 });
 
 describe("staging", () => {

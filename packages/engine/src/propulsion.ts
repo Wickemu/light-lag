@@ -116,6 +116,24 @@ export function thrustAt(stage: Stage, r: number): number {
   return Math.min(stage.thrust, electricThrust(availablePowerW(stage.electric, r), ve, stage.electric.eta));
 }
 
+/** Jet (beam) power ½·ΣF·vₑ (W) of a stage's LIVE reservoirs at heliocentric
+ *  distance r: the core's distance-derated `thrustAt()` (a solar-electric stage
+ *  falls as 1/r²; a chemical core is the flat rated thrust) plus every strap-on
+ *  booster still carrying propellant (`b.thrust·count·vₑ`, dropped once empty).
+ *  The single source of truth for "what the live engine set is actually putting
+ *  out", shared by the burn integrator's energetics and the thermal waste-heat
+ *  model so a derated or boostered drive can never report two different
+ *  signatures. ½·F·vₑ is the jet power because jet KE flow = ½·ṁ·vₑ² = ½·F·vₑ. */
+export function liveJetPowerW(stage: Stage, r: number): number {
+  let jet = 0.5 * thrustAt(stage, r) * exhaustVelocity(stage.isp);
+  if (stage.boosters) {
+    for (const b of stage.boosters) {
+      if (b.propMass > 0) jet += 0.5 * b.thrust * boosterCount(b) * exhaustVelocity(b.isp);
+    }
+  }
+  return jet;
+}
+
 // ── Variable specific impulse (constant-power throttling) ────────────────────
 //
 // A fixed-Isp ion engine throws mass at one speed; a VARIABLE-Isp drive (VASIMR,

@@ -77,6 +77,10 @@ the repo's single `npm test`. Suites that drive the kernel through a game's comm
 are integration tests and live on the game side (`src/integration/`), so this package
 carries no dependency on any game — see the repo's `ARCHITECTURE.md`.
 
+For the engine's fidelity envelope — the residual error by regime and the consciously
+omitted physics — see [`docs/error-budget.md`](../../docs/error-budget.md) and
+[`docs/deliberate-omissions.md`](../../docs/deliberate-omissions.md).
+
 ## Status
 
 `private` within the workspace for now (consumed only in-repo). When it's worth publishing

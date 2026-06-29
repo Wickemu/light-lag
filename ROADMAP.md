@@ -567,6 +567,32 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   re-baselined for the O(km) Mars shift). Still to do: full N-body perturbations, J3+ harmonics, and the
   J2 perturbation on an AEROCAPTURE approach (the above-atmosphere arc to the interface — the drag-pass
   entry leg is unchanged today).
+- **Higher-fidelity propagation — explicit fidelity modes + third-body/perturbed arcs**
+  (the structured successor to the scattered "full N-body / J3+" notes above; raised by
+  the `docs/physics-assessment.md` second-opinion pass). The single biggest realism gap
+  is that ships coast as two-body conics about one primary (with SOI switches) and burn
+  under central gravity only — they never *continuously* feel the Sun in Earth/Moon
+  orbit, moons inside a planet's SOI, or lunar/solar perturbations on high orbits except
+  through patched events. The shape that fits this engine without breaking it:
+  - **Make fidelity a first-class, explicit choice.** The code already spans tiers
+    (analytic Kepler · J2 secular · J2-perturbed approach spline · RK4 powered flight ·
+    entry integration). Name them: **game/default** (today's deterministic patched-conic
+    model) · **perturbed** (central + selected third-body + *numerical* J2 on chosen
+    arcs) · **high-fidelity planning** (slower, for preview/analysis, not always-on).
+    This keeps the game responsive while allowing reality checks, and is the keystone
+    that lets the rest land without moving the default game's golden hash.
+  - **Third-body / perturbed propagation** — opt-in, gated to close approaches and long
+    coasts, **fixed-step** for determinism, **preview-first** before it ever mutates
+    live ship `WorldState`. The biggest gap, and explicitly **deferred** — captured
+    here, not scheduled.
+  - **Integrated (flown) low-thrust arcs** — reuse the existing RK4 powered integrator
+    for an in-sim electric spiral (the analytic Edelbaum leg lands first today; "in-sim
+    flyable capture/escape spiral" is already listed under "Power-limited electric
+    thrust"). Bounded effort, good payoff for electric craft.
+  Any of these must preserve the engine's invariants: fixed absolute-time grid, exact
+  event splitting, deterministic body/event ordering, stable serialization, and a
+  documented golden hash if it ever moves (see `docs/error-budget.md` for the current
+  envelope and `docs/deliberate-omissions.md` for why these sit outside the default).
 - **Full B-plane targeting in the planner UI** — the analytic aim (`bPlaneAim`:
   free-bend hyperbola, impact parameter, B-vector) now exists, and the planner's
   single-flyby and chain readouts now show the impact parameter b alongside the
@@ -594,9 +620,19 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   √(SNR), and still falls only as √(signature) — no stealth in space; the burn/coast
   ratio is unchanged, but absolute ranges grew (the integrated NEP is far below the
   old fixed 1e-14 W floor: a cold hull ~0.13 AU, a thrusting drive ~24 AU). Pure
-  read-time readout — golden hash unmoved. Still to do: a second optical band split
-  (reflected-sunlight vs thermal-IR with separate apertures/backgrounds) and a
-  diffraction-limited angular-resolution / astrometric model.
+  read-time readout — golden hash unmoved. **Drive waste-heat now tracks the live
+  engine set — DONE:** the thrusting-drive signature (`ships.ts shipThermalState`)
+  computed its waste heat from the *rated* `stage.thrust`/`isp`, so a solar-electric
+  drive far from the Sun (power-starved, derated ~1/9 at 3 AU) and a boostered stage
+  both mis-reported their IR signature. It now draws on a single shared
+  `propulsion.ts liveJetPowerW(stage, r)` — the core's distance-derated `thrustAt()`
+  plus every live strap-on booster — the same live engine set the burn integrator
+  flies (the `physics-assessment.md` C5 "one live-thrust source"). Pure read-time
+  readout ⇒ golden hash unmoved; +4 tests (`propulsion.test.ts` derating/booster
+  cases, `sim.test.ts` a 1 AU vs 3 AU electric-drive waste-heat comparison). Still to
+  do: a second optical band split (reflected-sunlight vs thermal-IR with separate
+  apertures/backgrounds) and a diffraction-limited angular-resolution / astrometric
+  model.
 - **Landing / takeoff** — DONE: a calibrated gravity-turn ascent Δv budget through
   real exponential atmospheres + an aerobraking descent model, with in-sim
   land/launch and co-rotating landed ships (sit on the surface at surface speed).

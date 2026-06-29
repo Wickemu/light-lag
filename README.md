@@ -132,6 +132,19 @@ flyable, to-scale 3D Solar System.
 
 See [ROADMAP.md](ROADMAP.md) for the full feature backlog and candidate next phases.
 
+### Physics honesty
+
+The physics is never hand-waved, and where it is approximated that is written down:
+
+- [docs/error-budget.md](docs/error-budget.md) — how large the residual error is,
+  regime by regime (LEO, interplanetary, entry, interstellar…), with the numbers
+  harvested from the test suite.
+- [docs/deliberate-omissions.md](docs/deliberate-omissions.md) — what is consciously
+  *not* modelled, the alternatives weighed, and why — so an approximation is never
+  mistaken for an oversight.
+- [docs/physics-audit.md](docs/physics-audit.md) /
+  [docs/physics-assessment.md](docs/physics-assessment.md) — the correctness audits.
+
 ## Run it
 
 ```bash
