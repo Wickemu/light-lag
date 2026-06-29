@@ -290,7 +290,10 @@ export function shipPropStatus(sim: Simulation, shipId: string): { available: nu
  * engine Δv (∫F/m dt, the rocket-equation currency); the realised speed change
  * is slightly less for a finite burn — that loss is physically honest.
  *
- * Returns the one-way light delay (s) until the order reaches the ship, or null.
+ * Returns the one-way light delay (s): under the "binding" policy this is the
+ * time until the order reaches the ship; under "informative" the order applies
+ * immediately and the delay is only a readout. Null if the command can't be sent
+ * (unknown target/control node) or, in informative mode, wasn't accepted.
  */
 export function sendBurn(
   sim: Simulation,
@@ -307,6 +310,10 @@ export function sendBurn(
   const command = goal
     ? { type: "burn" as const, dv: dvTarget, dir, goal, goalPrimary: sim.world.ships.get(shipId)?.primary }
     : { type: "burn" as const, dv: dvTarget, dir };
+  if (sim.commandPolicy === "informative") {
+    const res = sim.applyCommandNow(shipId, command);
+    return res && res.applied ? res.delay : null;
+  }
   const res = sim.sendCommand(shipId, command);
   return res ? res.delay : null;
 }

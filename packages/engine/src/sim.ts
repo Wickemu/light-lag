@@ -60,6 +60,17 @@ export class Simulation {
   readonly events = new EventQueue();
   warpIndex = 0;
   paused = false;
+  /**
+   * How remote commands are delivered.
+   *  - "binding" (default): a command propagates at c and resolves against the
+   *    ship's LIVE state at delivery, NACKing if it can't execute — the strategy
+   *    game's light-lag bargain (see sendCommand).
+   *  - "informative": the command applies IMMEDIATELY and the light delay is only
+   *    a readout, never enforced — the sandbox (see applyCommandNow).
+   * The engine ships "binding" so every existing test and the strategy game are
+   * unchanged; an app opts into "informative".
+   */
+  commandPolicy: "binding" | "informative" = "binding";
   private msgCounter = 0;
 
   constructor(world: WorldState) {
@@ -758,6 +769,27 @@ export class Simulation {
     });
     this.events.push({ t: tArrive, kind: "message-arrival", entityId: id });
     return { tArrive, delay: tArrive - this.world.t };
+  }
+
+  /**
+   * Apply a command IMMEDIATELY — the "informative light-lag" policy. The order
+   * takes effect now (resolved against the ship's current state); the returned
+   * `delay` is only what a real signal WOULD take to reach the ship, surfaced as a
+   * readout and never enforced. No message is put in flight and nothing is queued,
+   * so the sandbox stays free of in-flight comms state. The counterpart to
+   * sendCommand's binding delivery. Returns the readout delay and whether the
+   * command was accepted (affordable / valid), or null if the target or control
+   * node is unknown.
+   */
+  applyCommandNow(targetId: string, command: ShipCommand): { delay: number; applied: boolean } | null {
+    const ship = this.world.ships.get(targetId);
+    const control = BODY_BY_ID.get(this.world.controlNode);
+    if (!ship || !control) return null;
+    const fromPos = bodyState(control, this.world.t).r;
+    const tArrive = signalArrival(fromPos, (t) => shipWorldState(ship, t).r, this.world.t);
+    const delay = isFinite(tArrive) ? tArrive - this.world.t : Infinity;
+    const applied = this.applyCommand(ship, command);
+    return { delay, applied };
   }
 
   private deliverMessage(id: string): void {
