@@ -146,15 +146,28 @@ export function sparkline(opts: { width?: number; height?: number; samples?: num
   const buf: number[] = [];
   function redraw(): void {
     if (buf.length < 2) { poly.setAttribute("points", ""); return; }
-    let lo = Infinity, hi = -Infinity;
-    for (const v of buf) { if (v < lo) lo = v; if (v > hi) hi = v; }
-    const span = hi - lo || 1;
+    let lo = Infinity, hi = -Infinity, sum = 0;
+    for (const v of buf) { if (v < lo) lo = v; if (v > hi) hi = v; sum += v; }
+    const mid = sum / buf.length;
+    const denom = Math.max(Math.abs(mid), Math.abs(hi), Math.abs(lo), 1e-30);
     const step = w / (n - 1);
     const start = n - buf.length; // right-align newest sample
+    // A value steady to within ~1% reads as a flat line. Tight auto-ranging would
+    // otherwise stretch sub-precision float noise (a parked ship's "constant" speed,
+    // a fixed signal delay) to full height and look like wild oscillation.
+    if ((hi - lo) / denom < 0.01) {
+      const y = (h / 2).toFixed(1);
+      poly.setAttribute("points", `0,${y} ${w},${y}`);
+      return;
+    }
+    // Otherwise plot within a band of at least ±4% of the magnitude, so small real
+    // changes stay proportional instead of snapping to fill the chart.
+    const half = Math.max((hi - lo) / 2, Math.abs(mid) * 0.04, 1e-30);
+    const bot = mid - half, span = 2 * half;
     let pts = "";
     for (let i = 0; i < buf.length; i++) {
       const x = (start + i) * step;
-      const y = h - 1 - ((buf[i]! - lo) / span) * (h - 2);
+      const y = Math.max(0, Math.min(h, h - 1 - ((buf[i]! - bot) / span) * (h - 2)));
       pts += `${x.toFixed(1)},${y.toFixed(1)} `;
     }
     poly.setAttribute("points", pts.trim());

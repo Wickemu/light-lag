@@ -61,7 +61,7 @@ import { el, button, kv, setDisabled, numberField, formatDur } from "./dom.ts";
 import { collapsible, type Collapsible } from "./collapsible.ts";
 import { markTerm } from "./tooltip.ts";
 import {
-  statPill, meter, statTable, miniOrbit,
+  statPill, meter, statTable, miniOrbit, sparkline,
   type StatPill, type Meter, type StatTable, type MiniOrbit, type InstrumentState,
 } from "./instruments.ts";
 import {
@@ -439,7 +439,7 @@ export class ShipPanel {
     const root = el("div", "vital");
     const k = el("span", "vital-k", label);
     markTerm(k, label);
-    const sp = sparkVital();
+    const sp = sparkline({ width: 54, height: 14 });
     const v = el("span", "vital-v", "");
     root.append(k, sp.root, v);
     return {
@@ -971,43 +971,6 @@ export class ShipPanel {
 }
 
 // ── ship-specific formatters ─────────────────────────────────────────────────
-const SVGNS = "http://www.w3.org/2000/svg";
-/** A small bare sparkline (for the vital rows; mirrors instruments.sparkline). */
-function sparkVital(): { root: HTMLElement; push(v: number): void; reset(): void } {
-  const w = 54, h = 14, n = 40;
-  const root = el("span", "ins-spark");
-  const s = document.createElementNS(SVGNS, "svg");
-  s.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  s.setAttribute("width", String(w));
-  s.setAttribute("height", String(h));
-  s.setAttribute("preserveAspectRatio", "none");
-  const poly = document.createElementNS(SVGNS, "polyline");
-  poly.setAttribute("class", "ins-spark-line");
-  s.appendChild(poly);
-  root.appendChild(s);
-  const buf: number[] = [];
-  function redraw(): void {
-    if (buf.length < 2) { poly.setAttribute("points", ""); return; }
-    let lo = Infinity, hi = -Infinity;
-    for (const v of buf) { if (v < lo) lo = v; if (v > hi) hi = v; }
-    const span = hi - lo || 1;
-    const step = w / (n - 1);
-    const start = n - buf.length;
-    let pts = "";
-    for (let i = 0; i < buf.length; i++) {
-      const x = (start + i) * step;
-      const y = h - 1 - ((buf[i]! - lo) / span) * (h - 2);
-      pts += `${x.toFixed(1)},${y.toFixed(1)} `;
-    }
-    poly.setAttribute("points", pts.trim());
-  }
-  return {
-    root,
-    push(v) { if (!isFinite(v)) return; buf.push(v); if (buf.length > n) buf.shift(); redraw(); },
-    reset() { buf.length = 0; poly.setAttribute("points", ""); },
-  };
-}
-
 function entryHeatRows(body: BodyDef, vOrbit: number): string {
   const vehicle: EntryVehicle = { noseRadius: 2, ballisticCoef: DEFAULT_ENTRY_BETA, emissivity: 0.85 };
   const e = entryTrajectory(body, vehicle, { entrySpeed: vOrbit, flightPathAngle: 6 * DEG });
