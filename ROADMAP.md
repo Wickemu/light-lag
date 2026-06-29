@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is the `@lightlag/engine` workspace package
-(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 723 passing
+(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 733 passing
 physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
@@ -74,24 +74,66 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-*(Last round's candidate #1 — **Follow ships in the interstellar view** — is now DONE: entering the
-interstellar map no longer hard-locks the camera on Sol; you can lock it onto a ship in transit and
-track it across the years, with a HUD **FOLLOW** selector (Sol + each in-transit craft). See "Done
-since last round" and "Interstellar sky / camera". The round before, **Parent-centric porkchop +
-eccentric capture everywhere** landed.)*
+*(Last round's candidate #2 — **Click-to-focus a star in the interstellar view** — is now DONE: you can
+click a star marker (or pick from a new HUD **STARS** list) to frame that system and read its
+name/distance/spectral class, reusing the same focus plumbing the ship follow uses. See "Done since
+last round" and "Interstellar sky / camera". The round before, candidate #1 — **Follow ships in the
+interstellar view** — landed.)*
 
 1. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
    DONE (a first cut — `packages/engine/src/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
    persistent depot stations, propellant boil-off, and a colony supplied within a transfer window.
    *(see Phase 7.)*
-2. **Click-to-focus a star in the interstellar view** — the follow-cam now retargets the
-   interstellar camera onto any render-space point (`SceneManager.setInterstellarFocus` /
-   `followInterstellar`), so the natural next step is a star pick: click a star marker (or pick from
-   the FOLLOW list) to frame that system and read its name/distance/spectral class, reusing the same
-   focus plumbing the ship follow uses. *(From the "Interstellar sky / camera" backlog.)*
+2. **Interstellar follow polish — eased transition + reconcile the in-system streak** — the
+   interstellar camera now follows a ship *or* a focused star, but it re-homes in a single frame
+   (the documented "interstellar re-homes instantly" semantics); a smooth eased transition into the
+   focus is the natural next step. Paired with it: reconcile the in-system ship in-transit streak
+   (still drawn on the legacy compressed shell just past Neptune) into this view, and an optional
+   faint deep-sky backdrop sourced from a **real** catalog (Hipparcos/Gaia bright stars) — explicitly
+   *not* a re-introduced procedural starfield. *(From the "Interstellar sky / camera" backlog.)*
 
 *(**Animated launch / landing trajectories** — candidate #3 two rounds ago — is now DONE; see the
 "Done since last round" note below.)*
+
+*(Done since last round: **Click-to-focus a star in the interstellar view**. Last round taught the
+interstellar camera to lock onto a ship in transit, but a STAR could not be selected — there was no
+way to frame a specific system or read its facts, even though the focus plumbing
+(`SceneManager.setInterstellarFocus` / `followInterstellar`) was generic and the selection field could
+already hold any id. This round lets you pick a star two ways and frames it through that very plumbing.
+**(1) Click a star marker.** A new `pointerdown`/`pointerup` tap handler on the shared canvas
+(`render/interstellarView.ts`) acts only on the interstellar map and only on a *tap* — a press that
+travels more than `DRAG_PX` between down and up was an OrbitControls orbit/zoom and is ignored, so the
+two pointer consumers never fight. A tap runs `pickStar`, which projects Sol + every star marker to
+screen pixels with the EXACT `placeLabel` projection and returns the nearest within `PICK_PX` via a
+pure, unit-tested `pickNearest` (a screen-space nearest-marker test deliberately replaces a
+`THREE.Raycaster`, which is unreliable against these `sizeAttenuation:false` screen-fixed sprites);
+the hit's id flows to `setInterstellarFocus`, with Sol's entry carrying `id:null` so clicking Sol
+recentres. Clicking empty space is a no-op (no accidental deselect — matching the ship-follow
+semantics). **(2) Pick from a HUD STARS list.** A new nav-dock **STARS** section (`ui/hud.ts`, shown
+only on the interstellar map, the FOLLOW-section pattern) lists the navigable systems nearest-first
+from a new pure `interstellarStarList()` read-only query (`app/commands.ts`, the
+`interstellarFleet`/`dockCandidates` shape); each button frames its system through the same `setFollow`
+→ `setInterstellarFocus` path a marker-click uses. **Framing + readout.** `InterstellarView.updateFocus`
+gained a star branch ahead of the ship branch: a focused star (resolved via `STAR_BY_ID`) is framed by
+the SAME `followInterstellar` shift-both trick (look-at and camera move together, so the user's zoom
+and orbit offset are preserved) and tracks the star's slow proper-motion drift; it never self-heals
+(a star can't be deleted), while a ship follow still drops back to Sol when its leg ends. The nav-dock
+footer doubles as a star readout (`showStarReadout`): live distance (it drifts under real proper
+motion), light-time from Sol, spectral type, luminosity, mass, and constellation. The focused star
+marker reads a touch larger (parity with the followed-ship marker). The selection field stays a single
+id: ship ids are `ship-N` and star ids are catalog slugs (`proxima`, …), disjoint id-spaces resolved
+by lookup, so no tagged union and no public-API churn (`R`, the Sol button, and a Sol click all clear
+via the existing `setInterstellarFocus(null)`). **The whole feature is render/UI — nothing reaches
+`WorldState`, so the golden hash is unmoved (`11f2c9fc7a5876`).** +9 tests
+(`render/interstellarView.test.ts`: the pure `pickNearest` — nearest within threshold, inclusive at
+the threshold, deterministic tie-break by array order, empty list, and a preserved `null` Sol
+sentinel; `app/interstellarFollow.test.ts`: `interstellarStarList` field shape, nearest-first order,
+and a deterministic list including a known nearby system); the camera framing, the world→screen
+projection, the pointer pick, and the readout need a WebGL+DOM context, so they are verified manually,
+as the ship follow-cam is. Still to do: a smooth eased transition into the focus (it re-homes in one
+frame today — now candidate #2); picking a specific binary component when its marker overlaps the
+primary (the STARS list exposes them, but the marker-pick takes whichever projects nearest); and
+reconciling the in-system in-transit streak into this view. *(Candidate #2.)*)*
 
 *(Done since last round: **Follow ships in the interstellar view — the camera no longer hard-locks on
 Sol**. Entering the interstellar map used to pin `controls.target` to the origin
@@ -710,8 +752,12 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   by the view's `updateFocus()` from the followed ship's scaled position) locks the camera
   onto a craft in transit and tracks it, shifting look-at + camera together so orbit/zoom
   are preserved; surfaced as a HUD **FOLLOW** selector (`interstellarFleet(world)`), pre-armed
-  on dispatch, cleared by `R`. Render/UI only ⇒ golden hash unmoved. Still to do: click-to-focus
-  a star in the interstellar view (now the focus plumbing exists — candidate #2); a smooth eased
+  on dispatch, cleared by `R`. Render/UI only ⇒ golden hash unmoved. **Click-to-focus a star — DONE:**
+  click a star marker (a screen-space nearest-marker pick reusing the `placeLabel` projection — robust
+  for the screen-fixed sprites a `THREE.Raycaster` handles poorly) or pick from a new nav-dock **STARS**
+  list (`interstellarStarList()`, nearest-first) to frame that system through the SAME `followInterstellar`
+  plumbing; the dock footer reads out its live distance / light-time / spectral type / luminosity / mass
+  (`showStarReadout`). Render/UI only ⇒ golden hash unmoved. Still to do: a smooth eased
   follow transition (it re-homes in one frame today); reconcile the in-system ship in-transit
   streak (still on the legacy compressed shell) into the interstellar view; an optional faint deep-sky
   backdrop sourced from a **real** catalog (e.g. Hipparcos/Gaia bright stars) — explicitly

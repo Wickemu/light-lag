@@ -19,7 +19,8 @@ import { surfaceGravity, escapeVelocity } from "@lightlag/engine/surface";
 import { period as orbitalPeriod } from "@lightlag/engine/math/kepler";
 import { length, distance } from "@lightlag/engine/math/vec3";
 import { formatDate } from "@lightlag/engine/time";
-import { interstellarFleet } from "../app/commands.ts";
+import { STAR_BY_ID, starPosition, LIGHT_YEAR, type StarDef } from "@lightlag/engine/stars";
+import { interstellarFleet, interstellarStarList } from "../app/commands.ts";
 import { el, button, kv } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
 import { popover, type Popover } from "./popover.ts";
@@ -106,6 +107,11 @@ export class Hud {
   private solFollowBtn!: HTMLButtonElement;
   private followButtons = new Map<string, HTMLButtonElement>();
   private followSig = "";
+  // Interstellar STARS picker (shown only on the interstellar map): one button per
+  // navigable system, nearest first. Static catalog ⇒ built once; clicking one
+  // frames that system, the same `setInterstellarFocus` path a marker-click uses.
+  private starSection!: HTMLElement;
+  private starButtons = new Map<string, HTMLButtonElement>();
 
   constructor(
     private root: HTMLElement,
@@ -208,6 +214,22 @@ export class Hud {
     this.followList.appendChild(this.solFollowBtn);
     this.followSection.appendChild(this.followList);
     dock.appendChild(this.followSection);
+
+    // Interstellar STARS picker — the always-available counterpart to clicking a
+    // star marker: a list of the navigable systems (nearest first), each framing
+    // its system on click. Shown only on the interstellar map (same gate as FOLLOW).
+    this.starSection = el("div", "nav-follow");
+    this.starSection.style.display = "none";
+    this.starSection.appendChild(el("div", "section-label", "STARS"));
+    const starList = el("div", "follow-list");
+    for (const s of interstellarStarList()) {
+      const b = button(`${s.name} · ${s.distanceLy.toFixed(2)} ly`, () => this.setFollow(s.id));
+      b.classList.add("body-btn", "follow-btn");
+      starList.appendChild(b);
+      this.starButtons.set(s.id, b);
+    }
+    this.starSection.appendChild(starList);
+    dock.appendChild(this.starSection);
 
     // Focused-body readout — pinned as the dock's non-scrolling footer, directly
     // under the body you just picked from the list above it.
@@ -468,6 +490,7 @@ export class Hud {
   private refreshFollow(): void {
     const interstellar = this.sm.viewMode === "interstellar";
     this.followSection.style.display = interstellar ? "block" : "none";
+    this.starSection.style.display = interstellar ? "block" : "none";
     if (!interstellar) return;
     const fleet = interstellarFleet(this.sim.world);
     const sig = fleet.map((f) => f.id).join(",");
@@ -489,6 +512,7 @@ export class Hud {
     const focus = this.sm.interstellarFocusId;
     this.solFollowBtn.classList.toggle("active", focus === null);
     for (const [id, b] of this.followButtons) b.classList.toggle("active", id === focus);
+    for (const [id, b] of this.starButtons) b.classList.toggle("active", id === focus);
   }
 
   focus(id: string): void {
@@ -545,6 +569,17 @@ export class Hud {
   }
 
   private updateFocusReadout(t: number): void {
+    // On the interstellar map a focused star takes over the dock footer (which
+    // doubles as the star readout there); otherwise it shows the in-system body.
+    if (this.sm.viewMode === "interstellar") {
+      const focusId = this.sm.interstellarFocusId;
+      const star = focusId ? STAR_BY_ID.get(focusId) : undefined;
+      if (star) {
+        this.showStarReadout(star, t);
+        return;
+      }
+    }
+
     const def = BODY_BY_ID.get(this.sm.focusId);
     if (!def) return;
     this.focusTitle.textContent = def.name;
@@ -591,6 +626,25 @@ export class Hud {
       lines.push(kv("Light-time from Earth", "— (you are here)"));
     }
 
+    this.focusBody.innerHTML = lines.join("");
+  }
+
+  /** Render the focused interstellar system into the dock footer: its live distance
+   *  (it drifts under real proper motion), light-time from Sol, spectral class,
+   *  luminosity and mass — the "frame that system and read its facts" half of the
+   *  click-to-focus feature. */
+  private showStarReadout(star: StarDef, t: number): void {
+    this.focusTitle.textContent = star.bayer ? `${star.name} (${star.bayer})` : star.name;
+    const dLy = length(starPosition(star, t)) / LIGHT_YEAR;
+    const lum = star.luminosity >= 1 ? star.luminosity.toFixed(2) : star.luminosity.toPrecision(2);
+    const lines = [
+      kv("Distance from Sol", `${dLy.toFixed(2)} ly`),
+      kv("Light-time from Sol", `${dLy.toFixed(2)} yr`),
+      kv("Spectral type", star.spectralType),
+      kv("Luminosity", `${lum} L☉`),
+      kv("Mass", `${star.massSun.toFixed(3)} M☉`),
+    ];
+    if (star.con) lines.push(kv("Constellation", star.con));
     this.focusBody.innerHTML = lines.join("");
   }
 

@@ -27,7 +27,7 @@ import { torchTransit, type InterstellarTransit } from "@lightlag/engine/maneuve
 import { assistTransfer, chainAssist, type AssistResult, type ChainAssistResult } from "@lightlag/engine/maneuver/assist";
 import { moonTour, type MoonTourResult } from "@lightlag/engine/maneuver/moonTour";
 export { searchMoonTour, type MoonTourResult, type MoonTourFlyby } from "@lightlag/engine/maneuver/moonTour";
-import { STAR_BY_ID, starPosition } from "@lightlag/engine/stars";
+import { STARS, STAR_BY_ID, starPosition } from "@lightlag/engine/stars";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
 } from "@lightlag/engine/surface";
@@ -1033,6 +1033,22 @@ export function interstellarFleet(world: WorldState): { id: string; name: string
     .filter((s) => s.interstellarLeg && s.status !== "lost")
     .map((s) => ({ id: s.id, name: s.name }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+}
+
+/**
+ * The navigable nearby-star catalog as a display list — `{id, name, distanceLy,
+ * spectralType}` sorted nearest-first (ties broken by id for a stable order). A
+ * pure read-only query over the static `STARS` catalog (no world access), the
+ * counterpart to `interstellarFleet`: it drives the HUD's interstellar STARS
+ * picker, where selecting an entry frames that system's camera. Render/UI only —
+ * it adds no world state and leaves the golden hash untouched. Includes
+ * multiple-system components (e.g. Proxima): their markers sit near their primary
+ * but they remain individually selectable.
+ */
+export function interstellarStarList(): { id: string; name: string; distanceLy: number; spectralType: string }[] {
+  return STARS
+    .map((s) => ({ id: s.id, name: s.name, distanceLy: s.distanceLy, spectralType: s.spectralType }))
+    .sort((a, b) => a.distanceLy - b.distanceLy || a.id.localeCompare(b.id));
 }
 
 export interface SpiralPlan {
