@@ -13,6 +13,7 @@ import {
   elementsToState,
   stateToElements,
   propagate,
+  meanMotion,
   wrapPi,
 } from "./math/kepler.ts";
 import { j2Rates, circularSpeed } from "./orbit.ts";
@@ -161,10 +162,11 @@ export function landedRelativeState(ship: Ship, t: number): State {
 
 /**
  * A coasting ship's osculating elements at time t, advanced by Kepler AND by the
- * primary's J2 secular precession (node, apsides, mean anomaly). The J2 rates are
- * constant, so this stays exact at any time-warp — a LEO orbit's node regresses
- * ~5°/day, its plane visibly rotating, with no integration. Spherical primaries
- * (no J2) reduce to plain Kepler.
+ * primary's J2 secular precession (node, apsides, mean anomaly), and — for a ship
+ * carrying a `drag` term — by a constant-rate secular atmospheric decay. Every rate
+ * here is constant, so this stays exact at any time-warp — a LEO orbit's node
+ * regresses ~5°/day, its plane visibly rotating, with no integration. Spherical
+ * primaries (no J2) and drag-free orbits reduce to plain Kepler.
  */
 export function coastElements(ship: Ship, t: number): KeplerElements {
   const mu = primaryMu(ship);
@@ -178,6 +180,16 @@ export function coastElements(ship: Ship, t: number): KeplerElements {
     el.Omega = wrapPi(el.Omega + r.nodeDot * dt);
     el.omega = wrapPi(el.omega + r.periDot * dt);
     el.M = wrapPi(el.M + r.anomalyDot * dt);
+  }
+  // Secular atmospheric drag (rung-1): a constant ṅ advances the along-track angle
+  // by ½·ṅ·dt² and shrinks the orbit consistently — n(t) = n0 + ṅ·dt, and n²a³ = μ
+  // gives a = a0·(n0/n)^⅔. Bound orbits only (an unbound flyby is not drag-modelled).
+  if (ship.drag && el.e < 1) {
+    const { nDot } = ship.drag;
+    el.M = wrapPi(el.M + 0.5 * nDot * dt * dt);
+    const n0 = meanMotion(el.a, mu);
+    const n = n0 + nDot * dt;
+    if (n > 0) el.a = el.a * Math.pow(n0 / n, 2 / 3);
   }
   return el;
 }
