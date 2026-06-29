@@ -8,6 +8,7 @@
   --ok: #5fd08a;
   --warn: #ffb454;
   --info: #4fd1e0;
+  --danger: #ff7a7a;
 }
 
 :root[data-theme="dark"] {
@@ -30,6 +31,7 @@
   --ok: #5fd08a;
   --warn: #ffb454;
   --info: #4fd1e0;
+  --danger: #ff7a7a;
 }
 
 :root[data-theme="light"] {
@@ -55,6 +57,7 @@
   --ok: #1f9d57;
   --warn: #b9701a;
   --info: #1488a8;
+  --danger: #c0392b;
 }
 
 * {
@@ -1224,6 +1227,138 @@ button.danger:hover {
 .scale-label-btn:hover::after {
   opacity: 0.8;
 }
+
+/* ── INSTRUMENTS ───────────────────────────────────────────────────────────────
+   The flight-console instrument primitives (instruments.ts): status pills, bar
+   meters, radial gauges, sparklines, keyed stat tables, and the mini-orbit SVG.
+   Every coloured part reads a single `--ins-c` custom property set per data-state,
+   so light/dark both work from the shared status tokens. ─────────────────────── */
+
+/* State → colour. Each component declares its own default --ins-c below; these
+   override it when a data-state is present. (Row values stay --text on neutral,
+   so they're intentionally excluded from the neutral rule.) */
+.ins-pill[data-state="ok"], .ins-meter-fill[data-state="ok"], .ins-gauge-arc[data-state="ok"], .ins-row-v[data-state="ok"] { --ins-c: var(--ok); }
+.ins-pill[data-state="warn"], .ins-meter-fill[data-state="warn"], .ins-gauge-arc[data-state="warn"], .ins-row-v[data-state="warn"] { --ins-c: var(--warn); }
+.ins-pill[data-state="danger"], .ins-meter-fill[data-state="danger"], .ins-gauge-arc[data-state="danger"], .ins-row-v[data-state="danger"] { --ins-c: var(--danger); }
+.ins-pill[data-state="info"], .ins-meter-fill[data-state="info"], .ins-gauge-arc[data-state="info"], .ins-row-v[data-state="info"] { --ins-c: var(--info); }
+.ins-pill[data-state="active"], .ins-meter-fill[data-state="active"], .ins-gauge-arc[data-state="active"], .ins-row-v[data-state="active"] { --ins-c: var(--accent); }
+.ins-pill[data-state="neutral"], .ins-meter-fill[data-state="neutral"], .ins-gauge-arc[data-state="neutral"] { --ins-c: var(--text-dim); }
+
+/* Status pill */
+.ins-pill {
+  --ins-c: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 10px;
+  color: var(--ins-c);
+  border: 1px solid color-mix(in srgb, var(--ins-c) 50%, transparent);
+  background: color-mix(in srgb, var(--ins-c) 14%, transparent);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* The big headline banner is a pill that fills the width and reads louder. */
+.ins-pill.banner {
+  display: flex;
+  width: 100%;
+  justify-content: flex-start;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 6px 10px;
+  border-radius: 7px;
+}
+.ins-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Bar meter */
+.ins-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ins-meter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+}
+.ins-meter-label { color: var(--text-dim); }
+.ins-meter-val { color: var(--text); font-variant-numeric: tabular-nums; }
+.ins-meter-track {
+  height: 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  overflow: hidden;
+}
+.ins-meter-fill {
+  --ins-c: var(--info);
+  height: 100%;
+  width: 0%;
+  border-radius: 4px;
+  background: var(--ins-c);
+  transition: width 0.18s ease;
+}
+@media (prefers-reduced-motion: reduce) { .ins-meter-fill { transition: none; } }
+
+/* Radial gauge */
+.ins-gauge { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.ins-gauge-track { fill: none; stroke: color-mix(in srgb, var(--text) 14%, transparent); stroke-width: 6; }
+.ins-gauge-arc {
+  --ins-c: var(--info);
+  fill: none;
+  stroke: var(--ins-c);
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.18s ease;
+}
+@media (prefers-reduced-motion: reduce) { .ins-gauge-arc { transition: none; } }
+.ins-gauge-text { fill: var(--text); font-family: var(--font); font-size: 14px; font-weight: 600; }
+.ins-gauge-sub { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); }
+
+/* Sparkline */
+.ins-spark { display: inline-flex; vertical-align: middle; }
+.ins-spark-line { fill: none; stroke: var(--accent); stroke-width: 1.2; opacity: 0.8; }
+
+/* Stat table */
+.ins-table { display: flex; flex-direction: column; }
+.ins-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  padding: 1.5px 0;
+}
+.ins-row-k { color: var(--text-dim); }
+.ins-row-v { --ins-c: var(--text); color: var(--ins-c); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* Mini-orbit diagram */
+.ins-orbit {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  padding: 2px;
+  line-height: 0;
+}
+.ins-orbit svg { display: block; }
+.ins-orbit-path { fill: none; stroke: color-mix(in srgb, var(--accent) 60%, transparent); stroke-width: 1.2; }
+.ins-orbit-escape { fill: none; stroke: var(--text-dim); stroke-width: 1; stroke-dasharray: 3 3; }
+.ins-orbit-primary { fill: color-mix(in srgb, var(--accent) 32%, var(--panel-bg)); stroke: var(--accent); stroke-width: 1; }
+.ins-orbit-ship { fill: var(--accent); stroke: var(--panel-bg); stroke-width: 1; }
+.ins-orbit-peri { fill: var(--ok); }
+.ins-orbit-apo { fill: var(--warn); }
+.ins-orbit-body { fill: var(--text-dim); }
+.ins-orbit-target { fill: var(--info); }
+.ins-orbit-arc, .ins-orbit-line { fill: none; stroke: color-mix(in srgb, var(--accent) 55%, transparent); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.ins-orbit-caption { fill: var(--text-dim); font-family: var(--font); font-size: 9px; letter-spacing: 0.5px; }
 
 /* ── Responsive: this is a desktop-first sim. These breakpoints keep the
    panels from overlapping or running off-screen on narrow windows/tablets,
