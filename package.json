@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@lightlag/engine": "*",
-    "satellite.js": "^7.0.1",
+    "satellite.js": "^5.0.0",
     "three": "^0.171.0"
   }
 }

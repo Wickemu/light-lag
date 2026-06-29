@@ -28,6 +28,8 @@ import { EventFeed } from "../ui/events.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
 import { InterstellarPanel } from "../ui/interstellarPanel.ts";
 import { KeyboardManager } from "../ui/keyboard.ts";
+import { Sandbox } from "../sandbox/sandbox.ts";
+import { SandboxPanel } from "../ui/sandboxPanel.ts";
 import { installTermTooltips } from "../ui/tooltip.ts";
 import { getFlag, setFlag } from "../ui/uiState.ts";
 import * as commands from "./commands.ts";
@@ -81,6 +83,11 @@ shipPanel.attachEventFeed(eventFeed);
 const missionHud = new MissionHud(uiRoot, sim, shipPanel, eventFeed);
 const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel, interstellarPanel, shipyard);
 
+// The sandbox layer (orbital playground): light-lag policy, live satellites, and
+// the replay transport. Additive — a self-contained panel + dock tab.
+const sandbox = new Sandbox(sim, renderOnce);
+const sandboxPanel = new SandboxPanel(uiRoot, sandbox, renderOnce);
+
 // Hover/focus glossary: one delegated listener over the whole overlay surfaces a
 // definition card for any term-tagged label (kv readouts, fields, headers, …).
 installTermTooltips(uiRoot);
@@ -111,6 +118,7 @@ function renderOnce(): void {
   shipPanel.update(world.t);
   eventFeed.update(world, world.t);
   missionHud.update(world.t);
+  sandboxPanel.update();
 }
 
 function frame(now: number): void {
@@ -118,7 +126,9 @@ function frame(now: number): void {
   lastReal = now;
   fps = fps * 0.9 + (1 / Math.max(dtReal, 1e-4)) * 0.1;
 
-  sim.advanceReal(dtReal); // 1) advance the sim
+  // 1) advance the sim — or, in a replay session, let the transport drive time.
+  if (sandbox.replay.active) sandbox.replay.tick(dtReal);
+  else sim.advanceReal(dtReal);
   km.tick(dtReal);          // 2) apply keyboard camera movement before render
   renderOnce(); // 3) render + HUD read the world
 
@@ -149,6 +159,8 @@ if (import.meta.env.DEV) {
     transferPanel,
     interstellarPanel,
     km,
+    sandbox,
+    sandboxPanel,
     commands,
     renderOnce,
     /** Advance sim by `s` seconds and redraw — lets tools drive frames without rAF. */

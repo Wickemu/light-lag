@@ -64,7 +64,9 @@ function temeToElements(
 }
 
 function elementsFromPv(pv: ReturnType<typeof propagate>): KeplerElements | null {
-  if (!pv) return null;
+  // satellite.js sets position/velocity to `false` when propagation errors
+  // (e.g. a decayed orbit, or far past the element set's validity).
+  if (!pv || typeof pv.position === "boolean" || typeof pv.velocity === "boolean") return null;
   return temeToElements(pv.position, pv.velocity);
 }
 

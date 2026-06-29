@@ -13,6 +13,12 @@ export default defineConfig({
   build: {
     target: "es2022",
   },
+  // Match the dev transform + dependency pre-bundle to the ES2022 baseline the
+  // engine and the production build already target. Without this, Vite's default
+  // dev target (es2020) rejects top-level await in deps (e.g. satellite.js's WASM
+  // entry), which only the dev server — not the es2022 production build — hit.
+  esbuild: { target: "es2022" },
+  optimizeDeps: { esbuildOptions: { target: "es2022" } },
   // Honour a PORT from the environment so dev/preview tooling can place the
   // server on an assigned free port; falls back to Vite's default otherwise.
   // Read via globalThis so this typechecks without pulling in @types/node.

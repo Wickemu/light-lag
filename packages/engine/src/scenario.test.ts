@@ -6,7 +6,7 @@ import { circularOrbit } from "./orbit.ts";
 import { BODY_BY_ID, DEG } from "./constants.ts";
 import { hashWorld, deserializeWorld } from "./serialize.ts";
 import {
-  snapshot, restore, serializeWorldLossless,
+  snapshot, restore, restoreInto, serializeWorldLossless,
   makeScenario, serializeScenario, deserializeScenario, loadScenario, evaluateObjective,
 } from "./scenario.ts";
 
@@ -102,6 +102,23 @@ describe("snapshot / restore equivalence", () => {
     const sim2 = restore(snap);
     sim2.step(5400);
     expect(hashWorld(sim2.world)).toBe(hUninterrupted);
+  });
+
+  it("restoreInto replaces an existing sim's state in place (same object identity)", () => {
+    const { sim } = leoSim();
+    sim.step(1200);
+    const snap = snapshot(sim);
+    const hAtSnap = hashWorld(sim.world);
+
+    // A different sim with unrelated contents; restoring in place must overwrite it.
+    const other = leoSim().sim;
+    other.world.ships.set("junk", other.world.ships.get("s1")!);
+    other.step(9999);
+    const worldRef = other.world; // capture identity
+    restoreInto(other, snap);
+
+    expect(other.world).toBe(worldRef); // same object, mutated in place
+    expect(hashWorld(other.world)).toBe(hAtSnap);
   });
 });
 

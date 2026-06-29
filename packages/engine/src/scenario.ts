@@ -198,3 +198,10 @@ export function deserializeScenario(str: string): Scenario {
 export function loadScenario(s: Scenario): Simulation {
   return restore(s.snapshot);
 }
+
+/** Restore a snapshot INTO an existing simulation (in place — keeps `world`/
+ *  `events` object identity, so live renderer/UI references stay valid). The
+ *  replay-scrub path; use `restore` when a fresh `Simulation` is wanted. */
+export function restoreInto(sim: Simulation, snap: SimSnapshot): void {
+  sim.loadState(deserializeWorld(snap.world), snap.events, snap.warpIndex);
+}

@@ -55,6 +55,12 @@ const MAX_SEG_RAPIDITY = 1e6;
  *  the sub-step count per frame stays bounded. */
 const THRUST_WARP_CAP = 60;
 
+/** Replace a Map's contents in place (keeps the same Map instance). */
+function copyMap<V>(dst: Map<string, V>, src: Map<string, V>): void {
+  dst.clear();
+  for (const [k, v] of src) dst.set(k, v);
+}
+
 export class Simulation {
   readonly world: WorldState;
   readonly events = new EventQueue();
@@ -79,6 +85,32 @@ export class Simulation {
     // restored from a save), so a reconstructed sim never re-mints a live id and
     // mis-delivers via deliverMessage's id lookup.
     for (const m of world.messages) {
+      const n = Number(m.id.replace(/^msg-/, ""));
+      if (Number.isFinite(n) && n >= this.msgCounter) this.msgCounter = n + 1;
+    }
+  }
+
+  /**
+   * Replace this simulation's entire state IN PLACE — same `world`/`events`
+   * object identity, so every renderer/UI reference stays valid. This is the live
+   * save-restore / replay-scrub path (the constructor builds a fresh sim from a
+   * world). Re-seeds the message-id counter from the restored messages, exactly as
+   * the constructor does, so a later sendCommand can't re-mint a live id.
+   */
+  loadState(world: WorldState, events: SimEvent[], warpIndex = this.warpIndex): void {
+    const w = this.world;
+    w.t = world.t;
+    w.seed = world.seed;
+    w.controlNode = world.controlNode;
+    copyMap(w.ships, world.ships);
+    copyMap(w.stations, world.stations);
+    copyMap(w.maneuvers, world.maneuvers);
+    w.messages.length = 0;
+    w.messages.push(...world.messages);
+    this.events.load(events);
+    this.warpIndex = warpIndex;
+    this.msgCounter = 0;
+    for (const m of w.messages) {
       const n = Number(m.id.replace(/^msg-/, ""));
       if (Number.isFinite(n) && n >= this.msgCounter) this.msgCounter = n + 1;
     }

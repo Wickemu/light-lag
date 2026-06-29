@@ -22,6 +22,7 @@ import { overlayPalette, dopplerTint } from "./overlayUtil.ts";
 const COAST_COLOR = 0x6fe0ff;
 const THRUST_COLOR = 0xff8a30;
 const LOST_COLOR = 0x9a6b6b; // a dim, dead red for a destroyed wreck
+const SATELLITE_COLOR = 0x9fb4c8; // pale steel — ingested real satellites (read-only infrastructure)
 
 function makeDotTexture(): THREE.Texture {
   const size = 64;
@@ -109,7 +110,10 @@ export class ShipViews {
       vis.marker.visible = true; // may have been parked while the layer was off
       const thrusting = ship.mode === "thrust";
       const lost = ship.status === "lost";
-      const base = lost ? LOST_COLOR : thrusting ? THRUST_COLOR : COAST_COLOR;
+      // Ingested real satellites (sat-<norad>) are passive infrastructure: a
+      // smaller, pale-steel marker that reads distinctly from player craft.
+      const isSat = ship.id.startsWith("sat-");
+      const base = lost ? LOST_COLOR : thrusting ? THRUST_COLOR : isSat ? SATELLITE_COLOR : COAST_COLOR;
       // Doppler tint (opt-in layer): red receding / blue approaching, from the
       // control node's vantage. Render-only; invisible at planetary speeds.
       let color = base;
@@ -118,8 +122,10 @@ export class ShipViews {
         if (dop) color = dopplerTint(base, dop.z, overlayPalette(this.sm.theme), this.tintBase, this.tintEnd);
       }
       (vis.marker.material as THREE.SpriteMaterial).color.setHex(color);
-      // Enlarge the focused ship's marker so it stands out among the bodies.
-      vis.marker.scale.setScalar(this.sm.focusId === ship.id ? 0.018 * 1.6 : 0.018);
+      // Enlarge the focused ship's marker so it stands out among the bodies;
+      // satellites ride a touch smaller as passive infrastructure.
+      const baseScale = isSat ? 0.012 : 0.018;
+      vis.marker.scale.setScalar(this.sm.focusId === ship.id ? baseScale * 1.6 : baseScale);
 
       const leg = ship.interstellarLeg;
       const star = leg ? STAR_BY_ID.get(leg.targetStar) : undefined;
