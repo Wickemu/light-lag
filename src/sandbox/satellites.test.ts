@@ -50,34 +50,52 @@ describe("spawnSatellite", () => {
     expect(ship.elements!.i * RAD2DEG).toBeLessThan(52.0);
   });
 
-  it("carries the TLE's secular drag rate (rung-1 ṅ) onto the ship", () => {
+  it("records the natural decay rate (rung-1 ṅ) and marks the satellite station-kept", () => {
     const epochMs = Date.UTC(2008, 0, 1) + (264.51782528 - 1) * 86400 * 1000;
     const tEpoch = (epochMs - Date.UTC(2000, 0, 1, 12)) / 1000;
     const sim = new Simulation(createWorld(1, tEpoch, "earth"));
     const ship = sim.world.ships.get(spawnSatellite(sim, ISS)!)!;
 
-    // This archival ISS set has a NEGATIVE ṅ/2 (-.00002182 rev/day², a post-reboost
-    // fit artifact) — we faithfully carry the source rate, sign and all. SI magnitude:
-    // |−.00002182·2·2π / 86400²| ≈ 3.7e-14 rad/s².
+    // Real catalog sats are maintained ⇒ station-kept (no spiral-in / balloon-out).
+    expect(ship.stationKept).toBe(true);
+    // The natural decay rate is still recorded (the basis for future station-keeping
+    // Δv). This archival ISS set has a NEGATIVE ṅ/2 (-.00002182 rev/day², a post-reboost
+    // fit artifact) — carried faithfully. SI magnitude |·2·2π/86400²| ≈ 3.7e-14 rad/s².
     expect(ship.drag).toBeDefined();
     expect(ship.drag!.nDot).toBeLessThan(0);
     expect(Math.abs(ship.drag!.nDot)).toBeGreaterThan(1e-14);
     expect(Math.abs(ship.drag!.nDot)).toBeLessThan(1e-13);
   });
 
-  it("drag advances the along-track angle by ½·ṅ·dt² and decays the SMA", () => {
+  it("station-kept satellite HOLDS its orbit — no secular decay even years on", () => {
     const epochMs = Date.UTC(2008, 0, 1) + (264.51782528 - 1) * 86400 * 1000;
     const tEpoch = (epochMs - Date.UTC(2000, 0, 1, 12)) / 1000;
     const sim = new Simulation(createWorld(1, tEpoch, "earth"));
     const ship = sim.world.ships.get(spawnSatellite(sim, ISS)!)!;
-    const dragFree: Ship = { ...ship, drag: undefined };
+    const a0 = ship.elements!.a;
+
+    // Kepler + J2 leave the semi-major axis untouched, and station-keeping suppresses
+    // the drag decay — so the SMA is unchanged 5 years out (no crash, no balloon).
+    const a5y = coastElements(ship, tEpoch + 5 * 365.25 * 86400).a;
+    expect(a5y).toBeCloseTo(a0, 3);
+  });
+
+  it("the un-kept drag primitive still advances ½·ṅ·dt² along-track and decays the SMA", () => {
+    const epochMs = Date.UTC(2008, 0, 1) + (264.51782528 - 1) * 86400 * 1000;
+    const tEpoch = (epochMs - Date.UTC(2000, 0, 1, 12)) / 1000;
+    const sim = new Simulation(createWorld(1, tEpoch, "earth"));
+    const base = sim.world.ships.get(spawnSatellite(sim, ISS)!)!;
+    // Exercise the engine drag model directly: an object that is NOT station-kept
+    // (e.g. debris) — same TLE rate, station-keeping off.
+    const active: Ship = { ...base, stationKept: false };
+    const dragFree: Ship = { ...active, drag: undefined };
 
     const dt = 2 * 86400; // 2 days
-    const withDrag = coastElements(ship, tEpoch + dt);
+    const withDrag = coastElements(active, tEpoch + dt);
     const without = coastElements(dragFree, tEpoch + dt);
 
     // Mean anomaly leads/lags the drag-free conic by exactly ½·ṅ·dt² (mod 2π).
-    const nDot = ship.drag!.nDot;
+    const nDot = active.drag!.nDot;
     const dMexpected = 0.5 * nDot * dt * dt;
     const dM = Math.atan2(
       Math.sin(withDrag.M - without.M),

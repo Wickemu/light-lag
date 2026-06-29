@@ -413,24 +413,39 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
 
 ## Backlog — known engine gaps (future layers)
 
-- **Satellite drag fidelity (rung 2)** — **Rung 1 DONE:** ingested TLE satellites
-  coast under a closed-form secular drag — the TLE's measured ṅ carried onto
-  `Ship.drag` and applied in `coastElements` as `M += ½·ṅ·dt²` along-track plus the
-  consistent SMA decay (`n²a³ = μ`). Constant rate ⇒ exact at any time-warp, no
-  integration; captures the dominant multi-day along-track drift. What it can't do:
-  hold a *constant* rate misses the decay **runaway** as perigee drops, and it has no
-  handle for space-weather variation. **Rung 2 (future):** replace the constant ṅ with
-  an altitude- and activity-driven rate — a King-Hele averaged-element decay from an
-  exponential / Harris-Priester atmosphere `ρ(a)`, scaled by the object's ballistic
-  coefficient (recoverable from the TLE's `B*`) and modulated by solar flux (F10.7) and
-  the geomagnetic index. Cost: a cheap per-orbit integration (crosses the engine's
-  "no-integration / closed-form" line, so gate it to drag-flagged ships). Pairs with a
-  *live-present* TLE re-poll (re-anchor `elements`+`epoch` and refresh `B*`/F10.7 when
-  the sim clock tracks now); re-polling does nothing under time-warp, where the
-  propagation model is all you have. The honest alternative for max fidelity is to keep
-  the `SatRec` and propagate satellites through SGP4 itself (app-layer, not engine
-  ships) — collapses drift to the irreducible SGP4-vs-reality floor at the cost of
-  serialize/replay determinism for those objects.
+- **Satellite drag fidelity (rung 2)** — **Rung 1 DONE:** the engine has a closed-form
+  secular drag — the TLE's measured ṅ carried onto `Ship.drag` and applied in
+  `coastElements` as `M += ½·ṅ·dt²` along-track plus the consistent SMA decay
+  (`n²a³ = μ`). Constant rate ⇒ exact at any time-warp, no integration; captures the
+  dominant along-track drift. **Ingested satellites are now `stationKept` (DONE)** so
+  the decay is *suppressed* for them — a constant near-epoch rate extrapolated forever
+  otherwise spirals every positive-ṅ object into the planet (and balloons every
+  negative-ṅ fit outward), which is wrong for *maintained* craft; the recorded ṅ is kept
+  as the natural decay (input to station-keeping Δv, below). The un-kept model still runs
+  for objects that genuinely decay. What rung 1 can't do for those: a *constant* rate
+  misses the decay **runaway** as perigee drops, and has no handle for space-weather.
+  **Rung 2 (future):** replace the constant ṅ with an altitude- and activity-driven rate
+  — a King-Hele averaged-element decay from an exponential / Harris-Priester atmosphere
+  `ρ(a)`, scaled by the object's ballistic coefficient (recoverable from the TLE's `B*`)
+  and modulated by solar flux (F10.7) and the geomagnetic index. Cost: a cheap per-orbit
+  integration (crosses the engine's "no-integration / closed-form" line, so gate it to
+  drag-flagged ships). Pairs with a *live-present* TLE re-poll (re-anchor `elements`+
+  `epoch` and refresh `B*`/F10.7 when the sim clock tracks now); re-polling does nothing
+  under time-warp, where the propagation model is all you have. The honest alternative
+  for max fidelity is to keep the `SatRec` and propagate satellites through SGP4 itself
+  (app-layer, not engine ships) — collapses drift to the irreducible SGP4-vs-reality
+  floor at the cost of serialize/replay determinism for those objects.
+- **Player-ship station-keeping (Δv-accounted)** — `Ship.stationKept` today is the FREE,
+  implicit-burn model: `coastElements` simply suppresses the drag decay. Correct for
+  catalog satellites (maintained in reality, no propellant we track), but a player-built
+  ship that one day experiences drag (rung-2, once player orbits are drag-flagged) should
+  instead PAY for it: automatically spend preserved Δv to hold its orbit, sized from the
+  orbit's natural decay rate (`drag.nDot` → an along-track/SMA make-up budget, ~the drag
+  Δv per year at that altitude). Surface the reserved station-keeping Δv in the ship
+  console and refuse/age-out a ship that can no longer afford to hold station (it then
+  reverts to an un-kept decaying coast → eventual reentry via the existing
+  `impactTime`/`crashShip` path). Until player orbits carry drag, there is nothing to
+  counter, so this is purely future work.
 - **Spacecraft hazards & lifecycle** — surface-impact loss is DONE for coasting conics
   (`sim.impactTime`/`crashShip`: a ship whose orbit dips below the primary's radius is
   destroyed at the analytic surface crossing and frozen as a wreck). Follow-ups:
