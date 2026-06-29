@@ -10,10 +10,10 @@
  */
 
 import * as THREE from "three";
-import { type WorldState } from "../core/world.ts";
-import { shipWorldState, shipTelemetryDoppler } from "../core/ships.ts";
-import { STAR_BY_ID } from "../core/stars.ts";
-import { length } from "../core/math/vec3.ts";
+import { type WorldState } from "@lightlag/engine/world";
+import { shipWorldState, shipTelemetryDoppler } from "@lightlag/engine/ships";
+import { STAR_BY_ID } from "@lightlag/engine/stars";
+import { length } from "@lightlag/engine/math/vec3";
 import { SKY_RADIUS, starDirection } from "./starViews.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";

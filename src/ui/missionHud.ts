@@ -9,7 +9,7 @@
  * so a hidden panel is always recoverable without the keyboard.
  */
 
-import { type Simulation } from "../core/sim.ts";
+import { type Simulation } from "@lightlag/engine/sim";
 import type { ShipPanel } from "./shipPanel.ts";
 import { type EventFeed } from "./events.ts";
 import {
@@ -18,12 +18,12 @@ import {
   shipWorldState,
   shipOsculatingElements,
   primaryMu,
-} from "../core/ships.ts";
-import { summarizeOrbit } from "../core/orbit.ts";
-import { bodyPosition } from "../core/ephemeris.ts";
-import { retardedTime } from "../core/comms.ts";
-import { BODY_BY_ID } from "../core/constants.ts";
-import { length } from "../core/math/vec3.ts";
+} from "@lightlag/engine/ships";
+import { summarizeOrbit } from "@lightlag/engine/orbit";
+import { bodyPosition } from "@lightlag/engine/ephemeris";
+import { retardedTime } from "@lightlag/engine/comms";
+import { BODY_BY_ID } from "@lightlag/engine/constants";
+import { length } from "@lightlag/engine/math/vec3";
 import { el, button } from "./dom.ts";
 import { statPill, statTable, miniOrbit, type StatPill, type StatTable, type MiniOrbit } from "./instruments.ts";
 import { bannerOf, orbitViewOf, orbitCaptionOf, fmtDelay } from "./shipStatus.ts";

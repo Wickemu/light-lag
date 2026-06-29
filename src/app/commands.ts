@@ -7,31 +7,31 @@
  * propagates at c — but the call sites here stay the same.
  */
 
-import { type Simulation } from "../core/sim.ts";
-import { type Ship, type WorldState, type BurnDir, type BurnGoal, type ShipTransfer, type PoweredSample } from "../core/world.ts";
-import { type Stage, exhaustVelocity, thrustAt, brachistochrone, stageLiftoffThrust, stageLiftoffExhaust } from "../core/propulsion.ts";
-import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "../core/orbit.ts";
-import { hohmann } from "../core/maneuver/hohmann.ts";
-import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, inertialDirToSurface, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "../core/ships.ts";
-import { dockState, isDockable, transferProp, mergeStacks, shipPropAvailable, shipPropHeadroom } from "../core/refuel.ts";
-import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "../core/maneuver/entry.ts";
-import { aimMoonArrival } from "../core/maneuver/arrival.ts";
-export { searchMoonWindow, type MoonWindow } from "../core/maneuver/moon.ts";
-import { outboundClearsParent } from "../core/maneuver/moon.ts";
-import { edelbaumTransfer } from "../core/maneuver/lowThrust.ts";
-import { wrapPi } from "../core/math/kepler.ts";
-import { torchTransit, type InterstellarTransit } from "../core/maneuver/interstellar.ts";
-import { assistTransfer, chainAssist, type AssistResult, type ChainAssistResult } from "../core/maneuver/assist.ts";
-import { moonTour, type MoonTourResult } from "../core/maneuver/moonTour.ts";
-export { searchMoonTour, type MoonTourResult, type MoonTourFlyby } from "../core/maneuver/moonTour.ts";
-import { STAR_BY_ID, starPosition } from "../core/stars.ts";
+import { type Simulation } from "@lightlag/engine/sim";
+import { type Ship, type WorldState, type BurnDir, type BurnGoal, type ShipTransfer, type PoweredSample } from "@lightlag/engine/world";
+import { type Stage, exhaustVelocity, thrustAt, brachistochrone, stageLiftoffThrust, stageLiftoffExhaust } from "@lightlag/engine/propulsion";
+import { circularOrbit, hyperbolicBurnDv, ellipticalCaptureDv, periapsisRadius, soiRadius } from "@lightlag/engine/orbit";
+import { hohmann } from "@lightlag/engine/maneuver/hohmann";
+import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, inertialDirToSurface, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "@lightlag/engine/ships";
+import { dockState, isDockable, transferProp, mergeStacks, shipPropAvailable, shipPropHeadroom } from "@lightlag/engine/refuel";
+import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "@lightlag/engine/maneuver/entry";
+import { aimMoonArrival } from "@lightlag/engine/maneuver/arrival";
+export { searchMoonWindow, type MoonWindow } from "@lightlag/engine/maneuver/moon";
+import { outboundClearsParent } from "@lightlag/engine/maneuver/moon";
+import { edelbaumTransfer } from "@lightlag/engine/maneuver/lowThrust";
+import { wrapPi } from "@lightlag/engine/math/kepler";
+import { torchTransit, type InterstellarTransit } from "@lightlag/engine/maneuver/interstellar";
+import { assistTransfer, chainAssist, type AssistResult, type ChainAssistResult } from "@lightlag/engine/maneuver/assist";
+import { moonTour, type MoonTourResult } from "@lightlag/engine/maneuver/moonTour";
+export { searchMoonTour, type MoonTourResult, type MoonTourFlyby } from "@lightlag/engine/maneuver/moonTour";
+import { STAR_BY_ID, starPosition } from "@lightlag/engine/stars";
 import {
   ascentBudget, descentBudget, surfaceManeuverCost, type AscentParams,
-} from "../core/surface.ts";
-import { bodyState, bodyStateRelative, bodyElements } from "../core/ephemeris.ts";
-import { lambert } from "../core/maneuver/lambert.ts";
-import { length, sub, normalize, distance } from "../core/math/vec3.ts";
-import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT, type BodyDef } from "../core/constants.ts";
+} from "@lightlag/engine/surface";
+import { bodyState, bodyStateRelative, bodyElements } from "@lightlag/engine/ephemeris";
+import { lambert } from "@lightlag/engine/maneuver/lambert";
+import { length, sub, normalize, distance } from "@lightlag/engine/math/vec3";
+import { BODY_BY_ID, DEG, MU_SUN, C, JULIAN_YEAR, DEFAULT_CAPTURE_ALT, type BodyDef } from "@lightlag/engine/constants";
 
 export interface ShipDesign {
   name: string;

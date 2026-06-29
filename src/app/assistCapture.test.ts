@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import {
   spawnShip, planAssist, planChainAssist, assistCapturePreview, looseCaptureApoAlt, type ShipDesign,
 } from "./commands.ts";
-import { searchAssist } from "../core/maneuver/assist.ts";
-import { shipOsculatingElements } from "../core/ships.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { BODY_BY_ID, JULIAN_YEAR, DAY } from "../core/constants.ts";
+import { searchAssist } from "@lightlag/engine/maneuver/assist";
+import { shipOsculatingElements } from "@lightlag/engine/ships";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { BODY_BY_ID, JULIAN_YEAR, DAY } from "@lightlag/engine/constants";
 
 // A high-Δv craft so injection + flyby never mask the capture comparison.
 function bigDesign(): ShipDesign {

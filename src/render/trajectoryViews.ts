@@ -15,12 +15,12 @@
  */
 
 import * as THREE from "three";
-import { type WorldState } from "../core/world.ts";
-import { type Simulation } from "../core/sim.ts";
-import { shipForecastPath, type SampledPath } from "../core/trajectory.ts";
-import { planRoute, type PlannedRoute, type RouteArgs } from "../core/route.ts";
-import { bodyState } from "../core/ephemeris.ts";
-import { BODY_BY_ID, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
+import { type WorldState } from "@lightlag/engine/world";
+import { type Simulation } from "@lightlag/engine/sim";
+import { shipForecastPath, type SampledPath } from "@lightlag/engine/trajectory";
+import { planRoute, type PlannedRoute, type RouteArgs } from "@lightlag/engine/route";
+import { bodyState } from "@lightlag/engine/ephemeris";
+import { BODY_BY_ID, DEFAULT_CAPTURE_ALT } from "@lightlag/engine/constants";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
 import { RenderPolyline, fillPolylineLocal, fillPolylineWorld, overlayPalette } from "./overlayUtil.ts";

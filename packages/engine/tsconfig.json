@@ -1,0 +1,32 @@
+{
+  // Standalone, DOM-free typecheck for the engine. This is the boundary gate:
+  // because `lib` is ES2022 ONLY (no "DOM"), any accidental dependency on the
+  // browser, a renderer, or the game layer fails to compile here. CI runs this
+  // (`npm run typecheck:engine`) so the engine cannot silently re-couple.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022"],
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "useDefineForClassFields": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+
+    "skipLibCheck": true,
+    "types": []
+  },
+  // The gate proves the SHIPPED engine source is DOM-free and game-free. Test
+  // files are dev-only (they use `console`, vitest, etc.) and are typechecked
+  // with full DOM/strict settings by the root tsconfig instead.
+  "include": ["src"],
+  "exclude": ["**/*.test.ts"]
+}

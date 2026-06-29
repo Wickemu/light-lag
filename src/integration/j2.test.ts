@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { j2Rates, sunSyncInclination, specificEnergy } from "./orbit.ts";
-import { createWorld } from "./world.ts";
-import { Simulation } from "./sim.ts";
+import { j2Rates, sunSyncInclination, specificEnergy } from "@lightlag/engine/orbit";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, defaultDesign } from "../app/commands.ts";
-import { shipOsculatingElements } from "./ships.ts";
-import { BODIES, BODY_BY_ID, DAY, DEG, RAD, j2RefRadius } from "./constants.ts";
+import { shipOsculatingElements } from "@lightlag/engine/ships";
+import { BODIES, BODY_BY_ID, DAY, DEG, RAD, j2RefRadius } from "@lightlag/engine/constants";
 
 const EARTH = BODY_BY_ID.get("earth")!;
 const degPerDay = (radPerSec: number) => radPerSec * RAD * DAY;

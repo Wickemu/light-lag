@@ -12,10 +12,10 @@
  */
 
 import * as THREE from "three";
-import { type WorldState } from "../core/world.ts";
-import { bodyForceBreakdown, shipForceBreakdown, type ForceBreakdown } from "../core/forces.ts";
-import { BODY_BY_ID } from "../core/constants.ts";
-import { normalize } from "../core/math/vec3.ts";
+import { type WorldState } from "@lightlag/engine/world";
+import { bodyForceBreakdown, shipForceBreakdown, type ForceBreakdown } from "@lightlag/engine/forces";
+import { BODY_BY_ID } from "@lightlag/engine/constants";
+import { normalize } from "@lightlag/engine/math/vec3";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
 import { RenderArrow, screenLengthUnits, overlayPalette } from "./overlayUtil.ts";

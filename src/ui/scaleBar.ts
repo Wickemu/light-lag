@@ -9,7 +9,7 @@
 
 import type { SceneManager } from "../render/SceneManager.ts";
 import { SCENE_SCALE } from "../render/scale.ts";
-import { AU, C } from "../core/constants.ts";
+import { AU, C } from "@lightlag/engine/constants";
 
 interface Unit {
   key: string;

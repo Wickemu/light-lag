@@ -20,7 +20,7 @@
  */
 
 import * as THREE from "three";
-import type { Simulation } from "../core/sim.ts";
+import type { Simulation } from "@lightlag/engine/sim";
 import type { SceneManager } from "../render/SceneManager.ts";
 import type { Hud } from "./hud.ts";
 import type { ShipPanel } from "./shipPanel.ts";

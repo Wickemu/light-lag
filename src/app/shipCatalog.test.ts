@@ -7,8 +7,8 @@
 
 import { describe, it, expect } from "vitest";
 import { SHIP_PRESETS, PRESETS_BY_ID, presetToDesign } from "./shipCatalog.ts";
-import { deltaVBudget, exhaustVelocity, stageLiftoffThrust } from "../core/propulsion.ts";
-import { C } from "../core/constants.ts";
+import { deltaVBudget, exhaustVelocity, stageLiftoffThrust } from "@lightlag/engine/propulsion";
+import { C } from "@lightlag/engine/constants";
 
 /** Faithfulness ceiling: classical Tsiolkovsky is only honest well below c. Every
  *  real/inferred craft in the fleet sits comfortably under these; the relativistic

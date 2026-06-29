@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, planChainAssist, type ShipDesign } from "./commands.ts";
-import { searchChain } from "../core/maneuver/assist.ts";
-import { shipWorldState } from "../core/ships.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { bodyState } from "../core/ephemeris.ts";
-import { BODY_BY_ID, MU_SUN, JULIAN_YEAR, DAY, AU } from "../core/constants.ts";
-import { length } from "../core/math/vec3.ts";
+import { searchChain } from "@lightlag/engine/maneuver/assist";
+import { shipWorldState } from "@lightlag/engine/ships";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { bodyState } from "@lightlag/engine/ephemeris";
+import { BODY_BY_ID, MU_SUN, JULIAN_YEAR, DAY, AU } from "@lightlag/engine/constants";
+import { length } from "@lightlag/engine/math/vec3";
 
 // A high-Δv tour ship (~18.8 km/s) so it can afford the injection plus two flyby
 // residuals on an Earth→Mars→Jupiter→Saturn chain.

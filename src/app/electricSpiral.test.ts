@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, planSpiral, type ShipDesign } from "./commands.ts";
-import { shipOsculatingElements, dvRemaining } from "../core/ships.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { BODY_BY_ID, DAY } from "../core/constants.ts";
-import { type Stage } from "../core/propulsion.ts";
+import { shipOsculatingElements, dvRemaining } from "@lightlag/engine/ships";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { BODY_BY_ID, DAY } from "@lightlag/engine/constants";
+import { type Stage } from "@lightlag/engine/propulsion";
 
 const EARTH = BODY_BY_ID.get("earth")!;
 const GEO_ALT = 35786; // km

@@ -9,16 +9,16 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createWorld, type Ship } from "./world.ts";
-import { Simulation } from "./sim.ts";
+import { createWorld, type Ship } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, defaultDesign, planTransfer } from "../app/commands.ts";
-import { shipRelativeState, shipWorldState, shipOsculatingElements, dvRemaining } from "./ships.ts";
-import { orbitalPeriod, specificEnergy, soiRadius } from "./orbit.ts";
-import { bodyState, bodyElements } from "./ephemeris.ts";
-import { stateToElements } from "./math/kepler.ts";
-import { length, cross, add, distance } from "./math/vec3.ts";
-import { BODY_BY_ID, DAY, MU_SUN, DEFAULT_CAPTURE_ALT } from "./constants.ts";
-import { hashWorld, serializeWorld, deserializeWorld } from "./serialize.ts";
+import { shipRelativeState, shipWorldState, shipOsculatingElements, dvRemaining } from "@lightlag/engine/ships";
+import { orbitalPeriod, specificEnergy, soiRadius } from "@lightlag/engine/orbit";
+import { bodyState, bodyElements } from "@lightlag/engine/ephemeris";
+import { stateToElements } from "@lightlag/engine/math/kepler";
+import { length, cross, add, distance } from "@lightlag/engine/math/vec3";
+import { BODY_BY_ID, DAY, MU_SUN, DEFAULT_CAPTURE_ALT } from "@lightlag/engine/constants";
+import { hashWorld, serializeWorld, deserializeWorld } from "@lightlag/engine/serialize";
 import { marsWindow, buildGoldenScenario, flyUntilCoast } from "./test-helpers.ts";
 
 const MU_EARTH = BODY_BY_ID.get("earth")!.mu;

@@ -3,12 +3,16 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "A physics-true Solar-System strategy sim. Nothing is hand-waved.",
+  "description": "A physics-true Solar-System strategy sim. Nothing is hand-waved. The game layer at the repo root; the reusable physics engine lives in packages/engine (@lightlag/engine).",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "typecheck:engine": "tsc --noEmit -p packages/engine",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -19,6 +23,7 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
+    "@lightlag/engine": "*",
     "three": "^0.171.0"
   }
 }

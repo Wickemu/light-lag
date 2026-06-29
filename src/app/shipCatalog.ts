@@ -33,8 +33,8 @@
  */
 
 import { type ShipDesign } from "./commands.ts";
-import { type Stage, type Booster, exhaustVelocity } from "../core/propulsion.ts";
-import { C } from "../core/constants.ts";
+import { type Stage, type Booster, exhaustVelocity } from "@lightlag/engine/propulsion";
+import { C } from "@lightlag/engine/constants";
 
 export type PresetCategory = "Historical" | "Current" | "Prototype" | "Sci-Fi";
 

@@ -17,9 +17,9 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-import { type Vec3, vec3 } from "../core/math/vec3.ts";
-import { bodyPosition } from "../core/ephemeris.ts";
-import { BODY_BY_ID } from "../core/constants.ts";
+import { type Vec3, vec3 } from "@lightlag/engine/math/vec3";
+import { bodyPosition } from "@lightlag/engine/ephemeris";
+import { BODY_BY_ID } from "@lightlag/engine/constants";
 import { metersToUnits, worldToRender } from "./scale.ts";
 
 export type Theme = "dark" | "light";

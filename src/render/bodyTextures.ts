@@ -21,7 +21,7 @@
  */
 
 import * as THREE from "three";
-import { type BodyDef, type BodyKind } from "../core/constants.ts";
+import { type BodyDef, type BodyKind } from "@lightlag/engine/constants";
 import { LAND_POLYS } from "./earthLand.ts";
 import { BODY_FEATURES } from "./bodyFeatures.ts";
 

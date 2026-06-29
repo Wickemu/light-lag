@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, planAssist, type ShipDesign } from "./commands.ts";
-import { searchAssist } from "../core/maneuver/assist.ts";
-import { shipWorldState } from "../core/ships.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "../core/serialize.ts";
-import { bodyState } from "../core/ephemeris.ts";
-import { BODY_BY_ID, MU_SUN, JULIAN_YEAR, DAY, AU } from "../core/constants.ts";
-import { length } from "../core/math/vec3.ts";
+import { searchAssist } from "@lightlag/engine/maneuver/assist";
+import { shipWorldState } from "@lightlag/engine/ships";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { bodyState } from "@lightlag/engine/ephemeris";
+import { BODY_BY_ID, MU_SUN, JULIAN_YEAR, DAY, AU } from "@lightlag/engine/constants";
+import { length } from "@lightlag/engine/math/vec3";
 
 // A high-Δv courier (~18 km/s) so it can afford an Earth→Jupiter injection plus
 // the flyby residual and reach the outer system.

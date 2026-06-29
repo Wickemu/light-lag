@@ -14,7 +14,7 @@
  */
 
 import * as THREE from "three";
-import { type BackdropStar } from "../core/stars.ts";
+import { type BackdropStar } from "@lightlag/engine/stars";
 import { type SceneManager } from "./SceneManager.ts";
 import { makeStarTexture, spectralTeff, blackbodyRGB, starSpriteStyle } from "./starViews.ts";
 

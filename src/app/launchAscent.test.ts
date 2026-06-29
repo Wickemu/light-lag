@@ -1,14 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "../core/world.ts";
-import { Simulation } from "../core/sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import {
   spawnShip, spawnOnPad, expressToOrbit, launchShip, planTransfer, defaultDesign, type ShipDesign,
 } from "./commands.ts";
 import { SHIP_PRESETS, presetToDesign } from "./shipCatalog.ts";
-import { marsWindow } from "../core/test-helpers.ts";
-import { dvRemaining, totalMass } from "../core/ships.ts";
-import { deltaVBudget } from "../core/propulsion.ts";
-import { BODY_BY_ID, DEG } from "../core/constants.ts";
+import { marsWindow } from "../integration/test-helpers.ts";
+import { dvRemaining, totalMass } from "@lightlag/engine/ships";
+import { deltaVBudget } from "@lightlag/engine/propulsion";
+import { BODY_BY_ID, DEG } from "@lightlag/engine/constants";
 
 const EARTH = BODY_BY_ID.get("earth")!;
 const launchers = SHIP_PRESETS.filter((p) => p.role === "launcher");

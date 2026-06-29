@@ -15,7 +15,7 @@
  */
 
 import * as THREE from "three";
-import { type Vec3 } from "../core/math/vec3.ts";
+import { type Vec3 } from "@lightlag/engine/math/vec3";
 import { metersToUnits, SCENE_SCALE } from "./scale.ts";
 import { type SceneManager, type Theme } from "./SceneManager.ts";
 

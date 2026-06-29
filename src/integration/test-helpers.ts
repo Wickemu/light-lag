@@ -2,12 +2,12 @@
  * Shared helpers for the core test suites. Not shipped — imported only by *.test.ts.
  */
 
-import { createWorld } from "./world.ts";
-import { Simulation } from "./sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, defaultDesign, planTransfer } from "../app/commands.ts";
-import { computePorkchop } from "./maneuver/porkchop.ts";
-import { circularOrbit } from "./orbit.ts";
-import { BODY_BY_ID, DAY, DEG } from "./constants.ts";
+import { computePorkchop } from "@lightlag/engine/maneuver/porkchop";
+import { circularOrbit } from "@lightlag/engine/orbit";
+import { BODY_BY_ID, DAY, DEG } from "@lightlag/engine/constants";
 
 const R_EARTH = BODY_BY_ID.get("earth")!.radius;
 const R_MARS = BODY_BY_ID.get("mars")!.radius;

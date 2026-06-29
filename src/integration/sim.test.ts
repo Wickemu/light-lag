@@ -1,15 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { createWorld } from "./world.ts";
-import { Simulation } from "./sim.ts";
+import { createWorld } from "@lightlag/engine/world";
+import { Simulation } from "@lightlag/engine/sim";
 import { spawnShip, sendBurn, defaultDesign, planTransfer, type ShipDesign } from "../app/commands.ts";
-import { shipOsculatingElements, totalMass, shipWorldState, shipRelativeState, applyImpulsiveDv, dvRemaining, shipThermalState } from "./ships.ts";
-import { summarizeOrbit, circularOrbit, apoapsisRadius } from "./orbit.ts";
-import { serializeWorld, deserializeWorld, hashWorld } from "./serialize.ts";
-import { exhaustVelocity, propellantForDv, thrustAt, velocityFromRapidity, rapidity } from "./propulsion.ts";
-import { computePorkchop } from "./maneuver/porkchop.ts";
-import { bodyState } from "./ephemeris.ts";
-import { distance, length } from "./math/vec3.ts";
-import { BODY_BY_ID, DAY, AU, C } from "./constants.ts";
+import { shipOsculatingElements, totalMass, shipWorldState, shipRelativeState, applyImpulsiveDv, dvRemaining, shipThermalState } from "@lightlag/engine/ships";
+import { summarizeOrbit, circularOrbit, apoapsisRadius } from "@lightlag/engine/orbit";
+import { serializeWorld, deserializeWorld, hashWorld } from "@lightlag/engine/serialize";
+import { exhaustVelocity, propellantForDv, thrustAt, velocityFromRapidity, rapidity } from "@lightlag/engine/propulsion";
+import { computePorkchop } from "@lightlag/engine/maneuver/porkchop";
+import { bodyState } from "@lightlag/engine/ephemeris";
+import { distance, length } from "@lightlag/engine/math/vec3";
+import { BODY_BY_ID, DAY, AU, C } from "@lightlag/engine/constants";
 import { flyUntilCoast } from "./test-helpers.ts";
 
 const MU_EARTH = BODY_BY_ID.get("earth")!.mu;

@@ -10,7 +10,7 @@
  */
 
 import * as THREE from "three";
-import { CONSTELLATION_LINES } from "../core/constellationLines.generated.ts";
+import { CONSTELLATION_LINES } from "@lightlag/engine/constellationLines.generated";
 import { type SceneManager } from "./SceneManager.ts";
 
 // Faint sky lines; the light theme needs more contrast on its pale background.

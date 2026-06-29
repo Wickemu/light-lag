@@ -10,25 +10,25 @@
  * absolute Δv floor. Commit schedules the departure; it fires when the clock reaches it.
  */
 
-import { type Simulation } from "../core/sim.ts";
-import { type Ship } from "../core/world.ts";
+import { type Simulation } from "@lightlag/engine/sim";
+import { type Ship } from "@lightlag/engine/world";
 import { type SceneManager } from "../render/SceneManager.ts";
 import { type TrajectoryViews } from "../render/trajectoryViews.ts";
-import { computePorkchop, type Porkchop, type PorkCell } from "../core/maneuver/porkchop.ts";
-import { type AssistResult, type ChainAssistResult } from "../core/maneuver/assist.ts";
-import { type Criterion } from "../core/maneuver/criteria.ts";
+import { computePorkchop, type Porkchop, type PorkCell } from "@lightlag/engine/maneuver/porkchop";
+import { type AssistResult, type ChainAssistResult } from "@lightlag/engine/maneuver/assist";
+import { type Criterion } from "@lightlag/engine/maneuver/criteria";
 import {
   suggestRoutes, transferWindow, bestAssist, bestChain, bestPorkCell, type SuggestedRoute,
-} from "../core/maneuver/suggest.ts";
+} from "@lightlag/engine/maneuver/suggest";
 import { planTransfer, planAssist, planChainAssist, planMoonTransfer, planMoonMission, planMoonTour, searchMoonTour, aerocapturePreview, captureDvPreview, assistCapturePreview, looseCaptureApoAlt, type MoonTourResult } from "../app/commands.ts";
-import { computeMoonPorkchop } from "../core/maneuver/moon.ts";
-import { dvRemaining, shipWorldState, shipOsculatingElements, shipRelativeState } from "../core/ships.ts";
-import { bodyStateRelative } from "../core/ephemeris.ts";
-import { length } from "../core/math/vec3.ts";
-import { periapsisRadius } from "../core/orbit.ts";
-import { impactParameter } from "../core/maneuver/flyby.ts";
-import { formatDate } from "../core/time.ts";
-import { type BodyDef, type BodyKind, BODIES, BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "../core/constants.ts";
+import { computeMoonPorkchop } from "@lightlag/engine/maneuver/moon";
+import { dvRemaining, shipWorldState, shipOsculatingElements, shipRelativeState } from "@lightlag/engine/ships";
+import { bodyStateRelative } from "@lightlag/engine/ephemeris";
+import { length } from "@lightlag/engine/math/vec3";
+import { periapsisRadius } from "@lightlag/engine/orbit";
+import { impactParameter } from "@lightlag/engine/maneuver/flyby";
+import { formatDate } from "@lightlag/engine/time";
+import { type BodyDef, type BodyKind, BODIES, BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "@lightlag/engine/constants";
 import { div, btn, kv, setDisabled } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
 

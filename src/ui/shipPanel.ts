@@ -13,9 +13,9 @@
  * rich readout costs about what the old text dump did.
  */
 
-import { type Simulation } from "../core/sim.ts";
+import { type Simulation } from "@lightlag/engine/sim";
 import { type SceneManager } from "../render/SceneManager.ts";
-import { type BurnDir, type BurnGoal, type Ship } from "../core/world.ts";
+import { type BurnDir, type BurnGoal, type Ship } from "@lightlag/engine/world";
 import {
   sendBurn,
   landShip,
@@ -34,9 +34,9 @@ import {
   descentBudget,
   surfaceManeuverCost,
   DEFAULT_ENTRY_BETA,
-} from "../core/surface.ts";
-import { entryTrajectory, entryInterfaceAlt, type EntryVehicle } from "../core/maneuver/entry.ts";
-import { availablePowerW, thrustAt } from "../core/propulsion.ts";
+} from "@lightlag/engine/surface";
+import { entryTrajectory, entryInterfaceAlt, type EntryVehicle } from "@lightlag/engine/maneuver/entry";
+import { availablePowerW, thrustAt } from "@lightlag/engine/propulsion";
 import {
   totalMass,
   dvRemaining,
@@ -49,14 +49,14 @@ import {
   shipTelemetryDoppler,
   type TelemetryDoppler,
   primaryMu,
-} from "../core/ships.ts";
-import { summarizeOrbit, periapsisRadius, orbitalPeriod, j2Rates, type OrbitSummary } from "../core/orbit.ts";
-import { bodyPosition } from "../core/ephemeris.ts";
-import { retardedTime } from "../core/comms.ts";
-import { STAR_BY_ID } from "../core/stars.ts";
-import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR, j2RefRadius } from "../core/constants.ts";
-import { formatDate } from "../core/time.ts";
-import { length } from "../core/math/vec3.ts";
+} from "@lightlag/engine/ships";
+import { summarizeOrbit, periapsisRadius, orbitalPeriod, j2Rates, type OrbitSummary } from "@lightlag/engine/orbit";
+import { bodyPosition } from "@lightlag/engine/ephemeris";
+import { retardedTime } from "@lightlag/engine/comms";
+import { STAR_BY_ID } from "@lightlag/engine/stars";
+import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR, j2RefRadius } from "@lightlag/engine/constants";
+import { formatDate } from "@lightlag/engine/time";
+import { length } from "@lightlag/engine/math/vec3";
 import { el, button, kv, setDisabled, numberField, formatDur } from "./dom.ts";
 import { collapsible, type Collapsible } from "./collapsible.ts";
 import { markTerm } from "./tooltip.ts";
