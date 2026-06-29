@@ -52,10 +52,9 @@ import {
 } from "../core/ships.ts";
 import { summarizeOrbit, periapsisRadius, orbitalPeriod, j2Rates, type OrbitSummary } from "../core/orbit.ts";
 import { bodyPosition } from "../core/ephemeris.ts";
-import { retardedTime, shiftedWavelength } from "../core/comms.ts";
+import { retardedTime } from "../core/comms.ts";
 import { STAR_BY_ID } from "../core/stars.ts";
-import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR, IR_BAND_WAVELENGTH, j2RefRadius } from "../core/constants.ts";
-import { solveKeplerElliptic, solveKeplerHyperbolic, trueAnomalyFromE, trueAnomalyFromF } from "../core/math/kepler.ts";
+import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR, j2RefRadius } from "../core/constants.ts";
 import { formatDate } from "../core/time.ts";
 import { length } from "../core/math/vec3.ts";
 import { el, button, kv, setDisabled, numberField, formatDur } from "./dom.ts";
@@ -63,8 +62,13 @@ import { collapsible, type Collapsible } from "./collapsible.ts";
 import { markTerm } from "./tooltip.ts";
 import {
   statPill, meter, statTable, miniOrbit,
-  type StatPill, type Meter, type StatTable, type MiniOrbit, type OrbitView, type InstrumentState,
+  type StatPill, type Meter, type StatTable, type MiniOrbit, type InstrumentState,
 } from "./instruments.ts";
+import {
+  bannerOf, shortStatusOf, orbitViewOf, orbitCaptionOf,
+  fmtDelay, fmtDoppler, fmtPower, fmtRange,
+} from "./shipStatus.ts";
+import { type EventFeed } from "./events.ts";
 
 /** A `.section-label` div tagged as a hover term (SURFACE OPS, ELECTRIC SPIRAL). */
 function sectionLabel(text: string): HTMLElement {
@@ -160,6 +164,12 @@ export class ShipPanel {
   private fleetRows = new Map<string, { row: HTMLButtonElement; pill: StatPill }>();
   private fleetSig = "";
 
+  // Rolling mission-event log (shared feed; attached after construction).
+  private eventFeed?: EventFeed;
+  private eventsSec!: Collapsible;
+  private eventsList!: HTMLElement;
+  private lastEventsKey = "";
+
   constructor(
     private root: HTMLElement,
     private sim: Simulation,
@@ -181,6 +191,8 @@ export class ShipPanel {
   selectShip(id: string): void { this.select(id); }
   /** The currently-selected ship id (or null) — for the closed-panel HUD. */
   get selected(): string | null { return this.selectedId; }
+  /** Attach the shared mission-event feed (rendered as the console's Events log). */
+  attachEventFeed(feed: EventFeed): void { this.eventFeed = feed; }
 
   private build(): void {
     const panel = el("div", "panel ship-panel");
@@ -330,6 +342,13 @@ export class ShipPanel {
     this.opsSec = collapsible("Operations", { id: "operations", open: true });
     this.buildOperations(this.opsSec.body);
     this.flightEl.appendChild(this.opsSec.root);
+
+    // Rolling event log.
+    this.eventsSec = collapsible("Events", { id: "events", open: false });
+    this.eventsList = el("div", "events-list");
+    this.eventsSec.body.appendChild(this.eventsList);
+    this.eventsSec.root.style.display = "none";
+    this.flightEl.appendChild(this.eventsSec.root);
 
     this.deleteBtn = button("🗑 Delete ship", () => this.doDelete());
     this.deleteBtn.className = "wide-btn danger";
@@ -564,6 +583,7 @@ export class ShipPanel {
     const ship = this.sim.world.ships.get(this.selectedId);
     if (!ship) { this.selectedId = null; this.flightEl.style.display = "none"; return; }
     this.flightEl.style.display = "block";
+    this.fillEvents();
     if (ship.status === "lost") { this.renderLost(ship); return; }
 
     this.nameEl.textContent = ship.name;
@@ -593,7 +613,7 @@ export class ShipPanel {
     this.chipRow.style.display = (inbound || th.thrusting) ? "" : "none";
 
     // Mini-orbit.
-    this.orbitViz.set(this.orbitView(ship, t, el), this.orbitCaption(ship, rel, sum, primary));
+    this.orbitViz.set(orbitViewOf(ship, t), orbitCaptionOf(ship, t));
 
     // Vitals.
     const dv = dvRemaining(ship);
@@ -656,37 +676,6 @@ export class ShipPanel {
   }
 
   // ── instrument fills ──────────────────────────────────────────────────────
-
-  private orbitView(ship: Ship, t: number, el: ReturnType<typeof shipOsculatingElements>): OrbitView {
-    if (ship.landed) return { kind: "landed" };
-    if (ship.interstellarLeg) {
-      const leg = ship.interstellarLeg;
-      return { kind: "interstellar", frac: clamp01((t - leg.tDepart) / (leg.tArrive - leg.tDepart)) };
-    }
-    const tr = ship.transfer;
-    if (tr && tr.departed && !tr.arrived) {
-      return { kind: "transfer", frac: clamp01((t - tr.tDepart) / (tr.tArrive - tr.tDepart)) };
-    }
-    const nu = trueAnomalyOf(el.e, el.M);
-    return { kind: "orbit", e: el.e, nu, bound: el.e < 1 && el.a > 0 };
-  }
-
-  private orbitCaption(ship: Ship, rel: { r: { x: number; y: number; z: number } }, sum: OrbitSummary | null, primary: BodyDef): string {
-    if (ship.landed) return `landed · ${BODY_BY_ID.get(ship.landed.bodyId)?.name ?? ship.landed.bodyId}`;
-    if (ship.interstellarLeg) {
-      const leg = ship.interstellarLeg;
-      const f = clamp01((this.sim.world.t - leg.tDepart) / (leg.tArrive - leg.tDepart));
-      return `→ ${STAR_BY_ID.get(leg.targetStar)?.name ?? leg.targetStar} · ${(f * 100).toFixed(0)}%`;
-    }
-    const tr = ship.transfer;
-    if (tr && tr.departed && !tr.arrived) {
-      const f = clamp01((this.sim.world.t - tr.tDepart) / (tr.tArrive - tr.tDepart));
-      return `→ ${BODY_BY_ID.get(tr.targetId)?.name ?? tr.targetId} · ${(f * 100).toFixed(0)}%`;
-    }
-    if (ship.primary === "sun") return `heliocentric · ${(length(rel.r) / AU).toFixed(2)} AU`;
-    if (sum && sum.bound) return `${primary.name} · ${(sum.periapsisAlt / 1000).toFixed(0)}×${(sum.apoapsisAlt / 1000).toFixed(0)} km`;
-    return `${primary.name} · escape`;
-  }
 
   private fillNav(ship: Ship, el: ReturnType<typeof shipOsculatingElements>, rel: { r: { x: number; y: number; z: number } }, sum: OrbitSummary | null, mu: number, primary: BodyDef): void {
     const rows: Row[] = [];
@@ -795,6 +784,23 @@ export class ShipPanel {
     prev.clear();
     for (const k of now) prev.add(k);
     sec.root.style.display = now.size > 0 ? "" : "none";
+  }
+
+  /** Render the rolling event log; rebuild the list only when the newest changes. */
+  private fillEvents(): void {
+    if (!this.eventFeed) { this.eventsSec.root.style.display = "none"; return; }
+    const recent = this.eventFeed.recent(6);
+    if (recent.length === 0) { this.eventsSec.root.style.display = "none"; return; }
+    this.eventsSec.root.style.display = "";
+    const key = recent.map((e) => e.t + e.text).join("|");
+    if (key === this.lastEventsKey) return;
+    this.lastEventsKey = key;
+    this.eventsList.innerHTML = "";
+    for (const e of recent) {
+      const line = el("div", "event-line", e.text);
+      line.dataset.state = e.state;
+      this.eventsList.appendChild(line);
+    }
   }
 
   /** Propellant-transfer / assembly controls, shown only at rendezvous. */
@@ -964,62 +970,6 @@ export class ShipPanel {
   }
 }
 
-// ── status helpers ────────────────────────────────────────────────────────────
-
-function clamp01(x: number): number { return Math.max(0, Math.min(1, isFinite(x) ? x : 0)); }
-
-/** True anomaly from the osculating elements (elliptic or hyperbolic). */
-function trueAnomalyOf(e: number, M: number): number {
-  if (e < 1) return trueAnomalyFromE(solveKeplerElliptic(M, e), e);
-  return trueAnomalyFromF(solveKeplerHyperbolic(M, e), e);
-}
-
-/** The headline state, in priority order so the most urgent wins. */
-function bannerOf(ship: Ship, t: number, sum: OrbitSummary | null, primary: BodyDef): { text: string; state: InstrumentState } {
-  if (ship.mode === "thrust" && ship.burn) {
-    const pct = (100 * ship.burn.dvDone) / ship.burn.dvTarget;
-    return { text: `BURNING · ${ship.burn.dvDone.toFixed(0)}/${ship.burn.dvTarget.toFixed(0)} m/s (${pct.toFixed(0)}%)`, state: "warn" };
-  }
-  const entry = shipEntryReadout(ship, t);
-  if (entry) return { text: `ENTRY · ${entry.bodyName} → ${entry.outcome} (${(entry.progress * 100).toFixed(0)}%)`, state: "warn" };
-  if (ship.landed) return { text: `LANDED · ${BODY_BY_ID.get(ship.landed.bodyId)?.name ?? ship.landed.bodyId}`, state: "info" };
-  if (ship.spiral) {
-    const alt = (ship.spiral.endRadius - primary.radius) / 1000;
-    return { text: `SPIRALING · → ${alt.toFixed(0)} km · ${((ship.spiral.tEnd - t) / DAY).toFixed(0)} d`, state: "active" };
-  }
-  const tr = ship.transfer;
-  if (tr && tr.departed) {
-    const name = BODY_BY_ID.get(tr.targetId)?.name ?? tr.targetId;
-    if (tr.arrived) return { text: `CAPTURED · ${name}`, state: "ok" };
-    if (tr.inSoi) return { text: `ARRIVAL · ${name} — capturing`, state: "active" };
-    return { text: `IN TRANSIT · → ${name} · ${((tr.tArrive - t) / DAY).toFixed(0)} d`, state: "active" };
-  }
-  const leg = ship.interstellarLeg;
-  if (leg) {
-    const star = STAR_BY_ID.get(leg.targetStar)?.name ?? leg.targetStar;
-    return t >= leg.tArrive
-      ? { text: `INTERSTELLAR · arrived ${star}`, state: "ok" }
-      : { text: `INTERSTELLAR · → ${star} · ${((leg.tArrive - t) / JULIAN_YEAR).toFixed(2)} yr`, state: "active" };
-  }
-  if (ship.primary === "sun") return { text: "COASTING · heliocentric", state: "info" };
-  if (!sum) return { text: `COASTING · ${primary.name}`, state: "info" };
-  const peri = (sum.periapsisAlt / 1000).toFixed(0);
-  const apo = sum.bound ? (sum.apoapsisAlt / 1000).toFixed(0) : "esc";
-  return { text: `COASTING · ${primary.name} ${peri}×${apo} km`, state: "info" };
-}
-
-/** A one-word status for the fleet list pill. */
-function shortStatusOf(ship: Ship, t: number): { text: string; state: InstrumentState } {
-  if (ship.status === "lost") return { text: "LOST", state: "danger" };
-  if (ship.mode === "thrust") return { text: "BURN", state: "warn" };
-  if (shipEntryReadout(ship, t)) return { text: "ENTRY", state: "warn" };
-  if (ship.landed) return { text: "LANDED", state: "info" };
-  if (ship.spiral) return { text: "SPIRAL", state: "active" };
-  if (ship.transfer && ship.transfer.departed && !ship.transfer.arrived) return { text: "TRANSIT", state: "active" };
-  if (ship.interstellarLeg && t < ship.interstellarLeg.tArrive) return { text: "ISL", state: "active" };
-  return { text: "COAST", state: "info" };
-}
-
 // ── ship-specific formatters ─────────────────────────────────────────────────
 const SVGNS = "http://www.w3.org/2000/svg";
 /** A small bare sparkline (for the vital rows; mirrors instruments.sparkline). */
@@ -1056,33 +1006,6 @@ function sparkVital(): { root: HTMLElement; push(v: number): void; reset(): void
     push(v) { if (!isFinite(v)) return; buf.push(v); if (buf.length > n) buf.shift(); redraw(); },
     reset() { buf.length = 0; poly.setAttribute("points", ""); },
   };
-}
-
-function fmtDelay(s: number): string {
-  if (s < 1) return "live";
-  if (s < 90) return `${s.toFixed(0)} s`;
-  if (s < 5400) return `${(s / 60).toFixed(1)} min`;
-  return `${(s / 3600).toFixed(2)} hr`;
-}
-
-function fmtDoppler(d: TelemetryDoppler): string {
-  const word = d.z > 0 ? "redshift" : d.z < 0 ? "blueshift" : "none";
-  const zStr = Math.abs(d.z) >= 1e-3 ? d.z.toFixed(3) : d.z.toExponential(1);
-  const sign = d.z >= 0 ? "+" : "";
-  const lamObs = (shiftedWavelength(IR_BAND_WAVELENGTH, d.factor) * 1e6).toFixed(2);
-  return `z ${sign}${zStr} (${word}) · 10 → ${lamObs} µm`;
-}
-
-function fmtPower(w: number): string {
-  if (w < 1e3) return `${w.toFixed(0)} W`;
-  if (w < 1e6) return `${(w / 1e3).toFixed(1)} kW`;
-  if (w < 1e9) return `${(w / 1e6).toFixed(1)} MW`;
-  return `${(w / 1e9).toFixed(2)} GW`;
-}
-
-function fmtRange(m: number): string {
-  if (m < 1e9) return `${(m / 1e3).toLocaleString("en-US", { maximumFractionDigits: 0 })} km`;
-  return `${(m / 1.495978707e11).toFixed(3)} AU`;
 }
 
 function entryHeatRows(body: BodyDef, vOrbit: number): string {
