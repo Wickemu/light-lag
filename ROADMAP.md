@@ -413,6 +413,24 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
 
 ## Backlog — known engine gaps (future layers)
 
+- **Satellite drag fidelity (rung 2)** — **Rung 1 DONE:** ingested TLE satellites
+  coast under a closed-form secular drag — the TLE's measured ṅ carried onto
+  `Ship.drag` and applied in `coastElements` as `M += ½·ṅ·dt²` along-track plus the
+  consistent SMA decay (`n²a³ = μ`). Constant rate ⇒ exact at any time-warp, no
+  integration; captures the dominant multi-day along-track drift. What it can't do:
+  hold a *constant* rate misses the decay **runaway** as perigee drops, and it has no
+  handle for space-weather variation. **Rung 2 (future):** replace the constant ṅ with
+  an altitude- and activity-driven rate — a King-Hele averaged-element decay from an
+  exponential / Harris-Priester atmosphere `ρ(a)`, scaled by the object's ballistic
+  coefficient (recoverable from the TLE's `B*`) and modulated by solar flux (F10.7) and
+  the geomagnetic index. Cost: a cheap per-orbit integration (crosses the engine's
+  "no-integration / closed-form" line, so gate it to drag-flagged ships). Pairs with a
+  *live-present* TLE re-poll (re-anchor `elements`+`epoch` and refresh `B*`/F10.7 when
+  the sim clock tracks now); re-polling does nothing under time-warp, where the
+  propagation model is all you have. The honest alternative for max fidelity is to keep
+  the `SatRec` and propagate satellites through SGP4 itself (app-layer, not engine
+  ships) — collapses drift to the irreducible SGP4-vs-reality floor at the cost of
+  serialize/replay determinism for those objects.
 - **Spacecraft hazards & lifecycle** — surface-impact loss is DONE for coasting conics
   (`sim.impactTime`/`crashShip`: a ship whose orbit dips below the primary's radius is
   destroyed at the analytic surface crossing and frozen as a wreck). Follow-ups:

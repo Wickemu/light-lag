@@ -69,7 +69,7 @@ under a namespace for the `import { orbit, sim } from "@lightlag/engine"` form.
 | `ephemeris.ts` | Analytic body state (position, velocity) at any `t`. |
 | `orbit.ts` | vis-viva, apsides, periods, maneuver frame, SOI radius, Oberth burn, J2 secular precession rates, sun-synchronous inclination. |
 | `propulsion.ts` | Rocket equation, staging, Δv budget, electric power law (`F = min(F_rated, 2ηP/vₑ)`), variable-Isp constant-power throttle (`variableIspBurn`: thrust↔Isp↔time trade at `F·vₑ = 2ηP`); per-stage tank capacity (`stageCapacity`/`stageHeadroom`, the refuelling ceiling). |
-| `ships.ts` | Ship mass/state/orbit helpers; impulsive Δv (with affordability check); thermal state readout. |
+| `ships.ts` | Ship mass/state/orbit helpers; impulsive Δv (with affordability check); thermal state readout. `coastElements` advances a coasting conic by Kepler + J2 secular precession + optional closed-form secular atmospheric drag (`Ship.drag`: constant ṅ → ½·ṅ·dt² along-track + SMA decay), every rate constant so it stays exact at any time-warp. |
 | `refuel.ts` | Rendezvous-gated orbital propellant transfer + in-orbit assembly: `dockState`/`isDockable` (shared-primary, co-located gate), `transferProp` (mass-conserving, capacity-capped), `mergeStacks` (dock-merge two craft into one). |
 | `surface.ts` | Landing/takeoff Δv budgets: calibrated gravity-turn ascent through real exponential atmospheres, aerobraking fraction on descent. |
 | `forces.ts` | Read-only force/momentum breakdown for the overlay: dominant gravitational pull, secondary tidal perturbation, and primary-relative velocity for a body or ship (`bodyForceBreakdown`, `shipForceBreakdown`). |
@@ -130,6 +130,15 @@ deterministic engine (`replay.ts`, on `scenario.ts`), and **informative light-la
 (`Simulation.commandPolicy`). It reuses the existing render/UI; its panel
 (`ui/sandboxPanel.ts`) is purely additive. Shared packages (`viz`, `ui-kit`, …) get
 extracted only when a *second* consuming app needs them.
+
+A TLE is exact only near its epoch. Ingestion seeds the satellite's osculating
+elements via SGP4 at spawn, then the engine coasts it — Kepler + J2 secular + a
+**rung-1 secular drag** (the TLE's measured ṅ carried onto `Ship.drag`), which
+reproduces the dominant multi-day along-track drift in closed form. It does **not**
+reproduce SGP4's full drag/resonance behaviour (the decay runaway as perigee drops,
+space-weather swings), so a residual drift remains over days — surfaced, not hidden.
+See ROADMAP "rung-2 satellite drag" for the planned upgrade (altitude/B*/F10.7-driven
+King-Hele decay).
 
 ### `render/` — Three.js read-only view
 

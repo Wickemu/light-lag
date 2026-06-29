@@ -17,7 +17,9 @@ the engine imports nothing from any game.
 - **Bodies & state** — physical constants + a JPL-validated body catalog, analytic
   ephemeris at any `t`, plain-data serializable `WorldState`.
 - **Orbital mechanics** — vis-viva, apsides, SOI, Oberth, J2 secular precession,
-  sun-synchronous inclination.
+  sun-synchronous inclination, and a closed-form secular atmospheric-drag decay on
+  coasting orbits (a constant ṅ → ½·ṅ·dt² along-track + consistent SMA decay; opt-in
+  per ship via `Ship.drag`, used by the sandbox's TLE satellites).
 - **Propulsion** — rocket equation, staging, Δv budgets, electric power law, variable-Isp.
 - **Maneuvers** — Lambert, Hohmann, porkchop windows, bi-elliptic, gravity assists &
   multi-flyby chains, moon tours, low-thrust Edelbaum spirals, atmospheric entry &
