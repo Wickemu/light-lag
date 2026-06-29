@@ -668,7 +668,7 @@ button:hover {
 .ship-panel {
   top: 96px;
   left: 16px;
-  width: 286px;
+  width: 320px;
   /* The whole left edge is free now (the focus readout moved to the right dock),
      so the Mission dock can run the full height and scroll only if it overflows. */
   max-height: calc(100vh - 112px);
@@ -1444,6 +1444,60 @@ button.danger:hover {
   .yard-top { flex-direction: column; align-items: stretch; }
   .yard-top .name-field { flex: 1 1 auto; }
 }
+
+/* ── FLIGHT CONSOLE ──────────────────────────────────────────────────────────
+   The selected-ship console: a name + status banner, the mini-orbit hero, the
+   always-on vitals, then the disclosure tables and contextual actions. ───────── */
+.console {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.console-name {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+.console-chips { margin-top: -2px; }
+.console-chips:empty { display: none; }
+
+.vitals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0;
+}
+.vital {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.vital-k { color: var(--text-dim); flex: 0 0 50px; }
+.vital .ins-spark { flex: 1 1 auto; }
+.vital-v {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+  text-align: right;
+  min-width: 72px;
+}
+.burn-row { margin-top: 2px; }
+
+.console-actions { display: flex; flex-direction: column; gap: 4px; }
+
+/* Fleet rows now carry a status pill on the right. */
+.ship-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  text-align: left;
+}
+.ship-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-pill { flex: 0 0 auto; }
 
 /* ── Responsive: this is a desktop-first sim. These breakpoints keep the
    panels from overlapping or running off-screen on narrow windows/tablets,
