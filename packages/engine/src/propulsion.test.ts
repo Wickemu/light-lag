@@ -302,6 +302,19 @@ describe("live jet power (liveJetPowerW)", () => {
     const spent: Stage = { ...core, boosters: [{ name: "SRB", dryMass: 2000, propMass: 0, isp: 280, thrust: 5e5, count: 2 }] };
     expect(liveJetPowerW(spent, AU)).toBeCloseTo(coreJet, 3);
   });
+
+  it("a drained core with a still-burning booster contributes NO core jet power", () => {
+    // The "dead core, live booster" phase: the core is empty but a longer-lived
+    // booster is still firing (advanceBoosteredSegment drops the core burner here).
+    // thrustAt() still returns the chemical core's rated thrust at propMass 0, so the
+    // gate must be on propMass — otherwise the readout double-counts a dead engine.
+    const deadCore: Stage = {
+      name: "core", dryMass: 8000, propMass: 0, isp: 300, thrust: 8e5,
+      boosters: [{ name: "long", dryMass: 4000, propMass: 60000, isp: 280, thrust: 5e5 }],
+    };
+    const boosterJet = 0.5 * 5e5 * exhaustVelocity(280);
+    expect(liveJetPowerW(deadCore, AU)).toBeCloseTo(boosterJet, 3); // booster only, no core term
+  });
 });
 
 describe("electric propulsion", () => {

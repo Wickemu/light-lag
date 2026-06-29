@@ -118,14 +118,19 @@ export function thrustAt(stage: Stage, r: number): number {
 
 /** Jet (beam) power ½·ΣF·vₑ (W) of a stage's LIVE reservoirs at heliocentric
  *  distance r: the core's distance-derated `thrustAt()` (a solar-electric stage
- *  falls as 1/r²; a chemical core is the flat rated thrust) plus every strap-on
- *  booster still carrying propellant (`b.thrust·count·vₑ`, dropped once empty).
- *  The single source of truth for "what the live engine set is actually putting
- *  out", shared by the burn integrator's energetics and the thermal waste-heat
- *  model so a derated or boostered drive can never report two different
- *  signatures. ½·F·vₑ is the jet power because jet KE flow = ½·ṁ·vₑ² = ½·F·vₑ. */
+ *  falls as 1/r²; a chemical core is the flat rated thrust) — counted only while
+ *  the core still has propellant — plus every strap-on booster still carrying
+ *  propellant (`b.thrust·count·vₑ`, dropped once empty). Mirrors the burn
+ *  integrator (`advanceBoosteredSegment`, sim.ts), which drops the core burner
+ *  once `stage.propMass` empties: in the "dead core, live booster" phase (a
+ *  longer-lived booster still firing past a drained core) the inert core produces
+ *  no jet. The single source of truth for "what the live engine set is actually
+ *  putting out", shared by that integrator's energetics and the thermal
+ *  waste-heat model so a derated, boostered, or part-spent drive can never report
+ *  two different signatures. ½·F·vₑ is the jet power: jet KE flow = ½·ṁ·vₑ² = ½·F·vₑ. */
 export function liveJetPowerW(stage: Stage, r: number): number {
-  let jet = 0.5 * thrustAt(stage, r) * exhaustVelocity(stage.isp);
+  // Core only while fuelled (1e-9 kg floor matches stagePhases / advanceBoosteredSegment).
+  let jet = stage.propMass > 1e-9 ? 0.5 * thrustAt(stage, r) * exhaustVelocity(stage.isp) : 0;
   if (stage.boosters) {
     for (const b of stage.boosters) {
       if (b.propMass > 0) jet += 0.5 * b.thrust * boosterCount(b) * exhaustVelocity(b.isp);

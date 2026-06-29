@@ -639,11 +639,17 @@ export function shipThermalState(ship: Ship, t: number): ShipThermal {
   // Drive waste heat (radiators + plume), only while thrusting. Uses the SAME live
   // engine set the burn integrator flies — the core's distance-derated thrust (a
   // solar-electric drive far from the Sun is power-starved and radiates less, not the
-  // full rated heat) plus every live strap-on booster — via `liveJetPowerW`.
+  // full rated heat) plus every live strap-on booster — via `liveJetPowerW`. The
+  // waste fraction (1−η)/η of the jet uses the drive's OWN efficiency where the stage
+  // declares one (an electric source's electrical→jet `eta`), falling back to the
+  // generic `driveEfficiency` for chemical / NTR / pulse drives that carry no η.
   let driveWasteW = 0;
   if (ship.mode === "thrust") {
     const stage = activeStage(ship);
-    if (stage) driveWasteW = (liveJetPowerW(stage, r) * (1 - driveEfficiency)) / driveEfficiency;
+    if (stage) {
+      const eta = stage.electric?.eta ?? driveEfficiency;
+      driveWasteW = (liveJetPowerW(stage, r) * (1 - eta)) / eta;
+    }
   }
 
   const signatureW = thermalSignatureW + reflectedSignatureW + driveWasteW;

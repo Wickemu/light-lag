@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is the `@lightlag/engine` workspace package
-(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 669 passing
+(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 723 passing
 physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
@@ -628,8 +628,15 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   `propulsion.ts liveJetPowerW(stage, r)` — the core's distance-derated `thrustAt()`
   plus every live strap-on booster — the same live engine set the burn integrator
   flies (the `physics-assessment.md` C5 "one live-thrust source"). Pure read-time
-  readout ⇒ golden hash unmoved; +4 tests (`propulsion.test.ts` derating/booster
-  cases, `sim.test.ts` a 1 AU vs 3 AU electric-drive waste-heat comparison). Still to
+  readout ⇒ golden hash unmoved. Review follow-up: `liveJetPowerW` now also drops the
+  core term in the "dead core, live booster" phase (core drained, a longer-lived
+  booster still firing — `thrustAt` still returns a chemical core's rated thrust at
+  propMass 0, so the gate is on `propMass`), and the thermal waste fraction (1−η)/η
+  uses the drive's OWN efficiency (`stage.electric?.eta`) where declared, falling back
+  to the generic value for chemical/NTR drives (behaviour-neutral today — every
+  catalog electric drive is η=0.6). +6 tests total (`propulsion.test.ts`
+  derating/booster/dead-core cases; `sim.test.ts` 1 AU vs 3 AU derating and an
+  η-specific waste-heat comparison). Still to
   do: a second optical band split (reflected-sunlight vs thermal-IR with separate
   apertures/backgrounds) and a diffraction-limited angular-resolution / astrometric
   model.

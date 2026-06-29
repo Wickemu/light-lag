@@ -669,6 +669,34 @@ describe("Phase 6: ship thermal & detection model", () => {
     expect(far).toBeCloseTo(near / 9, 5); // power ∝ 1/r² ⇒ waste ∝ 1/r²
     expect(far).toBeLessThan(near / 5); // unmistakably derated, not the flat rated value
   });
+
+  it("waste heat uses the drive's own efficiency, not a fixed 0.6", () => {
+    // powerW is derived so the array delivers exactly the rated thrust at full power
+    // (P = F·vₑ/2η), so at 1 AU the jet power is identical for any η — and the waste
+    // heat differs ONLY by (1−η)/η. A less efficient drive (η=0.3) must reject more.
+    const ve = exhaustVelocity(2600);
+    const tug = (eta: number) => ({
+      name: "Tug", payloadMass: 1000, altitudeKm: 400, inclinationDeg: 0,
+      stages: [{
+        name: "Hall", dryMass: 4000, propMass: 2500, isp: 2600, thrust: 0.6,
+        electric: { powerW: (0.6 * ve) / (2 * eta), eta, solar: true },
+      }],
+    });
+    const wasteFor = (eta: number): number => {
+      const sim = new Simulation(createWorld(1, 0));
+      const id = spawnShip(sim, tug(eta));
+      const ship = sim.world.ships.get(id)!;
+      sendBurn(sim, id, 5000, "prograde"); // ship stays near 1 AU (Earth), array at rated power
+      let guard = 0;
+      while (ship.mode !== "thrust" && guard++ < 200) sim.step(200);
+      expect(ship.mode).toBe("thrust");
+      return shipThermalState(ship, sim.world.t).driveWasteW;
+    };
+    const w06 = wasteFor(0.6);
+    const w03 = wasteFor(0.3);
+    expect(w03).toBeGreaterThan(w06);
+    expect(w03 / w06).toBeCloseTo((0.7 / 0.3) / (0.4 / 0.6), 3); // ratio is purely (1−η)/η
+  });
 });
 
 describe("staging", () => {

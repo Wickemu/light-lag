@@ -30,7 +30,7 @@ a controlled approximation or a deliberate omission (see
 |---|---|---|---|
 | **LEO / Earth orbit** | J2 is *secular-only*; no short-period terms; constant-rate drag | Node/apsis precession to leading order; short-period oscillation (~km, orbit-periodic) not modelled | Sun-sync & nodal-regression rates are correct to first order |
 | **Earth–Moon** | No continuous third-body (Sun) during coast; EMB-vs-Earth-centre handling | Kepler exact two-body; lunar/solar perturbation on high orbits omitted between SOI patches | EMB→true-centre shift *is* applied (~4–5 thousand km, corrected) |
-| **Interplanetary transfer** | Analytic ephemeris; patched-conic SOI; no third-body mid-cruise | Planet position **inner ≤ 6–40 Mm, giants ≤ 1–4 Gm** vs Horizons (2000–2025) | These are the test tolerances; see table below |
+| **Interplanetary transfer** | Analytic ephemeris; patched-conic SOI; no third-body mid-cruise | Planet position **inner ≤ 6–40 Mm, giants ≤ ~2.5–8 Gm** vs Horizons (2000–2025) | These are the test tolerances; see table below |
 | **Giant-moon tours** | Two-body moon ephemerides; secular-only J2 on the parent | Moon position drifts over years; J2 *aim* is modelled at the giant | Parent oblateness handled in the moon-arrival aim and capture approach |
 | **Low-thrust arcs** | Edelbaum analytic spiral, not an integrated trajectory | Δv/time/propellant are the optimal-spiral estimate; not a flown arc | Good planning fidelity; phase/eclipse/optimal-control omitted |
 | **Aerocapture / entry** | Exponential atmosphere, ballistic (no lift), convective-only heating | Radiative shock-layer heating omitted **above ~11 km/s** | Sutton–Graves convective flux modelled; good for blunt capsules |
