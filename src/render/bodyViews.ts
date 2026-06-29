@@ -15,7 +15,7 @@
 import * as THREE from "three";
 import { BODIES, BODY_BY_ID, type BodyDef, type BodyKind } from "../core/constants.ts";
 import { bodyState, bodyStateRelative, bodyElements } from "../core/ephemeris.ts";
-import { orbitPath } from "../core/math/kepler.ts";
+import { orbitPath, period, type State } from "../core/math/kepler.ts";
 import { type Vec3 } from "../core/math/vec3.ts";
 import { metersToUnits, SCENE_SCALE } from "./scale.ts";
 import { type SceneManager } from "./SceneManager.ts";
@@ -180,9 +180,13 @@ interface BodyVisual {
   /** Ring-material sun-direction uniform value (Saturn): set per frame so the
    *  planet's shadow band falls across the rings from the true Sun. */
   ringSunDir?: THREE.Vector3;
-  /** Angular speed of the texture spin (rad/s of sim time); 0 if non-rotating. */
+  /** Angular speed of the texture spin (rad/s of sim time); 0 if non-rotating.
+   *  Ignored when `lock` is set — a synchronous body is oriented by its partner. */
   spinRate: number;
   cloudSpinRate: number;
+  /** Set for a tidally locked body (synchronous moon, or a binary primary): the
+   *  satellite whose orbit sets the plane, and which way to face. */
+  lock?: { satId: string; sign: number };
   orbit?: THREE.LineLoop;
   orbitArray?: Float32Array;
   /** Set on both members of a barycentric binary (Earth–Moon, Pluto–Charon). */
@@ -314,6 +318,7 @@ export class BodyViews {
       def, marker, node, sphere, clouds, atmoSunDir, ringSunDir,
       spinRate,
       cloudSpinRate: spinRate * 0.92, // a touch of cloud drift relative to the surface
+      lock: tidalLock(def) ?? undefined,
       baseColor, focusColor,
     };
 
@@ -467,8 +472,15 @@ export class BodyViews {
         if (vis.ringSunDir) vis.ringSunDir.set(sx * inv, sy * inv, sz * inv);
       }
 
-      // Axial rotation at the real sidereal rate (retrograde from a negative rate).
-      if (vis.spinRate !== 0) {
+      // Axial rotation. A tidally locked body (every synchronous moon, plus Pluto
+      // and Charon) is oriented by its partner: the node's pole sits on the mutual
+      // orbit normal and a fixed meridian faces the partner, so the pair turn in
+      // lockstep and keep face — Charon hangs motionless over one Pluto hemisphere.
+      // Everything else free-spins about its tilted pole at the real sidereal rate
+      // (retrograde from a negative rate).
+      if (vis.lock) {
+        tidalLockOrientation(bodyStateRelative(BODY_BY_ID.get(vis.lock.satId)!, t), vis.lock.sign, vis.node.quaternion);
+      } else if (vis.spinRate !== 0) {
         vis.sphere.rotation.y = t * vis.spinRate;
         if (vis.clouds) vis.clouds.rotation.y = t * vis.cloudSpinRate;
       }
@@ -603,4 +615,50 @@ function systemBary(bin: BinaryInfo, t: number): Vec3 {
   const p = bodyState(bin.primary, t).r;
   const s = bodyStateRelative(bin.sat, t).r; // satellite relative to the primary's centre
   return { x: p.x + bin.f * s.x, y: p.y + bin.f * s.y, z: p.z + bin.f * s.z };
+}
+
+/** Which co-orbiting body a synchronous rotator keeps its face toward. A tidally
+ *  locked body's sidereal day equals the mutual orbital period, so we detect the
+ *  lock by matching the two. `satId` is the satellite whose relative orbit defines
+ *  the plane; `sign` is +1 when this body is the primary (Pluto faces Charon) and
+ *  −1 when it is the satellite (a moon faces its parent). Returns null for a
+ *  free-spinning body (Earth, the Sun, the planets, asteroids, comets). */
+function tidalLock(body: BodyDef): { satId: string; sign: number } | null {
+  if (!body.rotationPeriod) return null;
+  const isSync = (sat: BodyDef | undefined, primaryMu: number): boolean => {
+    if (!sat?.moon) return false;
+    const T = period(sat.moon.a, primaryMu + sat.mu); // mutual orbital period
+    return Math.abs(Math.abs(body.rotationPeriod!) - T) < 0.02 * T; // within 2 %
+  };
+  // Binary primary locked to its co-orbiting satellite (Pluto ↔ Charon).
+  if (body.barycenterChild && isSync(BODY_BY_ID.get(body.barycenterChild), body.mu)) {
+    return { satId: body.barycenterChild, sign: 1 };
+  }
+  // Synchronous moon locked to its parent (Moon, the Galilean & Saturnian moons, …).
+  if (body.moon && body.parent) {
+    const parent = BODY_BY_ID.get(body.parent);
+    if (parent && isSync(body, parent.mu)) return { satId: body.id, sign: -1 };
+  }
+  return null;
+}
+
+// Allocation-free scratch for the per-frame tidal-lock orientation.
+const _tlR = new THREE.Vector3(), _tlV = new THREE.Vector3(), _tlN = new THREE.Vector3();
+const _tlX = new THREE.Vector3(), _tlZ = new THREE.Vector3(), _tlM = new THREE.Matrix4();
+
+/** Orientation of a tidally locked body: pole (local +Y) along the mutual orbit
+ *  normal r×v, prime meridian (local +X) facing the partner. `rel` is the
+ *  satellite's state relative to the primary; `sign` selects which way to face
+ *  (+1 primary→satellite, −1 satellite→primary). Because r×v is conserved in
+ *  two-body motion, the same surface point faces the partner at every t — the
+ *  defining property of a 1:1 spin–orbit lock. Writes and returns `out`. */
+export function tidalLockOrientation(rel: State, sign: number, out: THREE.Quaternion): THREE.Quaternion {
+  _tlR.set(rel.r.x, rel.r.y, rel.r.z);
+  _tlV.set(rel.v.x, rel.v.y, rel.v.z);
+  _tlN.crossVectors(_tlR, _tlV).normalize();              // orbit normal → spin axis
+  _tlX.copy(_tlR).multiplyScalar(sign);                   // toward the partner
+  _tlX.addScaledVector(_tlN, -_tlX.dot(_tlN)).normalize(); // drop any out-of-plane component
+  _tlZ.crossVectors(_tlX, _tlN);                          // right-handed third axis
+  _tlM.makeBasis(_tlX, _tlN, _tlZ);
+  return out.setFromRotationMatrix(_tlM);
 }
