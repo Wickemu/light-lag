@@ -59,7 +59,7 @@ import { STAR_BY_ID } from "@lightlag/engine/stars";
 import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR, j2RefRadius } from "@lightlag/engine/constants";
 import { formatDate } from "@lightlag/engine/time";
 import { length, sub } from "@lightlag/engine/math/vec3";
-import { el, button, kvAuto, setDisabled, numberField, formatDur } from "./dom.ts";
+import { el, button, kvAuto, setDisabled, numberField, formatDur, formatLength } from "./dom.ts";
 import { collapsible, type Collapsible } from "./collapsible.ts";
 import { markTerm } from "./tooltip.ts";
 import {
@@ -212,20 +212,13 @@ export class ShipPanel {
     head.appendChild(close);
     panel.appendChild(head);
 
-    // Flex-laid spans (not inline glyphs) so the leading + and trailing chevron
-    // sit centred on the label baseline regardless of the font's symbol metrics.
-    const buildBtn = button("", () => this.onOpenShipyard?.());
-    buildBtn.className = "wide-btn yard-open-btn";
-    buildBtn.title = "Open the Shipyard (B) to design and launch a vehicle.";
-    buildBtn.append(
-      el("span", "btn-ico", "+"),
-      el("span", "btn-label", "Build a ship — Shipyard"),
-      el("span", "btn-arrow", "›"),
-    );
-    panel.appendChild(buildBtn);
-
     // ── Fleet ────────────────────────────────────────────────────────────────
-    this.fleetSection = collapsible("Fleet", { id: "fleet", open: true });
+    // The Shipyard opener is a compact "+" pinned to the Fleet header (it adds a
+    // ship, so it belongs on the list), not a full-width labelled button.
+    const addShipBtn = button("+", () => this.onOpenShipyard?.());
+    addShipBtn.className = "section-action";
+    addShipBtn.title = "Open the Shipyard (B) to design and launch a vehicle.";
+    this.fleetSection = collapsible("Fleet", { id: "fleet", open: true, action: addShipBtn });
     this.shipListEl = el("div", "ship-list");
     this.fleetSection.body.appendChild(this.shipListEl);
     panel.appendChild(this.fleetSection.root);
@@ -267,11 +260,11 @@ export class ShipPanel {
     ({ table: this.navTable, sec: this.navSec } = this.makeTable("NAV", "nav", true,
       ["Frame", "Distance from Sun", "Orbiting", "Periapsis", "Apoapsis", "Period", "Node precession", "Apsidal precession"]));
     ({ table: this.propTable, sec: this.propSec } = this.makeTable("Propulsion", "propulsion", false,
-      ["Mass", "Δv remaining", "Active stage", "Drive power", "Drive thrust", "Spiraling"]));
+      ["Mass", "Active stage", "Drive power", "Drive thrust", "Spiraling"]));
     ({ table: this.thermTable, sec: this.thermSec } = this.makeTable("Thermal & signature", "thermal", false,
       ["Solar flux", "Hull temp", "IR signature", "Detectable to", "Min signal", "Waste heat", "Radiator"]));
     ({ table: this.commsTable, sec: this.commsSec } = this.makeTable("Comms", "comms", false,
-      ["Signal delay", "Doppler", "Order ETA"]));
+      ["Doppler", "Order ETA"]));
     ({ table: this.xferTable, sec: this.xferSec } = this.makeTable("Transfer", "transfer", true,
       ["Transfer", "Capture Δv", "Interstellar", "Crew clock τ"]));
     for (const sec of [this.navSec, this.propSec, this.thermSec, this.commsSec, this.xferSec]) {
@@ -666,7 +659,7 @@ export class ShipPanel {
     this.fillNav(ship, el, rel, sum, mu, primary);
     this.fillProp(ship, t, tKnown, stage, primary);
     this.fillThermal(th);
-    this.fillComms(age, dop, inbound ? inbound.tArrive - t : null);
+    this.fillComms(dop, inbound ? inbound.tArrive - t : null);
     this.fillTransfer(ship, t);
 
     // Action gating.
@@ -713,8 +706,8 @@ export class ShipPanel {
       rows.push({ key: "Distance from Sun", value: `${(length(rel.r) / AU).toFixed(3)} AU` });
     } else if (sum) {
       rows.push({ key: "Orbiting", value: primary.name });
-      rows.push({ key: "Periapsis", value: `${(sum.periapsisAlt / 1000).toFixed(0)} km` });
-      rows.push({ key: "Apoapsis", value: sum.bound ? `${(sum.apoapsisAlt / 1000).toFixed(0)} km` : "escape", state: sum.bound ? undefined : "warn" });
+      rows.push({ key: "Periapsis", value: formatLength(sum.periapsisAlt) });
+      rows.push({ key: "Apoapsis", value: sum.bound ? formatLength(sum.apoapsisAlt) : "escape", state: sum.bound ? undefined : "warn" });
       rows.push({ key: "Period", value: sum.bound ? formatDur(sum.period) : "—" });
       if (sum.bound && primary.J2) {
         const r = j2Rates(mu, j2RefRadius(primary), primary.J2, el.a, el.e, el.i);
@@ -728,7 +721,6 @@ export class ShipPanel {
   private fillProp(ship: Ship, t: number, tKnown: number, stage: ReturnType<typeof activeStage>, primary: BodyDef): void {
     const rows: Row[] = [
       { key: "Mass", value: `${(totalMass(ship) / 1000).toFixed(2)} t` },
-      { key: "Δv remaining", value: `${(dvRemaining(ship) / 1000).toFixed(2)} km/s` },
       { key: "Active stage", value: `${ship.activeStage + 1} / ${ship.stages.length}` },
     ];
     if (stage?.electric) {
@@ -741,7 +733,7 @@ export class ShipPanel {
     }
     if (ship.spiral) {
       const left = (ship.spiral.tEnd - t) / DAY;
-      rows.push({ key: "Spiraling", value: `→ ${((ship.spiral.endRadius - primary.radius) / 1000).toFixed(0)} km · ${left.toFixed(0)} d`, state: "active" });
+      rows.push({ key: "Spiraling", value: `→ ${formatLength(ship.spiral.endRadius - primary.radius)} · ${left.toFixed(0)} d`, state: "active" });
     }
     this.applyTable(this.propTable, this.propSec, this.propKeys, rows);
   }
@@ -761,8 +753,8 @@ export class ShipPanel {
     this.applyTable(this.thermTable, this.thermSec, this.thermKeys, rows);
   }
 
-  private fillComms(age: number, dop: TelemetryDoppler | null, orderEta: number | null): void {
-    const rows: Row[] = [{ key: "Signal delay", value: fmtDelay(age) }];
+  private fillComms(dop: TelemetryDoppler | null, orderEta: number | null): void {
+    const rows: Row[] = [];
     if (dop) rows.push({ key: "Doppler", value: fmtDoppler(dop) });
     if (orderEta !== null) rows.push({ key: "Order ETA", value: fmtDelay(orderEta) });
     this.applyTable(this.commsTable, this.commsSec, this.commsKeys, rows);
@@ -785,10 +777,10 @@ export class ShipPanel {
           const fb = BODY_BY_ID.get(f.bodyId);
           const fName = fb?.name ?? f.bodyId;
           if (f.done && f.rpAchieved !== undefined) {
-            const periAlt = (f.rpAchieved - (fb?.radius ?? 0)) / 1000;
+            const periAlt = f.rpAchieved - (fb?.radius ?? 0);
             const bRadii = fb ? f.bMag! / fb.radius : 0;
             const free = (f.residualTurn ?? 0) < 1e-6 && f.dvBurn < 1;
-            rows.push({ key: `Flyby ${fName}`, value: `peri ${periAlt.toFixed(0)} km · b ${bRadii.toFixed(1)} R · turn ${((f.turn ?? 0) * RAD).toFixed(0)}°` + (free ? " · free" : ` · burn ${f.dvBurn.toFixed(0)} m/s`) });
+            rows.push({ key: `Flyby ${fName}`, value: `peri ${formatLength(periAlt)} · b ${bRadii.toFixed(1)} R · turn ${((f.turn ?? 0) * RAD).toFixed(0)}°` + (free ? " · free" : ` · burn ${f.dvBurn.toFixed(0)} m/s`) });
           } else {
             rows.push({ key: `Flyby ${fName}`, value: `pending · ${formatDate(f.tFlyby)}` });
           }

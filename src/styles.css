@@ -516,6 +516,34 @@ body {
   border: 1px solid var(--panel-border);
   border-radius: 8px;
 }
+
+/* A header with a right-hand action (e.g. the Fleet "+"): the toggle takes the
+   row, the action sits beside it as a quiet, borderless icon — not a boxed key. */
+.section-head-row {
+  display: flex;
+  align-items: center;
+}
+.section-head-row .section-head {
+  flex: 1 1 auto;
+  width: auto;
+}
+.section-action {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.section-action:hover {
+  color: var(--accent);
+  background: var(--btn-bg);
+}
 .section-body {
   display: flex;
   flex-direction: column;

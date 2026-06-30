@@ -22,6 +22,7 @@ import { solveKeplerElliptic, solveKeplerHyperbolic, trueAnomalyFromE, trueAnoma
 import { shiftedWavelength } from "@lightlag/engine/comms";
 import { length } from "@lightlag/engine/math/vec3";
 import { type OrbitView, type InstrumentState } from "./instruments.ts";
+import { formatLength, formatLengthPair, formatDur } from "./dom.ts";
 
 export function clamp01(x: number): number { return Math.max(0, Math.min(1, isFinite(x) ? x : 0)); }
 
@@ -64,9 +65,10 @@ export function bannerOf(ship: Ship, t: number, sum: OrbitSummary | null, primar
   }
   if (ship.primary === "sun") return { text: "COASTING · heliocentric", state: "info" };
   if (!sum) return { text: `COASTING · ${primary.name}`, state: "info" };
-  const peri = (sum.periapsisAlt / 1000).toFixed(0);
-  const apo = sum.bound ? (sum.apoapsisAlt / 1000).toFixed(0) : "esc";
-  return { text: `COASTING · ${primary.name} ${peri}×${apo} km`, state: "info" };
+  const bounds = sum.bound
+    ? formatLengthPair(sum.periapsisAlt, sum.apoapsisAlt)
+    : `${formatLength(sum.periapsisAlt)} · escape`;
+  return { text: `COASTING · ${primary.name} ${bounds}`, state: "info" };
 }
 
 /** A one-word status for the fleet list / HUD pill. */
@@ -111,7 +113,9 @@ export function orbitCaptionOf(ship: Ship, t: number): string {
   const primary = BODY_BY_ID.get(ship.primary);
   if (!primary) return "";
   const sum = summarizeOrbit(shipOsculatingElements(ship, t), primaryMu(ship), primary.radius);
-  if (sum.bound) return `${primary.name} · ${(sum.periapsisAlt / 1000).toFixed(0)}×${(sum.apoapsisAlt / 1000).toFixed(0)} km`;
+  // Caption shows the orbital PERIOD, not periapsis×apoapsis — those bounds already
+  // appear in the banner and the NAV tab, so repeating them here was redundant.
+  if (sum.bound) return `${primary.name} · ${formatDur(sum.period)}`;
   return `${primary.name} · escape`;
 }
 
@@ -141,7 +145,8 @@ export function fmtPower(w: number): string {
   return `${(w / 1e9).toFixed(2)} GW`;
 }
 
+/** Distance readout — delegates to the shared adaptive length ladder so every
+ *  panel's distances scale the same way (km · Mm · Gm · AU). */
 export function fmtRange(m: number): string {
-  if (m < 1e9) return `${(m / 1e3).toLocaleString("en-US", { maximumFractionDigits: 0 })} km`;
-  return `${(m / 1.495978707e11).toFixed(3)} AU`;
+  return formatLength(m);
 }

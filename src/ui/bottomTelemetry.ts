@@ -12,9 +12,8 @@ import type { ShipPanel } from "./shipPanel.ts";
 import { shipWorldState } from "@lightlag/engine/ships";
 import { bodyPosition } from "@lightlag/engine/ephemeris";
 import { retardedTime } from "@lightlag/engine/comms";
-import { AU } from "@lightlag/engine/constants";
 import { distance } from "@lightlag/engine/math/vec3";
-import { el } from "./dom.ts";
+import { el, formatLength } from "./dom.ts";
 import { fmtDelay } from "./shipStatus.ts";
 
 export class BottomTelemetry {
@@ -67,20 +66,11 @@ export class BottomTelemetry {
       this.nameEl.textContent = ship.name;
       this.lastSig = ship.name;
     }
-    this.rangeEl.textContent = fmtRange(range);
+    this.rangeEl.textContent = formatLength(range);
     this.signalEl.textContent = fmtDelay(t - tKnown);
   }
 }
 
 function divider(): HTMLElement {
   return el("div", "trail-div");
-}
-
-/** Range to the control node: AU at interplanetary scale, Gm/km up close. */
-function fmtRange(m: number): string {
-  const au = m / AU;
-  if (au >= 0.01) return `${au.toFixed(2)} AU`;
-  const km = m / 1000;
-  if (km >= 1e6) return `${(km / 1e6).toFixed(2)} Gm`;
-  return `${km.toFixed(0)} km`;
 }

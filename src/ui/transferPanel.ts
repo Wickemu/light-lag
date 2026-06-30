@@ -31,7 +31,7 @@ import { periapsisRadius } from "@lightlag/engine/orbit";
 import { impactParameter } from "@lightlag/engine/maneuver/flyby";
 import { formatDate } from "@lightlag/engine/time";
 import { type BodyDef, type BodyKind, BODIES, BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "@lightlag/engine/constants";
-import { div, btn, kvAuto, setDisabled } from "./dom.ts";
+import { div, btn, kvAuto, setDisabled, formatLength, formatLengthPair } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
 
 /** A `.section-label` div tagged as a hover term. */
@@ -977,7 +977,7 @@ export class TransferPanel {
     const haveDv = dvRemaining(ship);
     const feasible = plan.dvTotal <= haveDv;
     this.readout.innerHTML =
-      kvAuto("Raise to", `GEO — ${((plan.aSync - body.radius) / 1000).toFixed(0)} km circular (synchronous)`) +
+      kvAuto("Raise to", `GEO — ${formatLength(plan.aSync - body.radius)} circular (synchronous)`) +
       kvAuto("Transfer burn", `${(plan.dv1 / 1000).toFixed(3)} km/s`) +
       kvAuto("Circularize + plane change", `${(plan.dv2 / 1000).toFixed(3)} km/s`) +
       kvAuto("Total Δv", `${(plan.dvTotal / 1000).toFixed(3)} km/s`) +
@@ -1040,7 +1040,7 @@ export class TransferPanel {
       }
       const apoAlt = this.captureApoAlt();
       const ellipseLine = apoAlt !== undefined
-        ? kvAuto("Capture orbit", `${(DEFAULT_CAPTURE_ALT / 1000).toFixed(0)} × ${(apoAlt / 1000).toFixed(0)} km (ellipse)`) : "";
+        ? kvAuto("Capture orbit", `${formatLengthPair(DEFAULT_CAPTURE_ALT, apoAlt)} (ellipse)`) : "";
       const haveDv = dvRemaining(ship);
       const feasible = cell.total <= haveDv;
       this.readout.innerHTML =
@@ -1134,7 +1134,7 @@ export class TransferPanel {
       this.readout.innerHTML =
         optLine +
         kvAuto("Depart", formatDate(a.tDepart)) +
-        kvAuto(`Flyby ${vb.name}`, `${formatDate(a.tFlyby)} · peri ${(a.flybyRadius / 1000).toFixed(0)} km, b ${bRadii} R, turn ${((a.turnRequired * 180) / Math.PI).toFixed(0)}°`) +
+        kvAuto(`Flyby ${vb.name}`, `${formatDate(a.tFlyby)} · peri ${formatLength(a.flybyRadius)}, b ${bRadii} R, turn ${((a.turnRequired * 180) / Math.PI).toFixed(0)}°`) +
         kvAuto("Arrive", formatDate(a.tArrive)) +
         kvAuto("Flight time", `${((a.tArrive - a.tDepart) / DAY).toFixed(0)} days`) +
         kvAuto("Injection Δv", `${(a.dvDepart / 1000).toFixed(3)} km/s`) +

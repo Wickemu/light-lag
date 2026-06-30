@@ -11,6 +11,7 @@
  * definitions for free — see {@link glossary} and {@link tooltip}.
  */
 
+import { AU } from "@lightlag/engine/constants";
 import { defineTerm, escapeTermAttr } from "./glossary.ts";
 import { markTerm } from "./tooltip.ts";
 
@@ -131,4 +132,49 @@ export function formatDur(s: number): string {
   if (s < 5400) return `${(s / 60).toFixed(1)} min`;
   if (s < 172800) return `${(s / 3600).toFixed(2)} hr`;
   return `${(s / 86400).toFixed(2)} d`;
+}
+
+// ── Adaptive length formatting ──────────────────────────────────────────────
+// One ladder, used everywhere a distance/altitude is shown, so a high orbit reads
+// "21.5 Gm" / "144 AU" instead of an 11-digit km value that overflows its slot.
+
+/** The unit + divisor for a metric magnitude. Common orbits stay in familiar km
+ *  (up to ~1,000,000 km); only genuinely large distances — where km would run to
+ *  7+ digits and overflow — step up to gigametres, then astronomical units. */
+function lengthUnit(a: number): [string, number] {
+  if (a < 1e3) return ["m", 1];
+  if (a < 1e9) return ["km", 1e3];
+  if (a < AU) return ["Gm", 1e9];
+  return ["AU", AU];
+}
+
+/** A trimmed mantissa: 4–6 digit values (km) print as a whole number; smaller
+ *  ones keep ~3 significant figures — 35786 · 800 · 21.5 · 1.50 · 0.144. */
+function sigFig(x: number): string {
+  const a = Math.abs(x);
+  if (a >= 1000) return String(Math.round(x));
+  if (a >= 100) return x.toFixed(0);
+  if (a >= 10) return x.toFixed(1);
+  if (a >= 1) return x.toFixed(2);
+  return x.toFixed(3);
+}
+
+/** Format a length in metres with an adaptive unit so big values never overflow:
+ *  800 → "800 km", 3.58e7 → "35786 km", 5e9 → "5.00 Gm", 2.15e10 → "21.5 Gm",
+ *  2.15e13 → "144 AU". An em-dash for non-finite. */
+export function formatLength(m: number): string {
+  if (!isFinite(m)) return "—";
+  const a = Math.abs(m);
+  if (a < 1) return "0 m";
+  const [unit, div] = lengthUnit(a);
+  if (unit === "AU" && a / AU >= 1e4) return `${m < 0 ? "-" : ""}${(a / AU).toExponential(1)} AU`;
+  return `${sigFig(m / div)} ${unit}`;
+}
+
+/** Format two lengths (e.g. periapsis × apoapsis) sharing ONE unit chosen from the
+ *  larger, so a pair reads "800×1500 km" or "21.5×22.1 Gm" rather than mixing units. */
+export function formatLengthPair(a: number, b: number): string {
+  if (!isFinite(a) || !isFinite(b)) return "—";
+  const [unit, div] = lengthUnit(Math.max(Math.abs(a), Math.abs(b)));
+  return `${sigFig(a / div)}×${sigFig(b / div)} ${unit}`;
 }
