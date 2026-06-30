@@ -51,12 +51,14 @@ import {
   primaryMu,
 } from "@lightlag/engine/ships";
 import { summarizeOrbit, periapsisRadius, orbitalPeriod, j2Rates, type OrbitSummary } from "@lightlag/engine/orbit";
-import { bodyPosition } from "@lightlag/engine/ephemeris";
+import { bodyPosition, bodyState } from "@lightlag/engine/ephemeris";
+import { selectPerturbers } from "@lightlag/engine/perturbed";
+import { thirdBodyAccel } from "@lightlag/engine/perturbations";
 import { retardedTime } from "@lightlag/engine/comms";
 import { STAR_BY_ID } from "@lightlag/engine/stars";
 import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR, j2RefRadius } from "@lightlag/engine/constants";
 import { formatDate } from "@lightlag/engine/time";
-import { length } from "@lightlag/engine/math/vec3";
+import { length, sub } from "@lightlag/engine/math/vec3";
 import { el, button, kv, setDisabled, numberField, formatDur } from "./dom.ts";
 import { collapsible, type Collapsible } from "./collapsible.ts";
 import { markTerm } from "./tooltip.ts";
@@ -149,6 +151,9 @@ export class ShipPanel {
   private electricEl!: HTMLElement;
   private spiralAltInput!: HTMLInputElement;
   private spiralBtn!: HTMLButtonElement;
+  private fidelityEl!: HTMLElement;
+  private fidelityReadout!: HTMLElement;
+  private fidelityBtn!: HTMLButtonElement;
   private dockEl!: HTMLElement;
   private dockReadout!: HTMLElement;
   private dockSelect!: HTMLSelectElement;
@@ -399,6 +404,16 @@ export class ShipPanel {
     elRow.append(el("span", "dv-label", "to (km)"), this.spiralAltInput, this.spiralBtn);
     this.electricEl.appendChild(elRow);
     host.appendChild(this.electricEl);
+
+    this.fidelityEl = el("div", "surface-ops");
+    this.fidelityEl.appendChild(sectionLabel("FIDELITY"));
+    this.fidelityReadout = el("div", "surface-readout");
+    this.fidelityEl.appendChild(this.fidelityReadout);
+    this.fidelityBtn = button("✦ Fly perturbed", () => this.doFidelity());
+    this.fidelityBtn.className = "wide-btn";
+    this.fidelityBtn.title = "Fly this ship under continuous third-body gravity (Sun/Moon on a high orbit, Earth at an L-point) instead of the default two-body coast. Toggle the Perturbed layer to also see the forecast arc.";
+    this.fidelityEl.appendChild(this.fidelityBtn);
+    host.appendChild(this.fidelityEl);
 
     this.dockEl = el("div", "surface-ops");
     this.dockEl.appendChild(sectionLabel("DOCK / TRANSFER"));
@@ -671,7 +686,8 @@ export class ShipPanel {
     setDisabled(this.spiralBtn, !canSpiral, "Available only with an electric drive while coasting in orbit around a body.");
     this.updateSurfaceOps(ship);
     this.updateDocking(ship);
-    const opsVisible = [this.surfaceEl, this.electricEl, this.dockEl].some((e) => e.style.display !== "none");
+    this.updateFidelity(ship, t);
+    const opsVisible = [this.surfaceEl, this.electricEl, this.fidelityEl, this.dockEl].some((e) => e.style.display !== "none");
     this.opsSec.root.style.display = opsVisible ? "" : "none";
   }
 
@@ -967,6 +983,47 @@ export class ShipPanel {
 
   private doSpiral(): void {
     if (this.selectedId) planSpiral(this.sim, this.selectedId, Math.max(0, Number(this.spiralAltInput.value) || 0));
+  }
+
+  /** Show the perturbed-fidelity control for a plain coasting ship: a toggle to fly it
+   *  under continuous third-body gravity, plus the dominant third body's current tidal
+   *  share of the central pull (a cheap, per-frame readout — the full divergence shows
+   *  visually via the Perturbed overlay). */
+  private updateFidelity(ship: Ship, t: number): void {
+    const body = BODY_BY_ID.get(ship.primary);
+    const eligible = !!body && ship.mode === "coast" && !ship.landed && !ship.interstellarLeg
+      && !ship.entryLeg && !ship.approachLeg && !ship.spiral && !ship.launchLeg && !ship.descentLeg
+      && !(ship.transfer && !ship.transfer.arrived);
+    this.fidelityEl.style.display = eligible ? "block" : "none";
+    if (!eligible || !body) return;
+    const on = ship.fidelity === "perturbed";
+    this.fidelityBtn.textContent = on ? "✦ Stop perturbed" : "✦ Fly perturbed";
+
+    const rel = shipRelativeState(ship, t);
+    const d = Math.max(length(rel.r), 1);
+    const central = body.mu / (d * d);
+    const rPrim = bodyState(body, t).r;
+    let domName = "—", domRatio = 0;
+    for (const p of selectPerturbers(ship.primary, t)) {
+      const pb = BODY_BY_ID.get(p.id);
+      if (!pb) continue;
+      const rB = sub(bodyState(pb, t).r, rPrim);
+      const ratio = length(thirdBodyAccel(rel.r, { x: 0, y: 0, z: 0 }, rB, p.mu)) / central;
+      if (ratio > domRatio) { domRatio = ratio; domName = pb.name; }
+    }
+    const dom = domRatio > 0 ? `${domName} · ${domRatio.toExponential(1)} × central` : "negligible";
+    this.fidelityReadout.innerHTML =
+      kv("Mode", on ? "third-body perturbed (flown)" : "two-body (game)") +
+      kv("Dominant 3rd body", dom);
+  }
+
+  private doFidelity(): void {
+    const id = this.selectedId;
+    if (!id) return;
+    const ship = this.sim.world.ships.get(id);
+    if (!ship) return;
+    if (ship.fidelity === "perturbed") this.sim.stopPerturbed(id);
+    else this.sim.flyPerturbed(id);
   }
 }
 

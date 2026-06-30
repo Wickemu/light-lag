@@ -20,9 +20,14 @@
  */
 
 import { type Ship } from "./world.ts";
-import { type Vec3 } from "./math/vec3.ts";
+import { type Vec3, sub, length } from "./math/vec3.ts";
 import { period } from "./math/kepler.ts";
-import { shipRelativeState, shipOsculatingElements, primaryMu } from "./ships.ts";
+import { shipRelativeState, shipOsculatingElements, primaryMu, spinAxis } from "./ships.ts";
+import { BODY_BY_ID, MU_SUN, j2RefRadius } from "./constants.ts";
+import { bodyState, bodyElements, bodyStateRelative } from "./ephemeris.ts";
+import { soiRadius } from "./orbit.ts";
+import { thirdBodyAccel } from "./perturbations.ts";
+import { integratePerturbed, selectPerturbers, type Perturber } from "./perturbed.ts";
 
 export interface SampledPath {
   /** Points relative to `primary`, in metres, ordered tail → head → horizon.
@@ -106,4 +111,113 @@ export function shipForecastPath(ship: Ship, t: number, opts: ForecastOpts = {})
   }
   const headIndex = Math.round(((t - tStart) / span) * segments);
   return { points, primary: ship.primary, times, headIndex, closed: fullPeriod };
+}
+
+const DEFAULT_FORECAST_HORIZON = 30 * 86400; // 30 days — generous to expose a slow third-body drift
+
+/** Per-perturber peak differential (tidal) acceleration over a forecast arc. */
+export interface PerturberContribution {
+  id: string;
+  peakAccel: number; // peak |third-body differential accel| over the arc (m/s²)
+}
+
+/** A higher-fidelity forecast of a ship's path under continuous third-body (and
+ *  optional numerical-J2) perturbations — the "perturbed" / "high-fidelity planning"
+ *  tier of the fidelity ladder. Pure read-time and analytic (the perturbers are read
+ *  from the analytic ephemeris); it NEVER mutates `WorldState`. */
+export interface PerturbedForecast {
+  /** The perturbed arc as a renderer-ready path (relative points, like the two-body
+   *  `shipForecastPath`), so the overlay can draw it alongside the game-model arc. */
+  path: SampledPath;
+  /** |perturbed − game-model coast| at the horizon (m): how far the true perturbed
+   *  trajectory ends from where the default two-body + secular-J2 model predicts —
+   *  i.e. how much fidelity the higher tier buys here. */
+  divergenceAtHorizon: number;
+  /** Per-perturber peak differential acceleration over the arc, dominant first. */
+  perturbers: PerturberContribution[];
+  /** Elapsed seconds actually forecast (clamped below the requested horizon if the arc
+   *  reaches the primary's SOI boundary). */
+  horizon: number;
+  /** True when the horizon was clamped because the arc left the primary's SOI (a
+   *  patched-conic boundary the continuous model cannot honour). */
+  clampedAtSoi: boolean;
+}
+
+export interface PerturbedForecastOpts {
+  /** Override the auto-selected perturber set (`selectPerturbers`). */
+  perturbers?: Perturber[];
+  /** Include the body's numerical J2 zonal term (default: true when the body has J2). */
+  includeJ2?: boolean;
+}
+
+/**
+ * Forecast a coasting ship's path under continuous third-body perturbations, for the
+ * preview overlay and the "how wrong is the two-body coast here" readout. Returns null
+ * for ships with no plain coasting conic to perturb (landed, thrusting, on an
+ * interstellar / entry / approach / powered / spiral leg). Seeds from the SAME
+ * `shipRelativeState` that places the marker, integrates with `integratePerturbed`, and
+ * compares the result to the engine's default coast at the horizon. Read-only and
+ * deterministic — golden-hash-neutral by construction (it touches nothing).
+ */
+export function perturbedForecast(
+  ship: Ship, t: number, horizon = DEFAULT_FORECAST_HORIZON, opts: PerturbedForecastOpts = {},
+): PerturbedForecast | null {
+  if (ship.landed || ship.interstellarLeg || ship.mode === "thrust") return null;
+  if (ship.entryLeg || ship.approachLeg || ship.launchLeg || ship.descentLeg || ship.spiral) return null;
+  const primaryDef = BODY_BY_ID.get(ship.primary);
+  if (!primaryDef) return null;
+
+  const mu = primaryMu(ship);
+  const start = shipRelativeState(ship, t);
+  const perturbers = opts.perturbers ?? selectPerturbers(ship.primary, t);
+  const useJ2 = (opts.includeJ2 ?? true) && !!primaryDef.J2;
+
+  const res = integratePerturbed({
+    mu, primaryId: ship.primary, t0: t, r0: start.r, v0: start.v, horizon, perturbers,
+    ...(useJ2 ? { J2: primaryDef.J2, Req: j2RefRadius(primaryDef), pole: spinAxis(primaryDef) } : {}),
+  });
+
+  // SOI clamp: cut the displayed arc where it would leave the primary's SOI. The Sun
+  // has no parent ⇒ no SOI bound (Infinity), so heliocentric arcs are never clamped.
+  let soiR = Infinity;
+  if (primaryDef.parent) {
+    const a = bodyElements(primaryDef, t)?.a ?? length(bodyStateRelative(primaryDef, t).r);
+    const parentMu = BODY_BY_ID.get(primaryDef.parent)?.mu ?? MU_SUN;
+    soiR = soiRadius(a, primaryDef.mu, parentMu);
+  }
+  let cut = res.samples.length;
+  for (let i = 0; i < res.samples.length; i++) {
+    if (length(res.samples[i]!.r) > soiR) { cut = i + 1; break; }
+  }
+  const clampedAtSoi = cut < res.samples.length;
+  const used = cut < res.samples.length ? res.samples.slice(0, cut) : res.samples;
+  const effHorizon = used[used.length - 1]?.t ?? 0;
+
+  // Per-perturber peak differential acceleration over the (clamped) arc.
+  const perturberContrib: PerturberContribution[] = perturbers.map((p) => {
+    const body = BODY_BY_ID.get(p.id);
+    let peak = 0;
+    if (body) {
+      for (const s of used) {
+        const tt = t + s.t;
+        const rB = sub(bodyState(body, tt).r, bodyState(primaryDef, tt).r);
+        peak = Math.max(peak, length(thirdBodyAccel(s.r, { x: 0, y: 0, z: 0 }, rB, p.mu)));
+      }
+    }
+    return { id: p.id, peakAccel: peak };
+  }).sort((a, b) => b.peakAccel - a.peakAccel);
+
+  // Divergence at the (clamped) horizon vs the engine's default game-model coast.
+  const keplerEnd = shipRelativeState(ship, t + effHorizon).r;
+  const perturbedEnd = used[used.length - 1]?.r ?? start.r;
+  const divergenceAtHorizon = length(sub(perturbedEnd, keplerEnd));
+
+  const path: SampledPath = {
+    points: used.map((s) => s.r),
+    primary: ship.primary,
+    times: used.map((s) => t + s.t),
+    headIndex: 0,
+    closed: false,
+  };
+  return { path, divergenceAtHorizon, perturbers: perturberContrib, horizon: effHorizon, clampedAtSoi };
 }

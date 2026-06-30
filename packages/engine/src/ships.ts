@@ -5,7 +5,7 @@
  * currently on — coasting or mid-burn.
  */
 
-import { type Ship, type InterstellarLeg, type EntryLeg, type LaunchLeg, type DescentLeg, type PoweredSample, type ApproachLeg } from "./world.ts";
+import { type Ship, type InterstellarLeg, type EntryLeg, type LaunchLeg, type DescentLeg, type PoweredSample, type ApproachLeg, type PerturbedLeg } from "./world.ts";
 import { type Stage, deltaVBudget, stageWetMass, consumeStageDv, boosterCount, liveJetPowerW } from "./propulsion.ts";
 import {
   type State,
@@ -16,14 +16,15 @@ import {
   meanMotion,
   wrapPi,
 } from "./math/kepler.ts";
-import { j2Rates, circularSpeed } from "./orbit.ts";
-import { bodyState } from "./ephemeris.ts";
+import { j2Rates, circularSpeed, soiRadius } from "./orbit.ts";
+import { bodyState, bodyElements, bodyStateRelative } from "./ephemeris.ts";
 import { retardedTime, dopplerFactor, redshiftZ } from "./comms.ts";
 import { STAR_BY_ID, starPosition } from "./stars.ts";
 import { BODY_BY_ID, C, DEG, j2RefRadius, type BodyDef } from "./constants.ts";
 import { type Vec3, add, addScaled, sub, scale, dot, cross, normalize, length, distance } from "./math/vec3.ts";
 import { integrateEntryPlanar, entryTrajectory } from "./maneuver/entry.ts";
 import { j2Approach, approachSampleAt } from "./maneuver/approach.ts";
+import { integratePerturbed, perturbedSampleAt, type Perturber } from "./perturbed.ts";
 import { DEFAULT_ENTRY_BETA } from "./surface.ts";
 import {
   solarFlux, hullArea, equilibriumTemp, detectionRange, minDetectablePowerW, radiatorArea,
@@ -335,6 +336,61 @@ export function buildApproachLeg(body: BodyDef, r0: Vec3, v0: Vec3, tStart: numb
   };
 }
 
+/** Laplace SOI radius of a body about its parent at time t — Infinity for the root Sun
+ *  (no parent ⇒ no bound). The perturbed coast is clamped to this so it never represents
+ *  an arc across a patched-conic boundary. */
+export function bodySoiRadius(body: BodyDef, t: number): number {
+  if (!body.parent) return Infinity;
+  const a = bodyElements(body, t)?.a ?? length(bodyStateRelative(body, t).r);
+  const parentMu = BODY_BY_ID.get(body.parent)?.mu ?? 0;
+  return parentMu > 0 ? soiRadius(a, body.mu, parentMu) : Infinity;
+}
+
+/** Build a third-body PERTURBED coast leg from the body-relative start state `r0,v0` at
+ *  `tStart`: integrate ONCE over `horizon` under central + the given perturbers (+ the
+ *  body's numerical J2 when `includeJ2`, default true), TRUNCATED at the primary's SOI
+ *  boundary so the leg never crosses a patched-conic seam. Carries the 3D arc spline +
+ *  the pinned end state the finalize re-osculates from, and the frozen perturber id-list
+ *  (so the leg replays identically on deserialize). The SAME `integratePerturbed` backs
+ *  the preview, so a flown leg matches its forecast. */
+export function buildPerturbedLeg(
+  body: BodyDef, r0: Vec3, v0: Vec3, tStart: number, horizon: number, perturbers: Perturber[],
+  opts: { includeJ2?: boolean } = {},
+): PerturbedLeg {
+  const useJ2 = (opts.includeJ2 ?? true) && !!body.J2;
+  const res = integratePerturbed({
+    mu: body.mu, primaryId: body.id, t0: tStart, r0, v0, horizon, perturbers,
+    ...(useJ2 ? { J2: body.J2, Req: j2RefRadius(body), pole: spinAxis(body) } : {}),
+  });
+  const ids = perturbers.map((p) => p.id);
+  // SOI clamp: cut the leg at the first sample beyond the primary's SOI.
+  const soiR = bodySoiRadius(body, tStart);
+  let cut = res.samples.length;
+  if (Number.isFinite(soiR)) {
+    for (let i = 0; i < res.samples.length; i++) {
+      if (length(res.samples[i]!.r) > soiR) { cut = i + 1; break; }
+    }
+  }
+  if (cut < res.samples.length) {
+    const samples = res.samples.slice(0, cut);
+    const end = samples[samples.length - 1]!;
+    return { bodyId: body.id, tStart, tEnd: tStart + end.t, r0, v0, samples, exitR: end.r, exitV: end.v, perturbers: ids };
+  }
+  // Not clamped: trim the sub-step overshoot and pin the exit exactly at the horizon.
+  const samples = res.samples.filter((s) => s.t <= horizon);
+  samples.push({ t: horizon, r: res.exitR, v: res.exitV });
+  return { bodyId: body.id, tStart, tEnd: tStart + horizon, r0, v0, samples, exitR: res.exitR, exitV: res.exitV, perturbers: ids };
+}
+
+/** Body-relative state of a ship flying a third-body PERTURBED coast leg at time t.
+ *  Interpolates the precomputed arc spline (sampled once at the leg start); at/after
+ *  tEnd it returns the PINNED exit state (the finalize takes over). Read-time
+ *  deterministic and exact at any time-warp — the spline is fixed at commit. */
+export function perturbedLegState(leg: PerturbedLeg, t: number): State {
+  if (t >= leg.tEnd) return { r: leg.exitR, v: leg.exitV };
+  return perturbedSampleAt(leg.samples, Math.max(0, t - leg.tStart));
+}
+
 /** Build a complete entry leg from the interface-crossing state `r0,v0` at `tStart`:
  *  run the fine entry pass for the outcome/duration/peak budget, integrate to the
  *  terminal planar state, and reconstruct the body-relative exit state the finalize
@@ -450,6 +506,7 @@ export function shipRelativeState(ship: Ship, t: number): State {
   if (ship.landed) return landedRelativeState(ship, t);
   if (ship.entryLeg) return entryLegState(ship.entryLeg, t);
   if (ship.approachLeg) return approachLegState(ship.approachLeg, t);
+  if (ship.perturbedLeg) return perturbedLegState(ship.perturbedLeg, t);
   if (ship.interstellarLeg) return interstellarLegState(ship.interstellarLeg, t);
   if (ship.spiral) return elementsToState(spiralElements(ship, t), primaryMu(ship));
   if (ship.mode === "thrust" && ship.r && ship.v) {
@@ -558,6 +615,10 @@ export function shipOsculatingElements(ship: Ship, t: number): KeplerElements {
   }
   if (ship.approachLeg) {
     const st = approachLegState(ship.approachLeg, t);
+    return stateToElements(st.r, st.v, primaryMu(ship));
+  }
+  if (ship.perturbedLeg) {
+    const st = perturbedLegState(ship.perturbedLeg, t);
     return stateToElements(st.r, st.v, primaryMu(ship));
   }
   const mu = primaryMu(ship);

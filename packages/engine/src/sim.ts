@@ -26,8 +26,9 @@ import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius, visVivaSpeed, j2Rates, synchronousRadius, combinedPlaneChangeDv, inclinationToEquator, spinPole } from "./orbit.ts";
 import {
   activeStage, applyImpulsiveDv, dvRemaining, primaryMu, shipOsculatingElements, shipRelativeState, shipWorldState,
-  interstellarProperTime, spiralElements, buildEntryLeg, buildApproachLeg, inertialDirToSurface, NOMINAL_ENTRY_VEHICLE,
+  interstellarProperTime, spiralElements, buildEntryLeg, buildApproachLeg, buildPerturbedLeg, inertialDirToSurface, NOMINAL_ENTRY_VEHICLE,
 } from "./ships.ts";
+import { selectPerturbers, type Perturber } from "./perturbed.ts";
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
 import { type KeplerElements, stateToElements, meanMotion, wrapTwoPi } from "./math/kepler.ts";
@@ -55,6 +56,14 @@ const MAX_SEG_RAPIDITY = 1e6;
 /** While any ship is thrusting, the warp is capped so burns stay watchable and
  *  the sub-step count per frame stays bounded. */
 const THRUST_WARP_CAP = 60;
+/** Bounded horizon (s) of a single flown perturbed-coast chunk. A perturbed-fidelity
+ *  ship is flown as SUCCESSIVE legs of this length, each re-osculating and re-arming the
+ *  next, so any one stored spline stays bounded. */
+const PERTURBED_LEG_HORIZON = 30 * 86400; // 30 days
+/** When auto-selecting perturbers for a flown leg, drop bodies whose peak differential
+ *  acceleration is below this fraction of the central pull — keeps the integrated set
+ *  small (e.g. Moon+Sun at GEO, not every planet) without losing the dominant terms. */
+const PERTURBED_SELECT_THRESHOLD = 1e-5;
 
 /** Replace a Map's contents in place (keeps the same Map instance). */
 function copyMap<V>(dst: Map<string, V>, src: Map<string, V>): void {
@@ -78,6 +87,17 @@ export class Simulation {
    * unchanged; an app opts into "informative".
    */
   commandPolicy: "binding" | "informative" = "binding";
+  /**
+   * Preview fidelity for analysis overlays (the "high-fidelity planning" tier of the
+   * fidelity ladder — see `perturbed.ts` / `trajectory.ts perturbedForecast`).
+   *  - "game" (default): the game layer shows only the two-body + secular-J2 forecast.
+   *  - "perturbed": the game layer additionally computes/draws the continuous
+   *    third-body perturbed forecast and its divergence readout.
+   * This is NON-SERIALIZED config (like `commandPolicy`) — it changes nothing in
+   * `WorldState`, so it can never move the golden hash. It governs PREVIEW only;
+   * whether a ship is actually FLOWN perturbed is the per-ship `Ship.fidelity` opt-in.
+   */
+  planningFidelity: "game" | "perturbed" = "game";
   private msgCounter = 0;
 
   constructor(world: WorldState) {
@@ -638,7 +658,11 @@ export class Simulation {
    */
   private impactTime(ship: Ship): number | null {
     if (ship.status === "lost" || ship.mode !== "coast") return null;
-    if (ship.landed || ship.interstellarLeg || ship.spiral || ship.entryLeg || !ship.elements) return null;
+    // A perturbed-leg ship is NOT on a single conic, so the analytic periapsis test below
+    // is meaningless for it — the leg owns its own state and terminal handling (the
+    // perturbed-finalize). (The supported perturbed orbits are high/bound; in-arc surface
+    // impact is a documented follow-up.)
+    if (ship.landed || ship.interstellarLeg || ship.spiral || ship.entryLeg || ship.perturbedLeg || !ship.elements) return null;
     const body = BODY_BY_ID.get(ship.primary);
     if (!body) return null;
     const R = body.radius;
@@ -775,6 +799,7 @@ export class Simulation {
       case "launch-arrive": this.arriveLaunch(ship); break;
       case "land-arrive": this.arriveLand(ship); break;
       case "aero-trim": this.trimAerocapture(ship); break;
+      case "perturbed-finalize": this.finalizePerturbed(ship); break;
       default: break;
     }
   }
@@ -1361,6 +1386,92 @@ export class Simulation {
     ship.epoch = t;
     tr.arrived = true;
     tr.dvArrive = dv;
+    // Higher-fidelity arrival: if the craft is in perturbed mode, fly the L-point as a
+    // continuous third-body coast (it will actually drift off the kinematic point on the
+    // real instability timescale) instead of staying pinned to the two-body conic.
+    if (ship.fidelity === "perturbed") this.armPerturbedLeg(ship, t);
+  }
+
+  // ── Third-body perturbed propagation (the flown higher-fidelity tier) ─────────
+
+  /**
+   * Opt a ship into flown third-body PERTURBED propagation and arm its first leg. The
+   * ship is then coasted under continuous third-body gravity (the Sun on a high orbit,
+   * sibling moons inside a planet's SOI, Earth at a Sun–Earth L-point) as successive
+   * bounded `PerturbedLeg`s, each re-osculating and re-arming the next. Opt-in and
+   * reversible (clear `fidelity`); the default game model is untouched. Returns false if
+   * the ship can't be armed right now (thrusting, on another leg, landed, mid-transfer).
+   */
+  flyPerturbed(
+    shipId: string,
+    opts: { horizon?: number; includeJ2?: boolean; perturbers?: Perturber[] } = {},
+  ): boolean {
+    const ship = this.world.ships.get(shipId);
+    if (!ship) return false;
+    ship.fidelity = "perturbed";
+    return this.armPerturbedLeg(ship, this.world.t, opts);
+  }
+
+  /** Stop flying a ship perturbed: drop the active leg + its finalize and re-osculate
+   *  onto a plain game-mode conic from wherever it is now. */
+  stopPerturbed(shipId: string): void {
+    const ship = this.world.ships.get(shipId);
+    if (!ship) return;
+    ship.fidelity = undefined;
+    if (ship.perturbedLeg) {
+      const st = shipRelativeState(ship, this.world.t);
+      ship.elements = stateToElements(st.r, st.v, primaryMu(ship));
+      ship.epoch = this.world.t;
+      ship.perturbedLeg = undefined;
+    }
+    this.events.removeByEntityKind(ship.id, "perturbed-finalize");
+  }
+
+  /** Build and attach a bounded perturbed-coast leg from the ship's current state, and
+   *  schedule its finalize. Pure-deterministic in the start state + time (the perturbers
+   *  are analytic), so the leg — and the whole re-arm chain — is chunk-invariant. */
+  private armPerturbedLeg(
+    ship: Ship, t: number,
+    opts: { horizon?: number; includeJ2?: boolean; perturbers?: Perturber[] } = {},
+  ): boolean {
+    if (ship.status === "lost" || ship.landed || ship.interstellarLeg) return false;
+    if (ship.mode === "thrust" || ship.burn) return false;
+    if (ship.entryLeg || ship.approachLeg || ship.spiral || ship.launchLeg || ship.descentLeg) return false;
+    if (ship.transfer && !ship.transfer.arrived) return false; // a pending transfer owns the path
+    const body = BODY_BY_ID.get(ship.primary);
+    if (!body) return false;
+    const st = shipRelativeState(ship, t);
+    const horizon = opts.horizon ?? PERTURBED_LEG_HORIZON;
+    const perturbers = opts.perturbers ?? selectPerturbers(ship.primary, t, {
+      threshold: PERTURBED_SELECT_THRESHOLD, r0: st.r, horizon, mu: body.mu,
+    });
+    if (perturbers.length === 0) return false; // nothing significant to feel
+    const leg = buildPerturbedLeg(body, st.r, st.v, t, horizon, perturbers, { includeJ2: opts.includeJ2 });
+    ship.perturbedLeg = leg;
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    // Cancel any stale finalize before scheduling this leg's, so a re-arm can never be
+    // pre-empted by a previous leg's pending event.
+    this.events.removeByEntityKind(ship.id, "perturbed-finalize");
+    this.events.push({ t: leg.tEnd, kind: "perturbed-finalize", entityId: ship.id });
+    return true;
+  }
+
+  /** End a perturbed-coast leg: re-osculate onto a fresh conic from the leg's exit state
+   *  and, while still in perturbed mode, re-arm the next bounded chunk — so the perturbed
+   *  flight continues indefinitely without ever storing an unbounded spline. */
+  private finalizePerturbed(ship: Ship): void {
+    const leg = ship.perturbedLeg;
+    if (!leg) return;
+    const t = this.world.t; // == leg.tEnd
+    ship.elements = stateToElements(leg.exitR, leg.exitV, primaryMu(ship));
+    ship.epoch = t;
+    ship.perturbedLeg = undefined;
+    ship.mode = "coast";
+    ship.r = undefined;
+    ship.v = undefined;
+    if (ship.fidelity === "perturbed") this.armPerturbedLeg(ship, t);
   }
 
   /** Circularize a same-primary GEO raise at apoapsis: a combined burn that circularizes at the

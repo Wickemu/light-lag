@@ -23,6 +23,7 @@
  */
 
 import { type Vec3, add, sub, scale, dot, length } from "../math/vec3.ts";
+import { centralAccel, j2ZonalAccel } from "../perturbations.ts";
 
 export interface ApproachState {
   r: Vec3; // body-relative position (m)
@@ -53,16 +54,11 @@ export interface J2ApproachParams {
   v0: Vec3; // body-relative velocity at SOI entry (m/s)
 }
 
-/** Point-mass + J2 acceleration referenced to the (unit) pole `n`. */
+/** Point-mass + J2 acceleration referenced to the (unit) pole `n`. The two terms come
+ *  from the shared `perturbations.ts` library (the same J2 the force overlay and the
+ *  perturbed propagator use) — byte-identical to the former inline form. */
 function accel(r: Vec3, mu: number, J2: number, Req: number, n: Vec3): Vec3 {
-  const R = length(r);
-  const grav = scale(r, -mu / (R * R * R));
-  if (!J2) return grav;
-  const sigma = dot(r, n) / R;
-  const c = (-1.5 * J2 * mu * Req * Req) / (R * R * R * R);
-  const rHat = scale(r, 1 / R);
-  const aJ2 = add(scale(rHat, c * (1 - 5 * sigma * sigma)), scale(n, c * 2 * sigma));
-  return add(grav, aJ2);
+  return add(centralAccel(r, mu), j2ZonalAccel(r, mu, J2, Req, n));
 }
 
 /** One classical RK4 step of size `dt` on the {r, v} state. */

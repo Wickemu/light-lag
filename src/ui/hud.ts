@@ -60,6 +60,7 @@ const LAYER_CHIPS: { key: LayerKey; label: string }[] = [
   { key: "orbits", label: "Orbits" },
   { key: "trajectory", label: "Path" },
   { key: "route", label: "Route" },
+  { key: "perturbed", label: "Perturbed" },
   { key: "labels", label: "Labels" },
   { key: "stars", label: "Stars" },
   { key: "starLabels", label: "Star names" },

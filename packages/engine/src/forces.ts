@@ -22,6 +22,7 @@ import { type Vec3, sub, scale, normalize, length } from "./math/vec3.ts";
 import { type BodyDef, BODY_BY_ID, MU_SUN } from "./constants.ts";
 import { bodyState, bodyStateRelative, bodyElements } from "./ephemeris.ts";
 import { primaryMu, shipWorldState, shipRelativeState, shipOsculatingElements } from "./ships.ts";
+import { thirdBodyAccel } from "./perturbations.ts";
 
 export interface AttractorPull {
   attractorId: string;
@@ -56,16 +57,11 @@ function directPull(rObj: Vec3, rAtt: Vec3, muAtt: number, id: string): Attracto
 
 /** Tidal (differential) acceleration on `rObj` relative to its `rPrimary` from a
  *  third body `rB` of parameter `muB`: the perturbation that actually influences
- *  the primary-relative orbit. */
+ *  the primary-relative orbit. Thin wrapper over the shared `thirdBodyAccel` term
+ *  (`perturbations.ts`), so the overlay and the perturbed integrator are guaranteed
+ *  to use the identical formula. */
 function tidalPull(rObj: Vec3, rPrimary: Vec3, rB: Vec3, muB: number, id: string): AttractorPull {
-  const accel = (from: Vec3): Vec3 => {
-    const d = sub(rB, from);
-    const r = length(d);
-    return r === 0 ? { x: 0, y: 0, z: 0 } : scale(d, muB / (r * r * r));
-  };
-  const aObj = accel(rObj);
-  const aPrim = accel(rPrimary);
-  const g = sub(aObj, aPrim);
+  const g = thirdBodyAccel(rObj, rPrimary, rB, muB);
   return { attractorId: id, gravAccel: g, magnitude: length(g), tidal: true };
 }
 

@@ -180,6 +180,36 @@ export interface ApproachLeg {
   exitV: Vec3; // body-relative periapsis velocity (m/s)
 }
 
+/**
+ * An in-progress in-sim THIRD-BODY PERTURBED coast about `bodyId` — the flown form of
+ * the higher-fidelity tier (see `perturbed.ts`). Unlike a game-mode coast (a two-body
+ * conic about one primary), this arc is integrated under central gravity + the listed
+ * third bodies (+ optional numerical J2), so the ship CONTINUOUSLY feels them — the Sun
+ * on a high orbit, sibling moons in a planet's SOI, Earth at a Sun–Earth L-point. Built
+ * ONCE over a bounded horizon and carried as a read-time leg (the ApproachLeg pattern):
+ * a 3D sample spline plus the pinned end state `exitR,exitV` the finalize re-osculates
+ * from. `perturbers` is the FROZEN id-list the arc was integrated with, stored so the
+ * leg is fully re-derivable on deserialize without re-running selection. Read-time
+ * interpolation is exact at any time-warp (chunk-invariant); the field is OPTIONAL
+ * (absent ⇒ a game-mode coast, and absent from the golden scenario), so it is
+ * hash-neutral until a ship opts in via `Ship.fidelity`. Cleared at the finalize. */
+export interface PerturbedLeg {
+  bodyId: string;
+  tStart: number; // s since J2000 — start of the perturbed arc
+  tEnd: number; // s — end of the bounded arc, where the finalize re-osculates
+  r0: Vec3; // body-relative state at the start (m)
+  v0: Vec3; // body-relative velocity at the start (m/s)
+  samples: { t: number; r: Vec3; v: Vec3 }[]; // perturbed arc; t relative to tStart
+  exitR: Vec3; // body-relative state at tEnd (m) — the re-osculation point
+  exitV: Vec3; // body-relative velocity at tEnd (m/s)
+  perturbers: string[]; // frozen perturber id-list (for re-derivable replay)
+}
+
+/** A ship's propagation fidelity. Absent ⇒ "game" (the default two-body / secular-J2
+ *  patched-conic model). "perturbed" ⇒ the ship is FLOWN under continuous third-body
+ *  perturbations as successive `PerturbedLeg`s. */
+export type Fidelity = "game" | "perturbed";
+
 /** The five Lagrange points of a (primary, secondary) pair, keyed off the secondary body. */
 export type LagrangePoint = "L1" | "L2" | "L3" | "L4" | "L5";
 
@@ -313,6 +343,14 @@ export interface Ship {
    *  until the capture finalize). Absent at a spherical body — that arrival stays a
    *  pure-Kepler coast. */
   approachLeg?: ApproachLeg;
+  /** Propagation fidelity. Absent ⇒ "game" (two-body / secular-J2). "perturbed" ⇒ the
+   *  ship is flown under continuous third-body perturbations (successive PerturbedLegs).
+   *  Opt-in; absent ⇒ omitted from serialization ⇒ golden hash unmoved. */
+  fidelity?: Fidelity;
+  /** An in-progress in-sim third-body PERTURBED coast (the flown higher-fidelity tier;
+   *  the leg owns the ship's state until the perturbed-finalize re-osculates and re-arms
+   *  the next leg). Present only on a `fidelity === "perturbed"` ship. */
+  perturbedLeg?: PerturbedLeg;
   /** Set when the ship has touched down on a body's surface (after paying the
    *  descent Δv). `surfaceDir` is the landing site as a BODY-FIXED unit vector, so
    *  the ship co-rotates with the surface (moving at surface speed, not orbital

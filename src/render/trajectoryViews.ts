@@ -17,7 +17,7 @@
 import * as THREE from "three";
 import { type WorldState } from "@lightlag/engine/world";
 import { type Simulation } from "@lightlag/engine/sim";
-import { shipForecastPath, type SampledPath } from "@lightlag/engine/trajectory";
+import { shipForecastPath, perturbedForecast, type SampledPath } from "@lightlag/engine/trajectory";
 import { planRoute, type PlannedRoute, type RouteArgs } from "@lightlag/engine/route";
 import { bodyState } from "@lightlag/engine/ephemeris";
 import { BODY_BY_ID, DEFAULT_CAPTURE_ALT } from "@lightlag/engine/constants";
@@ -26,8 +26,10 @@ import { type Visibility } from "./visibility.ts";
 import { RenderPolyline, fillPolylineLocal, fillPolylineWorld, overlayPalette } from "./overlayUtil.ts";
 
 const SEGMENTS = 256;
+const PERTURBED_CAPACITY = 512; // perturbedForecast emits ~TARGET_SAMPLES points
 const COAST_COLOR = 0x6fe0ff;
 const THRUST_COLOR = 0xff8a30;
+const PERTURBED_COLOR = 0xff5fd0; // magenta — the higher-fidelity arc, distinct from the cyan coast
 const FORWARD_FLOOR = 0.5; // brightness at the forward horizon (the nucleus is 1)
 const MAX_ROUTE_LEGS = 4; // park-from, two helio legs (assist), park-to
 
@@ -38,6 +40,7 @@ const _thrust = new THREE.Color(THRUST_COLOR);
 
 interface ShipTraj {
   forecast: RenderPolyline;
+  perturbed: RenderPolyline;
 }
 
 export class TrajectoryViews {
@@ -63,7 +66,13 @@ export class TrajectoryViews {
       vertexColors: true,
     });
     this.sm.scene.add(forecast.object);
-    const v: ShipTraj = { forecast };
+    const perturbed = new RenderPolyline({
+      capacity: PERTURBED_CAPACITY,
+      color: PERTURBED_COLOR,
+      opacity: 0.9,
+    });
+    this.sm.scene.add(perturbed.object);
+    const v: ShipTraj = { forecast, perturbed };
     this.visuals.set(id, v);
     return v;
   }
@@ -71,6 +80,8 @@ export class TrajectoryViews {
   private dispose(id: string, v: ShipTraj): void {
     this.sm.scene.remove(v.forecast.object);
     v.forecast.dispose();
+    this.sm.scene.remove(v.perturbed.object);
+    v.perturbed.dispose();
     this.visuals.delete(id);
     const pool = this.routes.get(id);
     if (pool) {
@@ -134,7 +145,7 @@ export class TrajectoryViews {
 
     // These are in-system overlays; park them in the interstellar view.
     if (this.sm.viewMode !== "system") {
-      for (const v of this.visuals.values()) v.forecast.setVisible(false);
+      for (const v of this.visuals.values()) { v.forecast.setVisible(false); v.perturbed.setVisible(false); }
       for (const pool of this.routes.values()) for (const pl of pool) pl.setVisible(false);
       for (const pl of this.preview) pl.setVisible(false);
       return;
@@ -163,6 +174,21 @@ export class TrajectoryViews {
       fillPolylineLocal(v.forecast, path.points, bodyState(primary, t).r, this.sm);
       this.writeCometColors(v.forecast, path, ship.mode === "thrust", pal.tailFloor);
       v.forecast.setVisible(true);
+    }
+
+    // ── Perturbed (higher-fidelity) forecast overlay (Perturbed layer + planning
+    //    fidelity on): the continuous third-body arc drawn against the two-body coast,
+    //    so the divergence is visible. Read-only; gated, so it never costs when off. ──
+    const showPerturbed = this.vis.layer("perturbed") && this.vis.layer("ships");
+    for (const ship of world.ships.values()) {
+      const v = this.visuals.get(ship.id);
+      if (!v) continue;
+      if (!showPerturbed) { v.perturbed.setVisible(false); continue; }
+      const fc = perturbedForecast(ship, t);
+      const primary = fc ? BODY_BY_ID.get(fc.path.primary) : undefined;
+      if (!fc || !primary || fc.path.points.length < 2) { v.perturbed.setVisible(false); continue; }
+      fillPolylineLocal(v.perturbed, fc.path.points, bodyState(primary, t).r, this.sm);
+      v.perturbed.setVisible(true);
     }
 
     // ── Committed planned routes (Route layer): the whole path of a transfer that

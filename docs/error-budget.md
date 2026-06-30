@@ -75,9 +75,13 @@ for range — see ROADMAP "Validity window").
 - **Atmospheric drag: constant-rate secular** (`Ship.drag`: a fixed ṅ → along-track
   + SMA decay). Exact at any time-warp by construction, but misses the decay
   *runaway* as perigee drops and has no space-weather (F10.7 / geomagnetic) handle.
-- **No continuous third-body gravity during coast** — the Sun is not felt in Earth
-  orbit, moons are not felt in a planet's SOI, except through explicit SOI patches
-  and flyby mechanics.
+- **No continuous third-body gravity during coast** — in the **default (game) tier**
+  the Sun is not felt in Earth orbit, moons are not felt in a planet's SOI, except
+  through explicit SOI patches and flyby mechanics. The **opt-in "perturbed" tier**
+  (`perturbed.ts` / `Ship.fidelity`, plus the read-time `perturbedForecast` preview)
+  DOES feel selected third bodies continuously — validated against the textbook GEO
+  lunisolar inclination drift (~0.85–0.95°/yr) and the Sun–Earth L2 instability — but it
+  is gated and never on by default, so the error figures above are the default model's.
 
 ### Powered flight (`sim.ts`, `math/integrators.ts`)
 
