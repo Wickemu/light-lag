@@ -196,6 +196,7 @@ function sectionsByRegion(): FocusSection[] {
   const planets = BODIES.filter((b) => b.kind === "planet");
   if (planets.length) out.push({ label: "Planets", eyeKind: "planet", rows: planets.map((b) => ({ id: b.id, child: false })) });
 
+  const known = new Set<BodyRegion>(REGION_GROUPS.map((g) => g.region));
   for (const g of REGION_GROUPS) {
     const members = BODIES.filter((b) => b.region === g.region).sort((a, b) => semiMajor(a) - semiMajor(b));
     if (members.length === 0) continue;
@@ -203,6 +204,21 @@ function sectionsByRegion(): FocusSection[] {
       label: g.label,
       eyeMembers: members.map((b) => b.id),
       rows: members.map((b) => ({ id: b.id, child: false })),
+    });
+  }
+
+  // Defensive: any heliocentric asteroid/dwarf whose region tag is missing or
+  // unrecognised still gets a home, so a future un-tagged body is never silently
+  // dropped from the navigator (and from Tab cycling). A test asserts the tag is
+  // always present and valid; this is the belt to that suspenders.
+  const orphans = BODIES.filter(
+    (b) => b.parent === "sun" && (b.kind === "asteroid" || b.kind === "dwarf") && !(b.region && known.has(b.region)),
+  ).sort((a, b) => semiMajor(a) - semiMajor(b));
+  if (orphans.length > 0) {
+    out.push({
+      label: "Other small bodies",
+      eyeMembers: orphans.map((b) => b.id),
+      rows: orphans.map((b) => ({ id: b.id, child: false })),
     });
   }
 
@@ -691,11 +707,23 @@ export class Hud {
     });
   }
 
-  /** Show or hide a whole system at once via per-body overrides: hide all if all
-   *  are currently shown, otherwise reveal all. */
+  /** Show or hide a whole group (a planetary system or a small-body region) at
+   *  once. Hiding sets a per-body override on each member. Revealing clears those
+   *  overrides AND re-enables any KIND flag that would otherwise keep a member
+   *  hidden — without that, a group whose kind was hidden wholesale elsewhere (e.g.
+   *  the Asteroids kind eye, which Region mode doesn't expose) would paint as a
+   *  dead, unrecoverable toggle: the per-body reveal stays masked by the kind flag. */
   private toggleSystem(members: string[]): void {
     const hide = this.systemShown(members);
-    for (const id of members) this.vis.setBodyHidden(id, hide);
+    if (hide) {
+      for (const id of members) this.vis.setBodyHidden(id, true);
+      return;
+    }
+    for (const id of members) {
+      const d = BODY_BY_ID.get(id);
+      if (d && !this.vis.kindVisible(d.kind)) this.vis.setKind(d.kind, true);
+      this.vis.setBodyHidden(id, false);
+    }
   }
 
   /** Light the focused body's row (and optionally scroll it into view). Called

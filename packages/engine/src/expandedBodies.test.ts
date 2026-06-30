@@ -24,10 +24,16 @@ describe("expanded heliocentric bodies vs JPL Horizons @ J2000", () => {
       const body = BODY_BY_ID.get(rec.body)!;
       const st = bodyState(body, tOf(rec.jd));
       const { r, v } = ref(rec);
-      // 10 km absolute: well above the fixture's own ~km rounding, far below any
-      // orbit radius (the closest, an NEA, is ~1e8 km out).
-      expect(distance(st.r, r)).toBeLessThan(1e4);
-      expect(distance(st.v, v) / length(v)).toBeLessThan(1e-4);
+      // The full-precision osculating elements reproduce the fixture to its own
+      // rounding floor: the fixtures carry ~11 significant figures (sub-metre for
+      // the inner bodies, ~100 m for the most distant TNO), so the residual is
+      // ~1e-11 of the orbit radius. Gate at 1e-9 of |r| — ~100× the rounding floor,
+      // yet far tighter than the orbit (a 0.1° mean-anomaly slip would move a
+      // main-belt body ~1e6 km, ~7 orders over this bound), so it actually guards
+      // the element values rather than merely confirming the body is in the system.
+      const orbitR = length(r);
+      expect(distance(st.r, r)).toBeLessThan(orbitR * 1e-9);
+      expect(distance(st.v, v) / length(v)).toBeLessThan(1e-6);
     });
   }
 });
@@ -39,8 +45,13 @@ describe("expanded moons vs JPL Horizons @ J2000 (parent-relative)", () => {
       const st = bodyStateRelative(body, tOf(rec.jd));
       const { r, v } = ref(rec);
       const orbitR = length(r);
-      expect(distance(st.r, r)).toBeLessThan(orbitR * 0.01);
-      expect(distance(st.v, v) / length(v)).toBeLessThan(0.02);
+      // The engine reproduces every moon to ≤3e-7 of its orbit radius (the row's
+      // 7-sig-fig semi-major axis is the limiting term; the worst case is Sycorax,
+      // a ~1e10 m irregular). Gate at 1e-5 — ~30× the worst residual, so a real
+      // ω/Ω/M0/MDot transcription error (which would displace a body by ≳1e-3 of
+      // its orbit) is caught, not waved through by a percent-scale tolerance.
+      expect(distance(st.r, r)).toBeLessThan(orbitR * 1e-5);
+      expect(distance(st.v, v) / length(v)).toBeLessThan(1e-5);
     });
   }
 });
@@ -135,5 +146,39 @@ describe("region tags are well-formed", () => {
     const seen = new Set<BodyRegion>();
     for (const b of BODY_BY_ID.values()) if (b.region) seen.add(b.region);
     for (const r of VALID) expect(seen, `region ${r} is empty`).toContain(r);
+  });
+
+  // Presence/validity isn't enough — a flipped tag (Bennu → main_belt, Hektor →
+  // kuiper) would pass the checks above. Pin representative members of each region.
+  it("representative bodies carry their expected region", () => {
+    const expected: Record<string, BodyRegion> = {
+      eros: "near_earth", bennu: "near_earth", ryugu: "near_earth", itokawa: "near_earth", apophis: "near_earth",
+      ceres: "main_belt", vesta: "main_belt", pallas: "main_belt", hygiea: "main_belt", psyche: "main_belt", interamnia: "main_belt",
+      hektor: "trojan", patroclus: "trojan", achilles: "trojan", eurybates: "trojan",
+      pluto: "kuiper", quaoar: "kuiper", orcus: "kuiper", arrokoth: "kuiper", varuna: "kuiper", ixion: "kuiper",
+      eris: "scattered", gonggong: "scattered",
+      sedna: "oort", leleakuhonua: "oort",
+    };
+    for (const [id, region] of Object.entries(expected)) {
+      expect(BODY_BY_ID.get(id)?.region, `${id} should be region "${region}"`).toBe(region);
+    }
+  });
+
+  // And the tag must be consistent with the body's actual orbit, so a mistag that
+  // also lands in the wrong dynamical regime is caught for EVERY tagged body, not
+  // just the pinned sample above.
+  it("every region tag is consistent with the body's orbit", () => {
+    const aAU = (id: string) => bodyElements(BODY_BY_ID.get(id)!, 0)!.a / AU;
+    const periAU = (id: string) => { const el = bodyElements(BODY_BY_ID.get(id)!, 0)!; return (el.a * (1 - el.e)) / AU; };
+    for (const b of BODY_BY_ID.values()) {
+      if (!b.region) continue;
+      const a = aAU(b.id), q = periAU(b.id), where = `${b.id} (${b.region})`;
+      if (b.region === "near_earth") expect(q, where).toBeLessThanOrEqual(1.3);
+      else if (b.region === "main_belt") { expect(a, where).toBeGreaterThan(2.0); expect(a, where).toBeLessThan(3.7); }
+      else if (b.region === "trojan") { expect(a, where).toBeGreaterThan(5.0); expect(a, where).toBeLessThan(5.4); }
+      else if (b.region === "kuiper") { expect(a, where).toBeGreaterThan(30); expect(a, where).toBeLessThan(50); }
+      else if (b.region === "scattered") expect(a, where).toBeGreaterThan(45);
+      else if (b.region === "oort") expect(a, where).toBeGreaterThan(150);
+    }
   });
 });
