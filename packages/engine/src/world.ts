@@ -210,6 +210,38 @@ export interface PerturbedLeg {
  *  perturbations as successive `PerturbedLeg`s. */
 export type Fidelity = "game" | "perturbed";
 
+/**
+ * A Δv-accounted STATION-KEEPING hold: the ship actively spends propellant to hold a
+ * nominal target against the third-body drift the perturbed model reveals, so an
+ * unstable point (an L-point, or a high orbit under lunisolar perturbation) is NOT held
+ * for free. It runs ON TOP of perturbed flight: each correction window is a `PerturbedLeg`
+ * that drifts off the nominal, then at the window's end a correction Δv (sized from the
+ * drift) is charged and the ship is re-seated on the nominal — UNLESS it can't afford it,
+ * in which case `holding` flips false and the ship drifts on uncontrolled (the plain
+ * perturbed leg). The free, no-propellant counterpart for maintained CATALOG satellites
+ * is `Ship.stationKept` (which merely suppresses drag); this is the PLAYER-ship paid model
+ * the ROADMAP scoped, extended from drag to third-body drift.
+ *
+ * Optional + absent from a default ship ⇒ omitted from serialization ⇒ golden-hash-neutral.
+ */
+export interface StationKeep {
+  /** What to hold. "lagrange" → a co-moving L-point (nominal from `lagrangeState`);
+   *  "orbit" → a fixed nominal orbit advanced by Kepler + secular J2. */
+  kind: "lagrange" | "orbit";
+  // Lagrange target (kind === "lagrange"):
+  secondaryId?: string; // the L-point pair's secondary body (e.g. "earth" for Sun–Earth)
+  point?: LagrangePoint;
+  central?: string; // cruise frame: undefined/"sun" ⇒ heliocentric, else the parent planet id
+  // Orbit target (kind === "orbit"):
+  nominal?: KeplerElements; // the orbit to hold
+  nominalEpoch?: number; // s since J2000 — epoch the nominal elements are valid at
+  // Accounting:
+  dvSpent: number; // cumulative station-keeping Δv (m/s)
+  lastDv: number; // Δv charged at the most recent correction window (m/s) — the rate handle
+  windowS: number; // correction cadence (= the perturbed-leg horizon while holding), s
+  holding: boolean; // currently holding; false ⇒ ran out of Δv and is now drifting
+}
+
 /** The five Lagrange points of a (primary, secondary) pair, keyed off the secondary body. */
 export type LagrangePoint = "L1" | "L2" | "L3" | "L4" | "L5";
 
@@ -351,6 +383,11 @@ export interface Ship {
    *  the leg owns the ship's state until the perturbed-finalize re-osculates and re-arms
    *  the next leg). Present only on a `fidelity === "perturbed"` ship. */
   perturbedLeg?: PerturbedLeg;
+  /** A Δv-accounted station-keeping hold (the player-ship paid model): the ship spends
+   *  propellant each correction window to hold a nominal L-point / orbit against the
+   *  perturbed drift, and drifts off once it can no longer afford it. Opt-in; absent ⇒
+   *  no paid hold. Distinct from the free catalog-satellite `stationKept` flag. */
+  stationKeep?: StationKeep;
   /** Set when the ship has touched down on a body's surface (after paying the
    *  descent Δv). `surfaceDir` is the landing site as a BODY-FIXED unit vector, so
    *  the ship co-rotates with the surface (moving at surface speed, not orbital

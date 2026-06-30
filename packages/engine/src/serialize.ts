@@ -29,7 +29,7 @@ import {
   type WorldState, type Ship, type Station, type Maneuver,
   type MessageInFlight, type ShipBurn, type ShipTransfer, type ShipCommand, type BurnGoal,
   type InterstellarLeg, type SpiralLeg, type EntryLeg,
-  type LaunchLeg, type DescentLeg, type PoweredSample, type ApproachLeg, type PerturbedLeg,
+  type LaunchLeg, type DescentLeg, type PoweredSample, type ApproachLeg, type PerturbedLeg, type StationKeep,
 } from "./world.ts";
 import { type Stage, type Booster } from "./propulsion.ts";
 import { type Vec3 } from "./math/vec3.ts";
@@ -158,6 +158,18 @@ function qPerturbedLeg(l: PerturbedLeg) {
   };
 }
 
+function qStationKeep(s: StationKeep): Record<string, unknown> {
+  const o: Record<string, unknown> = {
+    kind: s.kind, dvSpent: q(s.dvSpent), lastDv: q(s.lastDv), windowS: q(s.windowS), holding: s.holding,
+  };
+  if (s.secondaryId) o.secondaryId = s.secondaryId;
+  if (s.point) o.point = s.point;
+  if (s.central) o.central = s.central;
+  if (s.nominal) o.nominal = qEl(s.nominal);
+  if (s.nominalEpoch !== undefined) o.nominalEpoch = q(s.nominalEpoch);
+  return o;
+}
+
 function qShip(s: Ship): Record<string, unknown> {
   // Build in a FIXED field order; omit absent optionals entirely so two ships in
   // the same logical state serialize identically.
@@ -183,6 +195,7 @@ function qShip(s: Ship): Record<string, unknown> {
   // ship — and the golden scenario — serialize identically (hash-neutral).
   if (s.fidelity) o.fidelity = s.fidelity;
   if (s.perturbedLeg) o.perturbedLeg = qPerturbedLeg(s.perturbedLeg);
+  if (s.stationKeep) o.stationKeep = qStationKeep(s.stationKeep);
   if (s.landed) o.landed = { bodyId: s.landed.bodyId, surfaceDir: qv(s.landed.surfaceDir) };
   if (s.status) o.status = s.status;
   o.stages = s.stages.map(qStage);
@@ -283,7 +296,7 @@ export function hashWorld(world: WorldState): string {
  *  field that happens to equal a token (e.g. a ship named "Inf") is left alone. */
 const STRING_KEYS = new Set([
   "id", "name", "primary", "mode", "targetId", "shipId", "label", "kind", "dir", "type", "controlNode", "status",
-  "goalPrimary", "point", "fidelity",
+  "goalPrimary", "point", "fidelity", "secondaryId", "central",
 ]);
 
 /** Inverse of q()'s non-finite tokens, applied during JSON.parse. */
