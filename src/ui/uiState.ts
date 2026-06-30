@@ -15,7 +15,9 @@
 
 const STORAGE_KEY = "lightlag.ui";
 
-type Bag = Record<string, boolean>;
+// The bag holds mostly booleans (toggles), plus a few small string preferences
+// (e.g. the FOCUS list ordering mode). Both share the one namespaced store.
+type Bag = Record<string, boolean | string>;
 
 let cache: Bag | null = null;
 
@@ -39,14 +41,27 @@ function save(bag: Bag): void {
   }
 }
 
-/** Read a persisted flag, or `fallback` if it was never set. */
+/** Read a persisted flag, or `fallback` if it was never set (or holds a non-boolean). */
 export function getFlag(key: string, fallback: boolean): boolean {
-  const bag = load();
-  return key in bag ? bag[key]! : fallback;
+  const v = load()[key];
+  return typeof v === "boolean" ? v : fallback;
 }
 
 /** Write a persisted flag. */
 export function setFlag(key: string, value: boolean): void {
+  const bag = load();
+  bag[key] = value;
+  save(bag);
+}
+
+/** Read a persisted string preference, or `fallback` if unset (or non-string). */
+export function getString(key: string, fallback: string): string {
+  const v = load()[key];
+  return typeof v === "string" ? v : fallback;
+}
+
+/** Write a persisted string preference. */
+export function setString(key: string, value: string): void {
   const bag = load();
   bag[key] = value;
   save(bag);
