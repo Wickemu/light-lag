@@ -31,6 +31,9 @@ export interface CollapsibleOpts {
   open?: boolean;
   /** Called after a user toggle (not on programmatic setOpen). */
   onToggle?: (open: boolean) => void;
+  /** An optional control pinned to the right of the header, OUTSIDE the toggle
+   *  button (e.g. a "+ add" affordance) so clicking it doesn't fold the section. */
+  action?: HTMLElement;
 }
 
 export function collapsible(label: string, opts: CollapsibleOpts = {}): Collapsible {
@@ -44,7 +47,16 @@ export function collapsible(label: string, opts: CollapsibleOpts = {}): Collapsi
   header.append(chevron, title, badge);
 
   const body = el("div", "section-body");
-  root.append(header, body);
+  // With a header action, wrap the toggle + action in a flex row so the action
+  // sits beside (not inside) the toggle button — nested buttons are invalid and
+  // would also fold the section on click. Without one, keep the simpler shape.
+  if (opts.action) {
+    const row = el("div", "section-head-row");
+    row.append(header, opts.action);
+    root.append(row, body);
+  } else {
+    root.append(header, body);
+  }
 
   const persistKey = opts.id ? `section.${opts.id}` : null;
   const initial = persistKey ? getFlag(persistKey, opts.open ?? true) : (opts.open ?? true);

@@ -59,13 +59,14 @@ import { STAR_BY_ID } from "@lightlag/engine/stars";
 import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR, j2RefRadius } from "@lightlag/engine/constants";
 import { formatDate } from "@lightlag/engine/time";
 import { length, sub } from "@lightlag/engine/math/vec3";
-import { el, button, kvAuto, setDisabled, numberField, formatDur } from "./dom.ts";
+import { el, button, kvAuto, setDisabled, numberField, formatDur, formatLength } from "./dom.ts";
 import { collapsible, type Collapsible } from "./collapsible.ts";
 import { markTerm } from "./tooltip.ts";
 import {
-  statPill, meter, statTable, miniOrbit, sparkline,
-  type StatPill, type Meter, type StatTable, type MiniOrbit, type InstrumentState,
+  statPill, meter, radialGauge, statTable, miniOrbit, sparkline,
+  type StatPill, type Meter, type RadialGauge, type StatTable, type MiniOrbit, type InstrumentState,
 } from "./instruments.ts";
+import { tabs, type Tabs } from "./tabs.ts";
 import {
   bannerOf, shortStatusOf, orbitViewOf, orbitCaptionOf,
   fmtDelay, fmtDoppler, fmtPower, fmtRange,
@@ -117,6 +118,9 @@ export class ShipPanel {
   private warpDepartBtn!: HTMLButtonElement;
   private actionsEl!: HTMLElement;
   private deleteBtn!: HTMLButtonElement;
+  // The Maneuver controls live in a bottom-centre pop-out, toggled from the bar.
+  private maneuverBtn!: HTMLButtonElement;
+  private maneuverPanel!: HTMLElement;
 
   // Instruments.
   private nameEl!: HTMLElement;
@@ -126,22 +130,24 @@ export class ShipPanel {
   private hotChip!: StatPill;
   private orbitViz!: MiniOrbit;
   private vitalsEl!: HTMLElement;
-  private dvMeter!: Meter;
-  private fuelMeter!: Meter;
+  private dvGauge!: RadialGauge;
+  private fuelGauge!: RadialGauge;
   private speedVital!: Vital;
   private signalVital!: Vital;
   private burnRow!: HTMLElement;
   private burnMeter!: Meter;
-  private navTable!: StatTable; private navSec!: Collapsible; private navKeys = new Set<string>();
-  private propTable!: StatTable; private propSec!: Collapsible; private propKeys = new Set<string>();
-  private thermTable!: StatTable; private thermSec!: Collapsible; private thermKeys = new Set<string>();
-  private commsTable!: StatTable; private commsSec!: Collapsible; private commsKeys = new Set<string>();
-  private xferTable!: StatTable; private xferSec!: Collapsible; private xferKeys = new Set<string>();
+  /** The detail tabs (Nav · Drive · Heat · Comms · Route · Ops); each fill toggles
+   *  its tab's visibility from whether it has content this frame. */
+  private detailTabs!: Tabs;
+  private navTable!: StatTable; private navKeys = new Set<string>();
+  private propTable!: StatTable; private propKeys = new Set<string>();
+  private thermTable!: StatTable; private thermKeys = new Set<string>();
+  private commsTable!: StatTable; private commsKeys = new Set<string>();
+  private xferTable!: StatTable; private xferKeys = new Set<string>();
   /** Reference Δv (the most a ship has had) so the Δv bar reads as "fuel for maneuvering". */
   private maxDv = new Map<string, number>();
 
-  // Contextual operations (surface ops / electric spiral / dock), folded into one card.
-  private opsSec!: Collapsible;
+  // Contextual operations (surface ops / electric spiral / dock) — the "Ops" tab.
   private surfaceEl!: HTMLElement;
   private surfaceReadout!: HTMLElement;
   private surfaceAltInput!: HTMLInputElement;
@@ -189,6 +195,7 @@ export class ShipPanel {
 
   toggle(): void {
     this.panelEl.style.display = this.isOpen() ? "none" : "flex";
+    if (!this.isOpen()) this.toggleManeuver(false);
   }
   isOpen(): boolean {
     return this.panelEl.style.display !== "none";
@@ -212,20 +219,13 @@ export class ShipPanel {
     head.appendChild(close);
     panel.appendChild(head);
 
-    // Flex-laid spans (not inline glyphs) so the leading + and trailing chevron
-    // sit centred on the label baseline regardless of the font's symbol metrics.
-    const buildBtn = button("", () => this.onOpenShipyard?.());
-    buildBtn.className = "wide-btn yard-open-btn";
-    buildBtn.title = "Open the Shipyard (B) to design and launch a vehicle.";
-    buildBtn.append(
-      el("span", "btn-ico", "+"),
-      el("span", "btn-label", "Build a ship — Shipyard"),
-      el("span", "btn-arrow", "›"),
-    );
-    panel.appendChild(buildBtn);
-
     // ── Fleet ────────────────────────────────────────────────────────────────
-    this.fleetSection = collapsible("Fleet", { id: "fleet", open: true });
+    // The Shipyard opener is a compact "+" pinned to the Fleet header (it adds a
+    // ship, so it belongs on the list), not a full-width labelled button.
+    const addShipBtn = button("+", () => this.onOpenShipyard?.());
+    addShipBtn.className = "section-action";
+    addShipBtn.title = "Open the Shipyard (B) to design and launch a vehicle.";
+    this.fleetSection = collapsible("Fleet", { id: "fleet", open: true, action: addShipBtn });
     this.shipListEl = el("div", "ship-list");
     this.fleetSection.body.appendChild(this.shipListEl);
     panel.appendChild(this.fleetSection.root);
@@ -250,49 +250,89 @@ export class ShipPanel {
     this.orbitViz = miniOrbit({ width: 244, height: 150 });
     this.flightEl.appendChild(this.orbitViz.root);
 
-    // Vitals: Δv, fuel, speed (+trend), signal (+trend), and the burn meter.
+    // Vitals as a compact gauge cluster: Δv + fuel as radial dials, speed + signal
+    // as live trend lines, and a burn meter that appears only while thrusting.
     this.vitalsEl = el("div", "vitals");
-    this.dvMeter = meter("Δv");
-    this.fuelMeter = meter("Fuel", { term: false });
+    this.dvGauge = radialGauge({ size: 74, label: "Δv km/s" });
+    this.fuelGauge = radialGauge({ size: 74, label: "Fuel" });
+    const gaugeRow = el("div", "gauge-row");
+    gaugeRow.append(this.dvGauge.root, this.fuelGauge.root);
     this.speedVital = this.makeVital("Speed");
     this.signalVital = this.makeVital("Signal");
     this.burnRow = el("div", "burn-row");
     this.burnMeter = meter("Burn", { term: false });
     this.burnRow.appendChild(this.burnMeter.root);
     this.burnRow.style.display = "none";
-    this.vitalsEl.append(this.dvMeter.root, this.fuelMeter.root, this.speedVital.root, this.signalVital.root, this.burnRow);
+    this.vitalsEl.append(gaugeRow, this.speedVital.root, this.signalVital.root, this.burnRow);
     this.flightEl.appendChild(this.vitalsEl);
 
-    // Disclosure tables.
-    ({ table: this.navTable, sec: this.navSec } = this.makeTable("NAV", "nav", true,
-      ["Frame", "Distance from Sun", "Orbiting", "Periapsis", "Apoapsis", "Period", "Node precession", "Apsidal precession"]));
-    ({ table: this.propTable, sec: this.propSec } = this.makeTable("Propulsion", "propulsion", false,
-      ["Mass", "Δv remaining", "Active stage", "Drive power", "Drive thrust", "Spiraling"]));
-    ({ table: this.thermTable, sec: this.thermSec } = this.makeTable("Thermal & signature", "thermal", false,
-      ["Solar flux", "Hull temp", "IR signature", "Detectable to", "Min signal", "Waste heat", "Radiator"]));
-    ({ table: this.commsTable, sec: this.commsSec } = this.makeTable("Comms", "comms", false,
-      ["Signal delay", "Doppler", "Order ETA"]));
-    ({ table: this.xferTable, sec: this.xferSec } = this.makeTable("Transfer", "transfer", true,
-      ["Transfer", "Capture Δv", "Interstellar", "Crew clock τ"]));
-    for (const sec of [this.navSec, this.propSec, this.thermSec, this.commsSec, this.xferSec]) {
-      this.flightEl.appendChild(sec.root);
-    }
+    // Detail tabs replace the old stack of disclosure tables: Nav · Drive · Heat ·
+    // Comms · Route · Ops. Route and Ops are contextual (shown only when they hold
+    // content); each fill toggles its tab's visibility per frame.
+    this.detailTabs = tabs({ id: "console" });
+    this.navTable = this.makeTable(this.detailTabs.add("nav", "Nav"),
+      ["Frame", "Distance from Sun", "Orbiting", "Periapsis", "Apoapsis", "Period", "Node precession", "Apsidal precession"]);
+    this.propTable = this.makeTable(this.detailTabs.add("drive", "Drive"),
+      ["Mass", "Active stage", "Drive power", "Drive thrust", "Spiraling"]);
+    this.thermTable = this.makeTable(this.detailTabs.add("heat", "Heat"),
+      ["Solar flux", "Hull temp", "IR signature", "Detectable to", "Min signal", "Waste heat", "Radiator"]);
+    this.commsTable = this.makeTable(this.detailTabs.add("comms", "Comms"),
+      ["Doppler", "Order ETA"]);
+    this.xferTable = this.makeTable(this.detailTabs.add("route", "Route"),
+      ["Transfer", "Capture Δv", "Interstellar", "Crew clock τ"]);
+    this.buildOperations(this.detailTabs.add("ops", "Ops"));
+    this.flightEl.appendChild(this.detailTabs.root);
 
-    // ── Actions ───────────────────────────────────────────────────────────────
-    this.actionsEl = el("div", "console-actions");
-    this.planBtn = button("Plan transfer ▸", () => { if (this.selectedId && this.onPlanTransfer) this.onPlanTransfer(this.selectedId); });
-    this.planBtn.className = "wide-btn";
-    this.interstellarBtn = button("Interstellar ▸", () => { if (this.selectedId && this.onPlanInterstellar) this.onPlanInterstellar(this.selectedId); });
-    this.interstellarBtn.className = "wide-btn";
-    this.warpDepartBtn = button("⏩ Warp to departure", () => this.warpToDeparture());
-    this.warpDepartBtn.className = "wide-btn";
+    // ── Command bar: transfer planners · maneuver · warp · delete ─────────────
+    // Type-led, not a column of full-width keys. The two transfer planners fold
+    // into one "Transfer" group (System ⇄ Stellar); the burn console moves to a
+    // pop-out opened from Maneuver; delete demotes to a quiet icon.
+    this.actionsEl = el("div", "command-bar");
+
+    const xferGroup = el("div", "cmd-group");
+    xferGroup.appendChild(el("div", "cmd-label", "Transfer"));
+    const xferSeg = el("div", "cmd-seg");
+    this.planBtn = button("System", () => { if (this.selectedId && this.onPlanTransfer) this.onPlanTransfer(this.selectedId); });
+    this.planBtn.className = "cmd-btn";
+    this.interstellarBtn = button("Stellar", () => { if (this.selectedId && this.onPlanInterstellar) this.onPlanInterstellar(this.selectedId); });
+    this.interstellarBtn.className = "cmd-btn";
+    xferSeg.append(this.planBtn, this.interstellarBtn);
+    xferGroup.appendChild(xferSeg);
+    this.actionsEl.appendChild(xferGroup);
+
+    this.maneuverBtn = button("Maneuver", () => this.toggleManeuver());
+    this.maneuverBtn.className = "cmd-btn cmd-grow";
+    this.actionsEl.appendChild(this.maneuverBtn);
+
+    this.warpDepartBtn = button("⏩ Warp", () => this.warpToDeparture());
+    this.warpDepartBtn.className = "cmd-btn";
     this.warpDepartBtn.style.display = "none";
-    this.actionsEl.append(this.planBtn, this.interstellarBtn, this.warpDepartBtn);
+    this.actionsEl.appendChild(this.warpDepartBtn);
+
+    this.deleteBtn = button("🗑", () => this.doDelete());
+    this.deleteBtn.className = "cmd-icon danger";
+    this.deleteBtn.title = "Remove this ship from the simulation. Cannot be undone.";
+    this.actionsEl.appendChild(this.deleteBtn);
+
     this.flightEl.appendChild(this.actionsEl);
 
-    // ── Maneuver ──────────────────────────────────────────────────────────────
-    const maneuverSection = collapsible("Maneuver", { id: "maneuver", open: true });
-    const mnv = maneuverSection.body;
+    // Rolling event log.
+    this.eventsSec = collapsible("Events", { id: "events", open: false });
+    this.eventsList = el("div", "events-list");
+    this.eventsSec.body.appendChild(this.eventsList);
+    this.eventsSec.root.style.display = "none";
+    this.flightEl.appendChild(this.eventsSec.root);
+
+    // ── Maneuver pop-out (bottom-centre, toggled from the command bar) ────────
+    this.maneuverPanel = el("div", "panel maneuver-popout");
+    this.maneuverPanel.style.display = "none";
+    const mHead = el("div", "panel-head");
+    mHead.appendChild(el("div", "panel-title", "MANEUVER"));
+    const mClose = button("✕", () => this.toggleManeuver(false));
+    mClose.className = "panel-close";
+    mHead.appendChild(mClose);
+    this.maneuverPanel.appendChild(mHead);
+
     this.dirRow = el("div", "dir-row");
     for (const d of DIRS) {
       const b = button(DIR_LABEL[d], () => { this.dir = d; this.syncDirButtons(); });
@@ -301,7 +341,7 @@ export class ShipPanel {
       markTerm(b, DIR_LABEL[d], { decorate: false });
       this.dirRow.appendChild(b);
     }
-    mnv.appendChild(this.dirRow);
+    this.maneuverPanel.appendChild(this.dirRow);
 
     this.guidanceRow = el("div", "dir-row");
     const GUIDANCE: { mode: "open" | "closed"; label: string }[] = [
@@ -315,7 +355,7 @@ export class ShipPanel {
       markTerm(b, g.label, { decorate: false });
       this.guidanceRow.appendChild(b);
     }
-    mnv.appendChild(this.guidanceRow);
+    this.maneuverPanel.appendChild(this.guidanceRow);
 
     this.goalRow = el("div", "goal-row");
     this.goalTypeRow = el("div", "dir-row");
@@ -335,7 +375,7 @@ export class ShipPanel {
     this.goalAltInput = numberField(this.goalRow, "Target alt (km)", 1000, () => {});
     this.guidanceHint = el("div", "guidance-hint");
     this.goalRow.appendChild(this.guidanceHint);
-    mnv.appendChild(this.goalRow);
+    this.maneuverPanel.appendChild(this.goalRow);
 
     const dvRow = el("div", "dv-row");
     this.dvInput = document.createElement("input");
@@ -348,25 +388,8 @@ export class ShipPanel {
     this.executeBtn = button("Execute burn", () => this.execute());
     this.executeBtn.className = "primary";
     dvRow.append(dvLabel, this.dvInput, this.executeBtn);
-    mnv.appendChild(dvRow);
-    this.flightEl.appendChild(maneuverSection.root);
-
-    // ── Operations (surface / spiral / dock — only when viable) ───────────────
-    this.opsSec = collapsible("Operations", { id: "operations", open: true });
-    this.buildOperations(this.opsSec.body);
-    this.flightEl.appendChild(this.opsSec.root);
-
-    // Rolling event log.
-    this.eventsSec = collapsible("Events", { id: "events", open: false });
-    this.eventsList = el("div", "events-list");
-    this.eventsSec.body.appendChild(this.eventsList);
-    this.eventsSec.root.style.display = "none";
-    this.flightEl.appendChild(this.eventsSec.root);
-
-    this.deleteBtn = button("🗑 Delete ship", () => this.doDelete());
-    this.deleteBtn.className = "wide-btn danger";
-    this.deleteBtn.title = "Remove this ship from the simulation. Cannot be undone.";
-    this.flightEl.appendChild(this.deleteBtn);
+    this.maneuverPanel.appendChild(dvRow);
+    this.root.appendChild(this.maneuverPanel);
 
     panel.appendChild(this.flightEl);
     this.root.appendChild(panel);
@@ -375,6 +398,13 @@ export class ShipPanel {
     this.syncDirButtons();
     this.syncGuidanceButtons();
     this.flightEl.style.display = "none";
+  }
+
+  /** Show/hide the bottom-centre maneuver pop-out (toggled from the command bar). */
+  private toggleManeuver(force?: boolean): void {
+    const open = force ?? this.maneuverPanel.style.display === "none";
+    this.maneuverPanel.style.display = open ? "flex" : "none";
+    this.maneuverBtn.classList.toggle("active", open);
   }
 
   /** Build the three contextual operation sub-cards into the OPERATIONS body. */
@@ -452,13 +482,12 @@ export class ShipPanel {
     host.appendChild(this.dockEl);
   }
 
-  /** A labelled disclosure section wrapping a stat table; rows predeclared in order. */
-  private makeTable(label: string, id: string, open: boolean, rows: string[]): { table: StatTable; sec: Collapsible } {
-    const sec = collapsible(label, { id, open });
+  /** A stat table filling a tab pane; rows predeclared in order. */
+  private makeTable(pane: HTMLElement, rows: string[]): StatTable {
     const table = statTable();
     for (const r of rows) table.row(r);
-    sec.body.appendChild(table.root);
-    return { table, sec };
+    pane.appendChild(table.root);
+    return table;
   }
 
   /** A live trend vital (label · sparkline · value). */
@@ -607,15 +636,17 @@ export class ShipPanel {
   /** Per-frame refresh. */
   update(t: number): void {
     this.syncFleet(t);
-    if (!this.selectedId) { this.flightEl.style.display = "none"; return; }
+    if (!this.selectedId) { this.flightEl.style.display = "none"; this.toggleManeuver(false); return; }
     const ship = this.sim.world.ships.get(this.selectedId);
-    if (!ship) { this.selectedId = null; this.flightEl.style.display = "none"; return; }
+    if (!ship) { this.selectedId = null; this.flightEl.style.display = "none"; this.toggleManeuver(false); return; }
     this.flightEl.style.display = "block";
     this.fillEvents();
     if (ship.status === "lost") { this.renderLost(ship); return; }
 
     this.nameEl.textContent = ship.name;
     this.vitalsEl.style.display = "";
+    this.detailTabs.root.style.display = "";
+    this.actionsEl.style.display = "";
 
     // Light-lag: what you KNOW is the ship's retarded state.
     const controlPos = bodyPosition(this.sim.world.controlNode, t);
@@ -647,14 +678,14 @@ export class ShipPanel {
     const dv = dvRemaining(ship);
     const mx = Math.max(this.maxDv.get(ship.id) ?? dv, dv);
     this.maxDv.set(ship.id, mx);
-    this.dvMeter.set(mx > 0 ? dv / mx : 0, { text: `${(dv / 1000).toFixed(2)} km/s`, state: dv < 50 ? "danger" : dv < 300 ? "warn" : "ok" });
+    this.dvGauge.set(mx > 0 ? dv / mx : 0, { text: (dv / 1000).toFixed(dv < 9995 ? 2 : 1), state: dv < 50 ? "danger" : dv < 300 ? "warn" : "ok" });
     const ps = shipPropStatus(this.sim, ship.id);
     if (ps) {
       const cap = ps.available + ps.headroom;
       const f = cap > 0 ? ps.available / cap : 0;
-      this.fuelMeter.set(f, { text: `${(f * 100).toFixed(0)}%`, state: f < 0.1 ? "danger" : f < 0.3 ? "warn" : "ok" });
-      this.fuelMeter.root.style.display = "";
-    } else this.fuelMeter.root.style.display = "none";
+      this.fuelGauge.set(f, { text: `${(f * 100).toFixed(0)}%`, state: f < 0.1 ? "danger" : f < 0.3 ? "warn" : "ok" });
+      this.fuelGauge.root.style.visibility = "";
+    } else this.fuelGauge.root.style.visibility = "hidden";
     this.speedVital.set(`${(speed / 1000).toFixed(3)} km/s`, speed / 1000);
     this.signalVital.set(fmtDelay(age), age);
     if (ship.mode === "thrust" && ship.burn) {
@@ -666,7 +697,7 @@ export class ShipPanel {
     this.fillNav(ship, el, rel, sum, mu, primary);
     this.fillProp(ship, t, tKnown, stage, primary);
     this.fillThermal(th);
-    this.fillComms(age, dop, inbound ? inbound.tArrive - t : null);
+    this.fillComms(dop, inbound ? inbound.tArrive - t : null);
     this.fillTransfer(ship, t);
 
     // Action gating.
@@ -701,7 +732,9 @@ export class ShipPanel {
     this.updateDocking(ship);
     this.updateFidelity(ship, t);
     const opsVisible = [this.surfaceEl, this.electricEl, this.fidelityEl, this.dockEl].some((e) => e.style.display !== "none");
-    this.opsSec.root.style.display = opsVisible ? "" : "none";
+    this.detailTabs.setVisible("ops", opsVisible);
+    // Settle the tab bar: hide empty tabs, keep an active visible one.
+    this.detailTabs.refresh();
   }
 
   // ── instrument fills ──────────────────────────────────────────────────────
@@ -713,8 +746,8 @@ export class ShipPanel {
       rows.push({ key: "Distance from Sun", value: `${(length(rel.r) / AU).toFixed(3)} AU` });
     } else if (sum) {
       rows.push({ key: "Orbiting", value: primary.name });
-      rows.push({ key: "Periapsis", value: `${(sum.periapsisAlt / 1000).toFixed(0)} km` });
-      rows.push({ key: "Apoapsis", value: sum.bound ? `${(sum.apoapsisAlt / 1000).toFixed(0)} km` : "escape", state: sum.bound ? undefined : "warn" });
+      rows.push({ key: "Periapsis", value: formatLength(sum.periapsisAlt) });
+      rows.push({ key: "Apoapsis", value: sum.bound ? formatLength(sum.apoapsisAlt) : "escape", state: sum.bound ? undefined : "warn" });
       rows.push({ key: "Period", value: sum.bound ? formatDur(sum.period) : "—" });
       if (sum.bound && primary.J2) {
         const r = j2Rates(mu, j2RefRadius(primary), primary.J2, el.a, el.e, el.i);
@@ -722,13 +755,12 @@ export class ShipPanel {
         rows.push({ key: "Apsidal precession", value: `${(r.periDot * RAD * DAY).toFixed(3)}°/day` });
       }
     }
-    this.applyTable(this.navTable, this.navSec, this.navKeys, rows);
+    this.applyTable(this.navTable, "nav", this.navKeys, rows);
   }
 
   private fillProp(ship: Ship, t: number, tKnown: number, stage: ReturnType<typeof activeStage>, primary: BodyDef): void {
     const rows: Row[] = [
       { key: "Mass", value: `${(totalMass(ship) / 1000).toFixed(2)} t` },
-      { key: "Δv remaining", value: `${(dvRemaining(ship) / 1000).toFixed(2)} km/s` },
       { key: "Active stage", value: `${ship.activeStage + 1} / ${ship.stages.length}` },
     ];
     if (stage?.electric) {
@@ -741,9 +773,9 @@ export class ShipPanel {
     }
     if (ship.spiral) {
       const left = (ship.spiral.tEnd - t) / DAY;
-      rows.push({ key: "Spiraling", value: `→ ${((ship.spiral.endRadius - primary.radius) / 1000).toFixed(0)} km · ${left.toFixed(0)} d`, state: "active" });
+      rows.push({ key: "Spiraling", value: `→ ${formatLength(ship.spiral.endRadius - primary.radius)} · ${left.toFixed(0)} d`, state: "active" });
     }
-    this.applyTable(this.propTable, this.propSec, this.propKeys, rows);
+    this.applyTable(this.propTable, "drive", this.propKeys, rows);
   }
 
   private fillThermal(th: ReturnType<typeof shipThermalState>): void {
@@ -758,14 +790,14 @@ export class ShipPanel {
       rows.push({ key: "Waste heat", value: fmtPower(th.driveWasteW) });
       rows.push({ key: "Radiator", value: `${Math.round(th.radiatorAreaM2).toLocaleString("en-US")} m²` });
     }
-    this.applyTable(this.thermTable, this.thermSec, this.thermKeys, rows);
+    this.applyTable(this.thermTable, "heat", this.thermKeys, rows);
   }
 
-  private fillComms(age: number, dop: TelemetryDoppler | null, orderEta: number | null): void {
-    const rows: Row[] = [{ key: "Signal delay", value: fmtDelay(age) }];
+  private fillComms(dop: TelemetryDoppler | null, orderEta: number | null): void {
+    const rows: Row[] = [];
     if (dop) rows.push({ key: "Doppler", value: fmtDoppler(dop) });
     if (orderEta !== null) rows.push({ key: "Order ETA", value: fmtDelay(orderEta) });
-    this.applyTable(this.commsTable, this.commsSec, this.commsKeys, rows);
+    this.applyTable(this.commsTable, "comms", this.commsKeys, rows);
   }
 
   private fillTransfer(ship: Ship, t: number): void {
@@ -785,10 +817,10 @@ export class ShipPanel {
           const fb = BODY_BY_ID.get(f.bodyId);
           const fName = fb?.name ?? f.bodyId;
           if (f.done && f.rpAchieved !== undefined) {
-            const periAlt = (f.rpAchieved - (fb?.radius ?? 0)) / 1000;
+            const periAlt = f.rpAchieved - (fb?.radius ?? 0);
             const bRadii = fb ? f.bMag! / fb.radius : 0;
             const free = (f.residualTurn ?? 0) < 1e-6 && f.dvBurn < 1;
-            rows.push({ key: `Flyby ${fName}`, value: `peri ${periAlt.toFixed(0)} km · b ${bRadii.toFixed(1)} R · turn ${((f.turn ?? 0) * RAD).toFixed(0)}°` + (free ? " · free" : ` · burn ${f.dvBurn.toFixed(0)} m/s`) });
+            rows.push({ key: `Flyby ${fName}`, value: `peri ${formatLength(periAlt)} · b ${bRadii.toFixed(1)} R · turn ${((f.turn ?? 0) * RAD).toFixed(0)}°` + (free ? " · free" : ` · burn ${f.dvBurn.toFixed(0)} m/s`) });
           } else {
             rows.push({ key: `Flyby ${fName}`, value: `pending · ${formatDate(f.tFlyby)}` });
           }
@@ -801,18 +833,18 @@ export class ShipPanel {
       rows.push({ key: "Interstellar", value: t >= leg.tArrive ? `arrived ${starName}` : `→ ${starName} · ${((leg.tArrive - t) / JULIAN_YEAR).toFixed(2)} yr`, state: "active" });
       rows.push({ key: "Crew clock τ", value: `${(ship.tau / JULIAN_YEAR).toFixed(2)} yr` });
     }
-    this.applyTable(this.xferTable, this.xferSec, this.xferKeys, rows);
+    this.applyTable(this.xferTable, "route", this.xferKeys, rows);
   }
 
   /** Set the given rows on a table, hide any previously-set keys now absent, and
    *  toggle the section's visibility on whether it has any content. */
-  private applyTable(table: StatTable, sec: Collapsible, prev: Set<string>, rows: Row[]): void {
+  private applyTable(table: StatTable, tabKey: string, prev: Set<string>, rows: Row[]): void {
     const now = new Set<string>();
     for (const r of rows) { table.set(r.key, r.value, { state: r.state }); now.add(r.key); }
     for (const k of prev) if (!now.has(k)) table.hide(k);
     prev.clear();
     for (const k of now) prev.add(k);
-    sec.root.style.display = now.size > 0 ? "" : "none";
+    this.detailTabs.setVisible(tabKey, now.size > 0);
   }
 
   /** Render the rolling event log; rebuild the list only when the newest changes. */
@@ -973,6 +1005,7 @@ export class ShipPanel {
     if (deleteShip(this.sim, this.selectedId) && wasFocused) this.sm.focusBody(fallback);
     this.selectedId = null;
     this.flightEl.style.display = "none";
+    this.toggleManeuver(false);
     this.syncFleet(this.sim.world.t);
   }
 
@@ -985,9 +1018,10 @@ export class ShipPanel {
     this.chipRow.style.display = "none";
     this.orbitViz.set({ kind: "none" }, "");
     this.vitalsEl.style.display = "none";
-    for (const sec of [this.navSec, this.propSec, this.thermSec, this.commsSec, this.xferSec, this.opsSec]) sec.root.style.display = "none";
+    this.detailTabs.root.style.display = "none";
     this.actionsEl.style.display = "none";
     this.warpDepartBtn.style.display = "none";
+    this.toggleManeuver(false);
     setDisabled(this.executeBtn, true, "Ship lost.");
     this.executeBtn.textContent = "Execute burn";
     this.setGuidanceDisabled(true);
