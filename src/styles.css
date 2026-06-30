@@ -1553,7 +1553,10 @@ button.danger:hover {
   transform: translate(-50%, -50%);
   width: min(960px, 94vw);
   max-height: 90vh;
-  overflow-y: auto;
+  /* The modal no longer scrolls as a whole; the two columns scroll inside it so
+     the head, preset row and the launch row stay pinned and always visible. */
+  overflow: hidden;
+  display: flex;
   flex-direction: column;
   gap: 10px;
   z-index: 40; /* above docked panels (implicit) and the planner modals (20–30) */
@@ -1570,19 +1573,26 @@ button.danger:hover {
 .yard-cols {
   display: flex;
   gap: 16px;
-  align-items: flex-start;
+  align-items: stretch;
+  /* Fill the space between the preset row and the pinned launch row; each column
+     scrolls within it (the stack editor is the one that grows). */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .yard-col {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .yard-stack { flex: 1 1 56%; }
 .yard-perf { flex: 1 1 44%; }
 .yard-perf-body { display: flex; flex-direction: column; gap: 10px; }
 
-.yard-launch { display: flex; gap: 8px; }
+.yard-launch { display: flex; gap: 8px; flex: 0 0 auto; }
 .yard-launch .wide-btn { flex: 1 1 0; }
 
 .yard-hero {
@@ -1622,7 +1632,10 @@ button.danger:hover {
 .ship-empty-btn { font-style: italic; color: var(--text-dim); text-align: left; }
 
 @media (max-width: 760px) {
-  .yard-cols { flex-direction: column; }
+  /* Stacked: let the whole columns region scroll as one instead of two
+     independent scroll panes. */
+  .yard-cols { flex-direction: column; overflow-y: auto; }
+  .yard-col { overflow-y: visible; }
   .yard-top { flex-direction: column; align-items: stretch; }
   .yard-top .name-field { flex: 1 1 auto; }
 }
