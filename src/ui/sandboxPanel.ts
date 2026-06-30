@@ -40,7 +40,7 @@ export class SandboxPanel {
     // The opener lives in the header bar's control cluster (alongside Layers /
     // theme / help), not as a floating bottom tab that would collide with the
     // edge-anchored Focus dock.
-    this.tab = el("button", "sandbox-tab", "◧ Sandbox") as HTMLButtonElement;
+    this.tab = el("button", "sandbox-tab", "Sandbox") as HTMLButtonElement;
     this.tab.title = "Orbital playground: satellites, replay, light-lag mode";
     this.tab.onclick = () => this.toggle();
     (root.querySelector(".topbar-controls") ?? root).appendChild(this.tab);

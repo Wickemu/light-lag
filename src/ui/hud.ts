@@ -81,6 +81,7 @@ const PICK_PX = 18;
 
 export class Hud {
   private dateEl!: HTMLElement;
+  private timeEl!: HTMLElement;
   private warpEl!: HTMLElement;
   private pauseBtn!: HTMLButtonElement;
   private navDockEl!: HTMLElement;
@@ -204,18 +205,21 @@ export class Hud {
     const topbar = el("div", "topbar");
 
     const brand = el("div", "topbar-brand");
-    brand.innerHTML = `<div class="title">LIGHTLAG</div>`;
+    brand.innerHTML = `<div class="title">LIGHTLAG</div><span class="brand-tag">observatory</span>`;
     topbar.appendChild(brand);
 
+    // Inline clock: date (sans) · time (mono accent) · minimal warp transport —
+    // refined and on one line, not a big mono block with boxed arrows.
     const clock = el("div", "topbar-clock");
     this.dateEl = el("div", "date");
+    this.timeEl = el("div", "time");
     this.warpEl = el("div", "warp");
     const warpRow = el("div", "warp-row");
-    const down = button("«", () => this.sim.cycleWarp(-1));
+    const down = button("‹", () => this.sim.cycleWarp(-1));
     this.pauseBtn = button("⏸", () => this.togglePause());
-    const up = button("»", () => this.sim.cycleWarp(1));
+    const up = button("›", () => this.sim.cycleWarp(1));
     warpRow.append(down, this.pauseBtn, up, this.warpEl);
-    clock.append(this.dateEl, warpRow);
+    clock.append(this.dateEl, this.timeEl, warpRow);
     topbar.appendChild(clock);
 
     // Right control cluster: view switch, a Layers popover, the theme picker and
@@ -356,7 +360,7 @@ export class Hud {
 
     // Layers popover: the cross-cutting overlay toggles, lifted out of the body
     // list into a menu you open only when you want it.
-    this.layersPopover = popover(this.root, "≣ Layers ▾", {
+    this.layersPopover = popover(this.root, "Layers ▾", {
       title: "Scene overlays",
       className: "layers-popover",
     });
@@ -672,7 +676,12 @@ export class Hud {
   update(fps: number, views: BodyViews): void {
     this.bodyViews = views; // stash the (stable) instance for the body-pick handler
     const t = this.sim.world.t;
-    this.dateEl.textContent = formatDate(t);
+    // formatDate is "YYYY-Mon-DD HH:MM" — show the date in the UI face and the
+    // clock time in mono accent (the one ticking value).
+    const stamp = formatDate(t);
+    const sp = stamp.indexOf(" ");
+    this.dateEl.textContent = sp > 0 ? stamp.slice(0, sp) : stamp;
+    this.timeEl.textContent = sp > 0 ? stamp.slice(sp + 1) : "";
     this.warpEl.textContent = this.sim.paused ? "paused" : this.sim.warpLabel;
     this.fpsEl.textContent = `${fps.toFixed(0)} fps`;
 
