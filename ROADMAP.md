@@ -79,7 +79,29 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-*(Most recent: **Δv-accounted station-keeping — holding a point is no longer free.** Building on the
+*(Most recent: **Eased interstellar follow — the camera now *glides* into focus instead of snapping.**
+The interstellar camera could already follow a ship or a focused star, but it re-homed in a single
+frame (`SceneManager.followInterstellar` shifted the look-at + camera by the whole gap at once). It now
+eases in: a new `followInterstellarEased` runs a smoothstep glide (~0.6 s real wall-clock, so
+warp-independent) from the camera's current look-at toward the *live* target on **acquisition** (the
+focus id changed since last frame), shifting look-at and camera by the same delta so the user's
+zoom/orbit offset stay exactly invariant — the `followInterstellar` shift-both trick, eased — then
+hands off to the steady 1:1 lock; a continuous follow is unchanged, and `R`/Sol-recentre stays a
+deliberate full-reframe snap. Every entry point inherits it (marker click, FOLLOW button, STARS list,
+the `M`-dispatch pre-arm), since the view's `updateFocus` simply calls the eased method. The smoothstep
+is now a single shared `overlayUtil.smoothstep` (the in-system fly-to `advanceFlight` uses it too) with
+a pure `easedFollowTarget`; +9 specs (`render/overlayUtil.test.ts`: smoothstep endpoints/clamp/zero-slope/
+monotonicity; `easedFollowTarget` start→focus convergence + out-vector reuse). The paired **in-system
+in-transit streak reconcile** was largely already landed — an earlier playtest round moved the in-system
+interstellar ship onto the camera-anchored celestial sphere (true Sun→ship direction), and the
+real-catalog (HYG/Gaia) deep-sky backdrop + constellation lines already ship — so this round retired the
+last trace of the old approach: the dead `starShellRadius` legacy-compressed-shell remnant, plus the
+stale `shipViews`/ROADMAP docs that still claimed the streak rode that shell. **The whole feature is
+render/UI — nothing reaches `WorldState`, so the golden hash is unmoved (`11f2c9fc7a5876`); suite 960
+green.** The camera glide / pointer pick / dispatch pre-arm need a WebGL+DOM context, so they are
+verified manually, as the rest of the follow-cam is. Still to do: ease the `R`/Sol recentre too (a
+deliberate snap today — it also resets distance+up); picking a binary component whose marker overlaps
+the primary. The round before: **Δv-accounted station-keeping — holding a point is no longer free.** Building on the
 perturbed tier, a ship can now `holdStation` an L-point or a high orbit: it spends correction Δv
 each window to cancel the third-body drift and **drifts off once it can't afford it** (the "not for
 free" consequence — e.g. a sim must ensure a craft has the propulsion to maintain L2). `Ship.stationKeep`
@@ -104,13 +126,9 @@ since last round" note. The round before, **click-to-focus extended to the in-sy
    DONE (a first cut — `packages/engine/src/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
    persistent depot stations, propellant boil-off, and a colony supplied within a transfer window.
    *(see Phase 7.)*
-2. **Interstellar follow polish — eased transition + reconcile the in-system streak** — the
-   interstellar camera now follows a ship *or* a focused star, but it re-homes in a single frame
-   (the documented "interstellar re-homes instantly" semantics); a smooth eased transition into the
-   focus is the natural next step. Paired with it: reconcile the in-system ship in-transit streak
-   (still drawn on the legacy compressed shell just past Neptune) into this view, and an optional
-   faint deep-sky backdrop sourced from a **real** catalog (Hipparcos/Gaia bright stars) — explicitly
-   *not* a re-introduced procedural starfield. *(From the "Interstellar sky / camera" backlog.)*
+
+*(**Interstellar follow polish — eased transition + streak reconcile** — formerly candidate #2 — is now
+DONE; see the "Most recent" note above and the "Interstellar sky / camera" backlog entry.)*
 
 *(**Animated launch / landing trajectories** — candidate #3 two rounds ago — is now DONE; see the
 "Done since last round" note below.)*
@@ -832,11 +850,19 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   for the screen-fixed sprites a `THREE.Raycaster` handles poorly) or pick from a new nav-dock **STARS**
   list (`interstellarStarList()`, nearest-first) to frame that system through the SAME `followInterstellar`
   plumbing; the dock footer reads out its live distance / light-time / spectral type / luminosity / mass
-  (`showStarReadout`). Render/UI only ⇒ golden hash unmoved. Still to do: a smooth eased
-  follow transition (it re-homes in one frame today); reconcile the in-system ship in-transit
-  streak (still on the legacy compressed shell) into the interstellar view; an optional faint deep-sky
-  backdrop sourced from a **real** catalog (e.g. Hipparcos/Gaia bright stars) — explicitly
-  *not* a re-introduced procedural/fake starfield.
+  (`showStarReadout`). Render/UI only ⇒ golden hash unmoved. **Eased follow transition — DONE:**
+  acquiring a follow (a marker click / FOLLOW button / STARS list / `M`-dispatch pre-arm) now
+  **glides** the camera into the target via `SceneManager.followInterstellarEased` (a smoothstep
+  ~0.6 s real-time glide, shifting look-at + camera together so zoom/offset stay invariant), instead
+  of the old one-frame snap, then hands off to the steady 1:1 lock; render/UI only ⇒ golden hash
+  unmoved. **In-system in-transit streak + real-catalog backdrop — DONE:** the in-system interstellar
+  ship rides the camera-anchored celestial sphere (true Sun→ship direction), the faint deep-sky
+  backdrop is the **real** HYG/Gaia bright-star catalog (`BACKDROP_STARS` + `SkyBackdrop`) with
+  constellation lines — never a procedural/fake starfield — and the dead `starShellRadius`
+  legacy-compressed-shell remnant has been removed. Still to do: ease the `R`/Sol recentre too (a
+  deliberate full-reframe snap today — it also resets the camera distance + up); picking a specific
+  binary component when its marker overlaps the primary (the STARS list exposes them, but the
+  marker-pick takes whichever projects nearest).
 - **Stellar proper motion** — DONE: the nearby-star catalog carries real Gaia /
   Hipparcos proper motion (μα\*, μδ in mas/yr) and radial velocity (km/s); each star
   derives an ecliptic-J2000 **space-velocity vector** at load and drifts linearly with

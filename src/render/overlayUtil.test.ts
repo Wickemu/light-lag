@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as THREE from "three";
-import { dopplerTint, overlayPalette, pickNearest } from "./overlayUtil.ts";
+import { dopplerTint, overlayPalette, pickNearest, smoothstep, easedFollowTarget } from "./overlayUtil.ts";
 
 const PAL = overlayPalette("dark");
 const BASE = 0x6fe0ff; // the coasting-ship cyan
@@ -34,6 +34,69 @@ describe("dopplerTint", () => {
   it("ignores non-finite z (returns base)", () => {
     expect(dopplerTint(BASE, NaN, PAL)).toBe(BASE);
     expect(dopplerTint(BASE, Infinity, PAL)).toBe(BASE);
+  });
+});
+
+/** The pure core of the eased camera transitions (the in-system fly-to and the
+ *  interstellar follow glide). The offset-preserving shift that keeps zoom invariant
+ *  needs a live camera and is verified manually; this convergence math is testable. */
+describe("smoothstep — eased 0..1 progress", () => {
+  it("pins the endpoints and the symmetric midpoint", () => {
+    expect(smoothstep(0)).toBe(0);
+    expect(smoothstep(1)).toBe(1);
+    expect(smoothstep(0.5)).toBeCloseTo(0.5, 12); // 0.5²·(3−1) = 0.5
+  });
+
+  it("clamps out-of-range progress (no overshoot before lift-off or after arrival)", () => {
+    expect(smoothstep(-1)).toBe(0);
+    expect(smoothstep(2)).toBe(1);
+  });
+
+  it("has zero slope at both ends (eases in and out, not a linear ramp)", () => {
+    expect(smoothstep(0.01)).toBeLessThan(0.01); // below the y=x line near 0
+    expect(smoothstep(0.99)).toBeGreaterThan(0.99); // above it near 1
+  });
+
+  it("is monotonically increasing across the interval", () => {
+    let prev = -1;
+    for (let p = 0; p <= 1.0001; p += 0.1) {
+      const s = smoothstep(p);
+      expect(s).toBeGreaterThanOrEqual(prev);
+      prev = s;
+    }
+  });
+});
+
+describe("easedFollowTarget — glide look-at from start toward the live focus", () => {
+  const start = new THREE.Vector3(0, 0, 0);
+  const focus = new THREE.Vector3(10, -4, 6);
+
+  it("returns the start at p=0 and the focus at p=1", () => {
+    expect(easedFollowTarget(start, focus, 0).equals(start)).toBe(true);
+    expect(easedFollowTarget(start, focus, 1).equals(focus)).toBe(true);
+  });
+
+  it("sits on the start→focus segment at the smoothstep fraction", () => {
+    const mid = easedFollowTarget(start, focus, 0.5);
+    expect(mid.x).toBeCloseTo(5, 12); // smoothstep(0.5)=0.5 ⇒ halfway
+    expect(mid.y).toBeCloseTo(-2, 12);
+    expect(mid.z).toBeCloseTo(3, 12);
+  });
+
+  it("advances monotonically toward the focus along each axis", () => {
+    let prev = -Infinity;
+    for (let p = 0; p <= 1.0001; p += 0.2) {
+      const d = easedFollowTarget(start, focus, p).x; // focus.x > start.x ⇒ increasing
+      expect(d).toBeGreaterThanOrEqual(prev);
+      prev = d;
+    }
+  });
+
+  it("writes into a provided out vector (no per-frame allocation)", () => {
+    const out = new THREE.Vector3(99, 99, 99);
+    const r = easedFollowTarget(start, focus, 1, out);
+    expect(r).toBe(out);
+    expect(out.equals(focus)).toBe(true);
   });
 });
 

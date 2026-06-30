@@ -219,12 +219,13 @@ export class InterstellarView {
   }
 
   /** Lock the camera onto the followed target — a focused star or a ship in transit
-   *  — if one is selected. Runs every frame regardless of the ships layer (you can
-   *  follow a target whose marker is hidden). A ship follow self-heals: if it has
-   *  been deleted or is no longer on a leg, drop the follow so the camera recentres
-   *  on Sol (and the HUD clears its FOLLOW selection); a star never disappears.
-   *  Respects the view-mode isolation invariant — the position is computed here,
-   *  about Sol, never via the in-system floating origin. */
+   *  — if one is selected, gliding into it on acquisition via `followInterstellarEased`
+   *  (an eased transition rather than a one-frame snap). Runs every frame regardless of
+   *  the ships layer (you can follow a target whose marker is hidden). A ship follow
+   *  self-heals: if it has been deleted or is no longer on a leg, drop the follow so the
+   *  camera recentres on Sol (and the HUD clears its FOLLOW selection); a star never
+   *  disappears. Respects the view-mode isolation invariant — the position is computed
+   *  here, about Sol, never via the in-system floating origin. */
   private updateFocus(world: WorldState, t: number): void {
     const id = this.sm.interstellarFocusId;
     if (!id) return;
@@ -233,7 +234,7 @@ export class InterstellarView {
     const star = STAR_BY_ID.get(id);
     if (star) {
       this.toUnits(starPosition(star, t), this.focusScratch);
-      this.sm.followInterstellar(this.focusScratch);
+      this.sm.followInterstellarEased(this.focusScratch);
       return;
     }
     // Otherwise a ship follow: self-heal a deleted / off-leg target back to Sol.
@@ -243,7 +244,7 @@ export class InterstellarView {
       return;
     }
     this.toUnits(shipWorldState(ship, t).r, this.focusScratch);
-    this.sm.followInterstellar(this.focusScratch);
+    this.sm.followInterstellarEased(this.focusScratch);
   }
 
   /** Draw every ship currently on an interstellar leg at its true position, with a
