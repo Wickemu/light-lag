@@ -139,8 +139,10 @@ interface GiantProfile {
    *  near-white methane cloud on Neptune). */
   filamentCol: number;
   storms: Storm[];
-  /** Saturn's north-polar hexagon jet, if any. */
-  hexagon?: { lat: number; amp: number; jet: number; vortex: number };
+  /** Saturn's north-polar hexagon jet, if any. `lat` is the apothem latitude (the
+   *  edge midpoints); `round` blends the corner shape from a circle (0) to a true
+   *  regular hexagon (1) — i.e. how sharply the six corners pinch. */
+  hexagon?: { lat: number; round: number; jet: number; vortex: number };
 }
 
 // Latitudes follow the real (planetographic) belt/zone system; colours are
@@ -217,7 +219,7 @@ const GIANT_PROFILES: Record<string, GiantProfile> = {
       // A modest white storm — Saturn's outbreaks are rarer and fainter than Jove's.
       { lon: 95, lat: 36, rx: 4.2, ry: 2.0, core: 0xf0e9d6, rim: 0xd6c79f, swirl: 0.35, wind: 6, alpha: 0.55 },
     ],
-    hexagon: { lat: 76, amp: 2.1, jet: 0x6e7d71, vortex: 0x7e8d80 },
+    hexagon: { lat: 77.5, round: 0.92, jet: 0x6e7d71, vortex: 0x7e8d80 },
   },
 
   // ── Uranus ───────────────────────────────────────────────────────────────────
@@ -377,12 +379,17 @@ export function paintGiant(id: string, w: number, h: number): Uint8ClampedArray 
         b = b + (clamp01(sb) - b) * cover;
       }
 
-      // 5. Saturn's polar hexagon: a six-lobed jet boundary around the north pole.
-      //    Pole-on it reads as the famous hexagon; here it's a wavy stroke whose
-      //    latitude carries a 6-fold longitude wobble, with the vortex tinted inside.
-      if (hex && hexJet && hexVortex && lat > hex.lat - 8) {
-        const lonRad = (lon * Math.PI) / 180;
-        const edgeLat = hex.lat + hex.amp * Math.cos(6 * lonRad);
+      // 5. Saturn's polar hexagon: the six-sided north-polar jet. Modelled as a
+      //    real regular hexagon — straight sides that pinch only ~15% at the six
+      //    corners — not a sinusoidal lobe, which over-pinches into a flower/star.
+      //    A polygon's edge sits at apothem/cos(angle-from-the-edge-normal); we
+      //    soften that toward a circle by `round`. Pole-on it reads as the hexagon;
+      //    the vortex "eye" is tinted inside.
+      if (hex && hexJet && hexVortex && lat > hex.lat - 12) {
+        const apo = 90 - hex.lat; // apothem colatitude (deg from the pole)
+        const phi = (((((lon % 60) + 60) % 60) - 30) * Math.PI) / 180; // ∈ [-30°,30°]
+        const poly = 1 / Math.cos(phi); // 1 at an edge midpoint → 1.1547 at a corner
+        const edgeLat = 90 - apo * (1 + hex.round * (poly - 1));
         if (lat > edgeLat) {
           const tin = smoothstep(0, 4, lat - edgeLat);
           r += (hexVortex[0] - r) * 0.28 * tin;
