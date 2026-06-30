@@ -1799,6 +1799,54 @@ button.danger:hover {
 }
 .burn-row { margin-top: 2px; }
 
+/* Vitals gauge cluster: the two radial dials side by side above the trend lines. */
+.gauge-row {
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 0 4px;
+}
+
+/* ── Detail tabs ────────────────────────────────────────────────────────────
+   A type-led strip (active label underlined in the accent — same vocabulary as
+   the header view switch, not boxed buttons) over a single shown pane. */
+.tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 2px;
+}
+.tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 13px;
+}
+.tab {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 2px 0 3px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.tab:hover {
+  background: none;
+  color: var(--text);
+}
+.tab.active {
+  color: var(--active);
+  border-bottom: 2px solid var(--active);
+}
+.tab-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .console-actions { display: flex; flex-direction: column; gap: 4px; }
 
 /* Fleet rows now carry a status pill on the right. */
