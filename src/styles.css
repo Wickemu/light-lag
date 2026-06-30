@@ -1849,6 +1849,60 @@ button.danger:hover {
 
 .console-actions { display: flex; flex-direction: column; gap: 4px; }
 
+/* ── Command bar (transfer planners · maneuver · warp · delete) ──────────────
+   A single action row, not a stack of full-width keys: a labelled Transfer group
+   (System ⇄ Stellar), the Maneuver toggle (opens the pop-out), a conditional
+   Warp, and a quiet delete icon. */
+.command-bar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-border);
+}
+.cmd-group { display: flex; flex-direction: column; gap: 3px; }
+.cmd-label {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.cmd-seg { display: flex; gap: 4px; }
+.cmd-btn {
+  font-size: 11px;
+  padding: 4px 9px;
+  letter-spacing: 0.04em;
+}
+.cmd-grow { flex: 1 1 auto; align-self: stretch; }
+.cmd-btn.active {
+  color: var(--active);
+  border-color: var(--active);
+  background: color-mix(in srgb, var(--active) 14%, var(--btn-bg));
+}
+.cmd-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  align-self: center;
+}
+
+/* ── Maneuver pop-out (bottom-centre, toggled from the command bar) ──────────── */
+.maneuver-popout {
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 320px;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 25;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
 /* Fleet rows now carry a status pill on the right. */
 .ship-btn {
   display: flex;

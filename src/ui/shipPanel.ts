@@ -118,6 +118,9 @@ export class ShipPanel {
   private warpDepartBtn!: HTMLButtonElement;
   private actionsEl!: HTMLElement;
   private deleteBtn!: HTMLButtonElement;
+  // The Maneuver controls live in a bottom-centre pop-out, toggled from the bar.
+  private maneuverBtn!: HTMLButtonElement;
+  private maneuverPanel!: HTMLElement;
 
   // Instruments.
   private nameEl!: HTMLElement;
@@ -192,6 +195,7 @@ export class ShipPanel {
 
   toggle(): void {
     this.panelEl.style.display = this.isOpen() ? "none" : "flex";
+    if (!this.isOpen()) this.toggleManeuver(false);
   }
   isOpen(): boolean {
     return this.panelEl.style.display !== "none";
@@ -279,21 +283,56 @@ export class ShipPanel {
     this.buildOperations(this.detailTabs.add("ops", "Ops"));
     this.flightEl.appendChild(this.detailTabs.root);
 
-    // ── Actions ───────────────────────────────────────────────────────────────
-    this.actionsEl = el("div", "console-actions");
-    this.planBtn = button("Plan transfer ▸", () => { if (this.selectedId && this.onPlanTransfer) this.onPlanTransfer(this.selectedId); });
-    this.planBtn.className = "wide-btn";
-    this.interstellarBtn = button("Interstellar ▸", () => { if (this.selectedId && this.onPlanInterstellar) this.onPlanInterstellar(this.selectedId); });
-    this.interstellarBtn.className = "wide-btn";
-    this.warpDepartBtn = button("⏩ Warp to departure", () => this.warpToDeparture());
-    this.warpDepartBtn.className = "wide-btn";
+    // ── Command bar: transfer planners · maneuver · warp · delete ─────────────
+    // Type-led, not a column of full-width keys. The two transfer planners fold
+    // into one "Transfer" group (System ⇄ Stellar); the burn console moves to a
+    // pop-out opened from Maneuver; delete demotes to a quiet icon.
+    this.actionsEl = el("div", "command-bar");
+
+    const xferGroup = el("div", "cmd-group");
+    xferGroup.appendChild(el("div", "cmd-label", "Transfer"));
+    const xferSeg = el("div", "cmd-seg");
+    this.planBtn = button("System", () => { if (this.selectedId && this.onPlanTransfer) this.onPlanTransfer(this.selectedId); });
+    this.planBtn.className = "cmd-btn";
+    this.interstellarBtn = button("Stellar", () => { if (this.selectedId && this.onPlanInterstellar) this.onPlanInterstellar(this.selectedId); });
+    this.interstellarBtn.className = "cmd-btn";
+    xferSeg.append(this.planBtn, this.interstellarBtn);
+    xferGroup.appendChild(xferSeg);
+    this.actionsEl.appendChild(xferGroup);
+
+    this.maneuverBtn = button("Maneuver", () => this.toggleManeuver());
+    this.maneuverBtn.className = "cmd-btn cmd-grow";
+    this.actionsEl.appendChild(this.maneuverBtn);
+
+    this.warpDepartBtn = button("⏩ Warp", () => this.warpToDeparture());
+    this.warpDepartBtn.className = "cmd-btn";
     this.warpDepartBtn.style.display = "none";
-    this.actionsEl.append(this.planBtn, this.interstellarBtn, this.warpDepartBtn);
+    this.actionsEl.appendChild(this.warpDepartBtn);
+
+    this.deleteBtn = button("🗑", () => this.doDelete());
+    this.deleteBtn.className = "cmd-icon danger";
+    this.deleteBtn.title = "Remove this ship from the simulation. Cannot be undone.";
+    this.actionsEl.appendChild(this.deleteBtn);
+
     this.flightEl.appendChild(this.actionsEl);
 
-    // ── Maneuver ──────────────────────────────────────────────────────────────
-    const maneuverSection = collapsible("Maneuver", { id: "maneuver", open: true });
-    const mnv = maneuverSection.body;
+    // Rolling event log.
+    this.eventsSec = collapsible("Events", { id: "events", open: false });
+    this.eventsList = el("div", "events-list");
+    this.eventsSec.body.appendChild(this.eventsList);
+    this.eventsSec.root.style.display = "none";
+    this.flightEl.appendChild(this.eventsSec.root);
+
+    // ── Maneuver pop-out (bottom-centre, toggled from the command bar) ────────
+    this.maneuverPanel = el("div", "panel maneuver-popout");
+    this.maneuverPanel.style.display = "none";
+    const mHead = el("div", "panel-head");
+    mHead.appendChild(el("div", "panel-title", "MANEUVER"));
+    const mClose = button("✕", () => this.toggleManeuver(false));
+    mClose.className = "panel-close";
+    mHead.appendChild(mClose);
+    this.maneuverPanel.appendChild(mHead);
+
     this.dirRow = el("div", "dir-row");
     for (const d of DIRS) {
       const b = button(DIR_LABEL[d], () => { this.dir = d; this.syncDirButtons(); });
@@ -302,7 +341,7 @@ export class ShipPanel {
       markTerm(b, DIR_LABEL[d], { decorate: false });
       this.dirRow.appendChild(b);
     }
-    mnv.appendChild(this.dirRow);
+    this.maneuverPanel.appendChild(this.dirRow);
 
     this.guidanceRow = el("div", "dir-row");
     const GUIDANCE: { mode: "open" | "closed"; label: string }[] = [
@@ -316,7 +355,7 @@ export class ShipPanel {
       markTerm(b, g.label, { decorate: false });
       this.guidanceRow.appendChild(b);
     }
-    mnv.appendChild(this.guidanceRow);
+    this.maneuverPanel.appendChild(this.guidanceRow);
 
     this.goalRow = el("div", "goal-row");
     this.goalTypeRow = el("div", "dir-row");
@@ -336,7 +375,7 @@ export class ShipPanel {
     this.goalAltInput = numberField(this.goalRow, "Target alt (km)", 1000, () => {});
     this.guidanceHint = el("div", "guidance-hint");
     this.goalRow.appendChild(this.guidanceHint);
-    mnv.appendChild(this.goalRow);
+    this.maneuverPanel.appendChild(this.goalRow);
 
     const dvRow = el("div", "dv-row");
     this.dvInput = document.createElement("input");
@@ -349,20 +388,8 @@ export class ShipPanel {
     this.executeBtn = button("Execute burn", () => this.execute());
     this.executeBtn.className = "primary";
     dvRow.append(dvLabel, this.dvInput, this.executeBtn);
-    mnv.appendChild(dvRow);
-    this.flightEl.appendChild(maneuverSection.root);
-
-    // Rolling event log.
-    this.eventsSec = collapsible("Events", { id: "events", open: false });
-    this.eventsList = el("div", "events-list");
-    this.eventsSec.body.appendChild(this.eventsList);
-    this.eventsSec.root.style.display = "none";
-    this.flightEl.appendChild(this.eventsSec.root);
-
-    this.deleteBtn = button("🗑 Delete ship", () => this.doDelete());
-    this.deleteBtn.className = "wide-btn danger";
-    this.deleteBtn.title = "Remove this ship from the simulation. Cannot be undone.";
-    this.flightEl.appendChild(this.deleteBtn);
+    this.maneuverPanel.appendChild(dvRow);
+    this.root.appendChild(this.maneuverPanel);
 
     panel.appendChild(this.flightEl);
     this.root.appendChild(panel);
@@ -371,6 +398,13 @@ export class ShipPanel {
     this.syncDirButtons();
     this.syncGuidanceButtons();
     this.flightEl.style.display = "none";
+  }
+
+  /** Show/hide the bottom-centre maneuver pop-out (toggled from the command bar). */
+  private toggleManeuver(force?: boolean): void {
+    const open = force ?? this.maneuverPanel.style.display === "none";
+    this.maneuverPanel.style.display = open ? "flex" : "none";
+    this.maneuverBtn.classList.toggle("active", open);
   }
 
   /** Build the three contextual operation sub-cards into the OPERATIONS body. */
@@ -602,9 +636,9 @@ export class ShipPanel {
   /** Per-frame refresh. */
   update(t: number): void {
     this.syncFleet(t);
-    if (!this.selectedId) { this.flightEl.style.display = "none"; return; }
+    if (!this.selectedId) { this.flightEl.style.display = "none"; this.toggleManeuver(false); return; }
     const ship = this.sim.world.ships.get(this.selectedId);
-    if (!ship) { this.selectedId = null; this.flightEl.style.display = "none"; return; }
+    if (!ship) { this.selectedId = null; this.flightEl.style.display = "none"; this.toggleManeuver(false); return; }
     this.flightEl.style.display = "block";
     this.fillEvents();
     if (ship.status === "lost") { this.renderLost(ship); return; }
@@ -971,6 +1005,7 @@ export class ShipPanel {
     if (deleteShip(this.sim, this.selectedId) && wasFocused) this.sm.focusBody(fallback);
     this.selectedId = null;
     this.flightEl.style.display = "none";
+    this.toggleManeuver(false);
     this.syncFleet(this.sim.world.t);
   }
 
@@ -986,6 +1021,7 @@ export class ShipPanel {
     this.detailTabs.root.style.display = "none";
     this.actionsEl.style.display = "none";
     this.warpDepartBtn.style.display = "none";
+    this.toggleManeuver(false);
     setDisabled(this.executeBtn, true, "Ship lost.");
     this.executeBtn.textContent = "Execute burn";
     this.setGuidanceDisabled(true);
