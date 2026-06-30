@@ -2,8 +2,15 @@
    so both light and dark stay legible over space. */
 
 :root {
-  --font: "SF Mono", "JetBrains Mono", "Consolas", ui-monospace, monospace;
+  /* Type tiers: --font (Saira) carries all UI prose/labels/headers; --font-mono
+     (IBM Plex Mono) is reserved for live numerics so digits stay tabular. The
+     floating map labels are pinned back to mono further down — that context was
+     deliberately left alone. */
+  --font: "Saira", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", "JetBrains Mono", "Consolas", ui-monospace, monospace;
   --accent: #4fd1e0;
+  /* A second accent for warm/cool contrast — overridden per palette. */
+  --accent-2: #ffb454;
   /* Status palette — overridden per theme below for contrast. */
   --ok: #5fd08a;
   --warn: #ffb454;
@@ -58,6 +65,37 @@
   --warn: #b9701a;
   --info: #1488a8;
   --danger: #c0392b;
+}
+
+/* ── Accent palettes (data-accent) ────────────────────────────────────────────
+   The accent family (--accent / --active / --info / --accent-2) swings with the
+   chosen palette; surfaces, text and the status tokens stay theme-defined. Cyan
+   is the default (baked into the theme blocks above), so it needs no block. Where
+   a palette's accent would collide with a status colour (amber↔warn, green↔ok)
+   the block nudges that one token so "active" never reads as "warning". */
+:root[data-theme="dark"][data-accent="amber"] {
+  --accent: #ffc14d; --active: #ffc14d; --info: #ffc14d; --accent-2: #6fd6e0; --warn: #ff8f3a;
+}
+:root[data-theme="light"][data-accent="amber"] {
+  --accent: #a8650f; --active: #a8650f; --info: #a8650f; --accent-2: #127d8e; --warn: #b5531a;
+}
+:root[data-theme="dark"][data-accent="green"] {
+  --accent: #5fe3a0; --active: #5fe3a0; --info: #5fe3a0; --accent-2: #ffb454; --ok: #46cfc2;
+}
+:root[data-theme="light"][data-accent="green"] {
+  --accent: #1f9d57; --active: #1f9d57; --info: #1f9d57; --accent-2: #b9701a; --ok: #0f8a7d;
+}
+:root[data-theme="dark"][data-accent="violet"] {
+  --accent: #b39cff; --active: #b39cff; --info: #b39cff; --accent-2: #ffb454;
+}
+:root[data-theme="light"][data-accent="violet"] {
+  --accent: #6a4fd0; --active: #6a4fd0; --info: #6a4fd0; --accent-2: #b9701a;
+}
+:root[data-theme="dark"][data-accent="signal"] {
+  --accent: #9fd4ff; --active: #9fd4ff; --info: #9fd4ff; --accent-2: #ffc14d;
+}
+:root[data-theme="light"][data-accent="signal"] {
+  --accent: #2a6fd0; --active: #2a6fd0; --info: #2a6fd0; --accent-2: #b9701a;
 }
 
 * {
@@ -323,6 +361,48 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* ── Theme picker (light/dark mode + accent swatches) ───────────────────────── */
+.theme-popover .popover-content {
+  gap: 8px;
+  min-width: 156px;
+}
+.theme-mode {
+  display: flex;
+  gap: 6px;
+}
+.theme-mode .mode-btn {
+  flex: 1 1 0;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.theme-mode .mode-btn.active {
+  color: var(--active);
+  border-color: var(--active);
+}
+.swatch-row {
+  display: flex;
+  gap: 9px;
+  padding: 2px 0;
+}
+.accent-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--sw);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.accent-swatch:hover {
+  transform: scale(1.12);
+  background: var(--sw);
+}
+.accent-swatch.active {
+  box-shadow: 0 0 0 2px var(--panel-bg), 0 0 0 3.5px var(--sw);
 }
 
 /* ── Collapsible disclosure section ─────────────────────────────────────────── */
@@ -1670,4 +1750,31 @@ button.danger:hover {
     max-height: 92vh;
     overflow-y: auto;
   }
+}
+
+/* ── Broadcast: numerics → mono ───────────────────────────────────────────────
+   Saira (--font) carries everything by default now; these are the live-numeric
+   surfaces that want IBM Plex Mono so digit columns hold still frame-to-frame.
+   The floating map labels are pinned here too — that monospace context was
+   deliberately left untouched. Placed last so it wins over the inline
+   `font-family: var(--font)` on the instrument SVG text. */
+.body-label,
+.ship-label,
+.star-label,
+.interstellar-label,
+.date,
+.warp,
+.scale-label-btn,
+.fps-mini,
+.kv .v,
+.section-badge,
+.ins-meter-val,
+.ins-row-v,
+.ins-gauge-text,
+.ins-orbit-caption,
+.vital-v,
+.yard-dv-num,
+.yard-bar-val,
+input[type="number"] {
+  font-family: var(--font-mono);
 }

@@ -25,6 +25,7 @@ import { interstellarFleet, interstellarStarList } from "../app/commands.ts";
 import { el, button, kv } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
 import { popover, type Popover } from "./popover.ts";
+import { ACCENTS, applyAccent, currentAccent, type AccentName } from "./themes.ts";
 import { getFlag, setFlag } from "./uiState.ts";
 
 /** Focus-list groups, in display order. The Sun (star) gets no header — it sits
@@ -92,6 +93,9 @@ export class Hud {
   private interstellarBtn!: HTMLButtonElement;
   private layersPopover!: Popover;
   private helpEl!: HTMLElement;
+  // Theme picker (light/dark + accent palette), built into the top cluster.
+  private themeModeBtns: { light: HTMLButtonElement; dark: HTMLButtonElement } | null = null;
+  private accentSwatches = new Map<AccentName, HTMLButtonElement>();
   private showFps = getFlag("showFps", false);
   private bloomOn = getFlag("bloom", true);
   private perfMode = getFlag("perfMode", false);
@@ -356,16 +360,55 @@ export class Hud {
     this.layersPopover.content.appendChild(this.buildLayerChips());
     cluster.appendChild(this.layersPopover.trigger);
 
-    // Theme + help icons.
-    const themeBtn = button("◐", () => this.toggleTheme());
-    themeBtn.className = "icon-btn";
-    themeBtn.title = "Toggle light / dark";
+    // Theme picker (light/dark + accent palette) + help icon.
     const helpBtn = button("?", () => this.toggleHelp());
     helpBtn.className = "icon-btn";
     helpBtn.title = "Keyboard shortcuts & help (?)";
-    cluster.append(themeBtn, helpBtn);
+    cluster.append(this.buildThemePicker(), helpBtn);
 
     return cluster;
+  }
+
+  /** The theme picker: a popover holding the light/dark mode toggle and the five
+   *  accent-palette swatches. Replaces the old lone ◐ button so colour themes flip
+   *  the same way light/dark always has. */
+  private buildThemePicker(): HTMLButtonElement {
+    const pop = popover(this.root, "◐", { title: "Theme & colour palette", className: "theme-popover" });
+    pop.trigger.classList.add("icon-btn");
+
+    pop.content.appendChild(el("div", "section-label", "MODE"));
+    const modeRow = el("div", "theme-mode");
+    const darkBtn = button("Dark", () => { this.applyTheme("dark"); this.refreshThemeUI(); });
+    const lightBtn = button("Light", () => { this.applyTheme("light"); this.refreshThemeUI(); });
+    darkBtn.classList.add("mode-btn");
+    lightBtn.classList.add("mode-btn");
+    modeRow.append(darkBtn, lightBtn);
+    pop.content.appendChild(modeRow);
+    this.themeModeBtns = { light: lightBtn, dark: darkBtn };
+
+    pop.content.appendChild(el("div", "section-label", "ACCENT"));
+    const swatches = el("div", "swatch-row");
+    for (const a of ACCENTS) {
+      const b = button("", () => { applyAccent(a.id); this.refreshThemeUI(); });
+      b.className = "accent-swatch";
+      b.style.setProperty("--sw", a.swatch);
+      b.title = a.label;
+      this.accentSwatches.set(a.id, b);
+      swatches.appendChild(b);
+    }
+    pop.content.appendChild(swatches);
+
+    this.refreshThemeUI();
+    return pop.trigger;
+  }
+
+  /** Repaint the picker's active mode + accent from the live document state. */
+  private refreshThemeUI(): void {
+    const light = document.documentElement.getAttribute("data-theme") === "light";
+    this.themeModeBtns?.light.classList.toggle("active", light);
+    this.themeModeBtns?.dark.classList.toggle("active", !light);
+    const acc = currentAccent();
+    for (const [id, b] of this.accentSwatches) b.classList.toggle("active", id === acc);
   }
 
   /** The help modal: the keyboard reference (formerly an always-on footer) and
@@ -603,16 +646,22 @@ export class Hud {
     this.pauseBtn.textContent = this.sim.paused ? "▶" : "⏸";
   }
 
-  private toggleTheme(): void {
-    const html = document.documentElement;
-    const next = html.getAttribute("data-theme") === "light" ? "dark" : "light";
-    html.setAttribute("data-theme", next);
+  /** Set the light/dark mode: HTML attribute, renderer, and persistence. */
+  private applyTheme(next: "light" | "dark"): void {
+    document.documentElement.setAttribute("data-theme", next);
     this.sm.setTheme(next);
     try {
       localStorage.setItem("lightlag.theme", next);
     } catch (e) {
       // Private-mode / storage-disabled: theme just won't persist. Non-fatal.
     }
+  }
+
+  /** Flip light ⇄ dark (kept for the keyboard shortcut / external callers). */
+  toggleTheme(): void {
+    const light = document.documentElement.getAttribute("data-theme") === "light";
+    this.applyTheme(light ? "dark" : "light");
+    this.refreshThemeUI();
   }
 
   /** Called once per frame. */

@@ -9,8 +9,8 @@ import * as THREE from "three";
 import { type WorldState } from "@lightlag/engine/world";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
+import { accentHex } from "./accent.ts";
 
-const CMD_COLOR = 0x6fe0ff;
 const TLM_COLOR = 0xffb454;
 
 function makeDotTexture(): THREE.Texture {
@@ -79,7 +79,7 @@ export class CommsViews {
     for (const m of world.messages) {
       if (t < m.tEmit || t >= m.tArrive) continue; // only while in flight
       live.add(m.id);
-      const color = m.kind === "command" ? CMD_COLOR : TLM_COLOR;
+      const color = m.kind === "command" ? accentHex() : TLM_COLOR;
       const vis = this.visuals.get(m.id) ?? this.setVisual(m.id, this.build(color));
 
       const frac = (t - m.tEmit) / (m.tArrive - m.tEmit);

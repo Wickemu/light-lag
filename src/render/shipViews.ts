@@ -18,8 +18,8 @@ import { SKY_RADIUS, starDirection } from "./starViews.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
 import { overlayPalette, dopplerTint } from "./overlayUtil.ts";
+import { accentHex } from "./accent.ts";
 
-const COAST_COLOR = 0x6fe0ff;
 const THRUST_COLOR = 0xff8a30;
 const LOST_COLOR = 0x9a6b6b; // a dim, dead red for a destroyed wreck
 const SATELLITE_COLOR = 0x9fb4c8; // pale steel — ingested real satellites (read-only infrastructure)
@@ -61,7 +61,7 @@ export class ShipViews {
   private build(id: string): ShipVisual {
     const markerMat = new THREE.SpriteMaterial({
       map: this.dot,
-      color: COAST_COLOR,
+      color: accentHex(),
       sizeAttenuation: false,
       depthWrite: false,
       transparent: true,
@@ -113,7 +113,7 @@ export class ShipViews {
       // Ingested real satellites (sat-<norad>) are passive infrastructure: a
       // smaller, pale-steel marker that reads distinctly from player craft.
       const isSat = ship.id.startsWith("sat-");
-      const base = lost ? LOST_COLOR : thrusting ? THRUST_COLOR : isSat ? SATELLITE_COLOR : COAST_COLOR;
+      const base = lost ? LOST_COLOR : thrusting ? THRUST_COLOR : isSat ? SATELLITE_COLOR : accentHex();
       // Doppler tint (opt-in layer): red receding / blue approaching, from the
       // control node's vantage. Render-only; invisible at planetary speeds.
       let color = base;

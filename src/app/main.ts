@@ -8,6 +8,15 @@
  */
 
 import "../styles.css";
+// Self-hosted type: Saira (UI/labels/headers) + IBM Plex Mono (live numerics).
+// Bundled by Vite — no external network request.
+import "@fontsource/saira/400.css";
+import "@fontsource/saira/500.css";
+import "@fontsource/saira/600.css";
+import "@fontsource/saira/700.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
 import { createWorld } from "@lightlag/engine/world";
 import { Simulation } from "@lightlag/engine/sim";
 import { SceneManager } from "../render/SceneManager.ts";
@@ -32,6 +41,7 @@ import { Sandbox } from "../sandbox/sandbox.ts";
 import { SandboxPanel } from "../ui/sandboxPanel.ts";
 import { installTermTooltips } from "../ui/tooltip.ts";
 import { getFlag, setFlag } from "../ui/uiState.ts";
+import { initAccent } from "../ui/themes.ts";
 import * as commands from "./commands.ts";
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
@@ -44,6 +54,9 @@ const sm = new SceneManager(canvas);
 // Match the renderer to the theme the head script restored from localStorage,
 // so the scene background agrees with the HUD on the very first frame.
 sm.setTheme(document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
+// Sync the 3D overlay accent to the restored colour palette (data-accent), so the
+// canvas agrees with the HUD on the first frame.
+initAccent();
 // Shared show/hide state, written by the HUD's layer controls and read by every view.
 const visibility = new Visibility();
 // Restore persisted scene-layer toggles before any view reads them, then persist

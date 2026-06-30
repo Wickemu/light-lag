@@ -24,18 +24,19 @@ import { BODY_BY_ID, DEFAULT_CAPTURE_ALT } from "@lightlag/engine/constants";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
 import { RenderPolyline, fillPolylineLocal, fillPolylineWorld, overlayPalette } from "./overlayUtil.ts";
+import { accentColor, accentHex } from "./accent.ts";
 
 const SEGMENTS = 256;
 const PERTURBED_CAPACITY = 512; // perturbedForecast emits ~TARGET_SAMPLES points
-const COAST_COLOR = 0x6fe0ff;
 const THRUST_COLOR = 0xff8a30;
-const PERTURBED_COLOR = 0xff5fd0; // magenta — the higher-fidelity arc, distinct from the cyan coast
+const PERTURBED_COLOR = 0xff5fd0; // magenta — the higher-fidelity arc, distinct from the accent coast
 const FORWARD_FLOOR = 0.5; // brightness at the forward horizon (the nucleus is 1)
 const MAX_ROUTE_LEGS = 4; // park-from, two helio legs (assist), park-to
 
-// Linear-space base colours (Color() applies the sRGB→working conversion once),
-// so the per-vertex ramp matches what material.color would render.
-const _coast = new THREE.Color(COAST_COLOR);
+// Linear-space thrust colour (Color() applies the sRGB→working conversion once),
+// so the per-vertex ramp matches what material.color would render. The coast hue
+// is the live scene accent (accentColor()), read per-frame so a palette switch
+// retints the comet tail on the very next frame.
 const _thrust = new THREE.Color(THRUST_COLOR);
 
 interface ShipTraj {
@@ -61,7 +62,7 @@ export class TrajectoryViews {
   private build(id: string): ShipTraj {
     const forecast = new RenderPolyline({
       capacity: SEGMENTS + 1,
-      color: COAST_COLOR,
+      color: accentHex(), // ignored under vertexColors (white base); the tail ramp carries the hue
       opacity: 0.85,
       vertexColors: true,
     });
@@ -242,7 +243,7 @@ export class TrajectoryViews {
   private writeCometColors(pl: RenderPolyline, path: SampledPath, thrusting: boolean, tailFloor: number): void {
     const colors = pl.colors;
     if (!colors) return;
-    const base = thrusting ? _thrust : _coast;
+    const base = thrusting ? _thrust : accentColor();
     const n = path.points.length;
     const head = path.headIndex;
     const last = n - 1;
