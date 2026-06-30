@@ -160,6 +160,16 @@ export interface BodyDef {
    *  spins about (render/bodyViews node tilt), so a pad stays fixed on the surface
    *  instead of drifting across it. Absent ⇒ 0 (pole along ecliptic +Z). */
   obliquityDeg?: number;
+  /** IAU north-pole direction (RA, Dec) in the J2000 EQUATORIAL frame, degrees. Set
+   *  on a body whose render orientation must match its real pole AZIMUTH — chiefly
+   *  the gas giants, so the globe & rings lie in the same plane their equatorial
+   *  moons orbit in (obliquityDeg alone carries only the tilt magnitude, leaving the
+   *  pole's longitude at a canonical azimuth that flips the rings relative to the
+   *  moons). Render-only (bodyViews derives the ecliptic spin axis from it); the
+   *  engine's surface/launch math still uses obliquityDeg's canonical pole, so a body
+   *  WITH landed pads is left without this field to keep pad and globe consistent. */
+  poleRaDeg?: number;
+  poleDecDeg?: number;
   /** Present only for bodies with a real atmosphere (ascent drag / aerobraking). */
   atmosphere?: Atmosphere;
   /** True for bodies with a solid surface to land on. The Sun and the gas giants
@@ -184,6 +194,14 @@ export interface BodyDef {
    *  ~2130 km, ABOVE Pluto's surface — a true binary). The satellite's own row is
    *  parent-centre-relative, so the chain recombines to the original barycentre. */
   barycenterChild?: string;
+  /** Set on a small moon that orbits its parent's BARYCENTRE (with the parent's
+   *  barycenterChild), not the parent's centre — Pluto's outer moons Styx/Nix/
+   *  Kerberos/Hydra circle the Pluto–Charon barycentre, which sits ~2130 km off
+   *  Pluto. The moon's row is the clean conic about that barycentre (mu = μ_parent +
+   *  μ_barycenterChild + μ_moon); ephemeris.ts adds the parent→barycentre offset so
+   *  the orbit stays centred on the point Pluto and Charon visibly circle. Requires
+   *  the parent to carry a barycenterChild. */
+  orbitsBarycenter?: boolean;
 }
 
 // JPL Standish elements, valid 1800 AD – 2050 AD (no extra correction terms).
@@ -254,7 +272,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "jupiter", name: "Jupiter", parent: "sun", mu: 1.26686534e17, radius: 6.9911e7,
     kind: "planet", color: 0xd8a878,
-    rotationPeriod: 35730, obliquityDeg: 3.13, hasSurface: false, J2: 0.0146965, equatorialRadius: 71492000, // 9.925 h; no solid surface. J2 from Juno (Iess et al. 2018), referenced to eq radius 71492 km
+    rotationPeriod: 35730, obliquityDeg: 3.13, poleRaDeg: 268.056595, poleDecDeg: 64.495303, hasSurface: false, J2: 0.0146965, equatorialRadius: 71492000, // 9.925 h; no solid surface. J2 from Juno (Iess et al. 2018), referenced to eq radius 71492 km. IAU pole.
     standish: {
       a: 5.20288700, aDot: -0.00011607, e: 0.04838624, eDot: -0.00013253,
       i: 1.30439695, iDot: -0.00183714, L: 34.39644051, LDot: 3034.74612775,
@@ -264,7 +282,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "saturn", name: "Saturn", parent: "sun", mu: 3.7931187e16, radius: 5.8232e7,
     kind: "planet", color: 0xead6a8,
-    rotationPeriod: 38362, obliquityDeg: 26.73, hasSurface: false, J2: 0.016298, equatorialRadius: 60268000, // 10.656 h; no solid surface; J2 ref eq radius 60268 km
+    rotationPeriod: 38362, obliquityDeg: 26.73, poleRaDeg: 40.589, poleDecDeg: 83.537, hasSurface: false, J2: 0.016298, equatorialRadius: 60268000, // 10.656 h; no solid surface; J2 ref eq radius 60268 km. IAU pole — orients the rings into the moons' plane.
     standish: {
       a: 9.53667594, aDot: -0.00125060, e: 0.05386179, eDot: -0.00050991,
       i: 2.48599187, iDot: 0.00193609, L: 49.95424423, LDot: 1222.49362201,
@@ -274,7 +292,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "uranus", name: "Uranus", parent: "sun", mu: 5.793939e15, radius: 2.5362e7,
     kind: "planet", color: 0x9fd8e0,
-    rotationPeriod: -62064, obliquityDeg: 97.77, hasSurface: false, J2: 0.003343, equatorialRadius: 25559000, // retrograde, 17.24 h; no solid surface
+    rotationPeriod: -62064, obliquityDeg: 97.77, poleRaDeg: 257.311, poleDecDeg: -15.175, hasSurface: false, J2: 0.003343, equatorialRadius: 25559000, // retrograde, 17.24 h; no solid surface. IAU pole (δ<0 ⇒ 98° obliquity).
     standish: {
       a: 19.18916464, aDot: -0.00196176, e: 0.04725744, eDot: -0.00004397,
       i: 0.77263783, iDot: -0.00242939, L: 313.23810451, LDot: 428.48202785,
@@ -284,7 +302,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "neptune", name: "Neptune", parent: "sun", mu: 6.836529e15, radius: 2.4622e7,
     kind: "planet", color: 0x4f7cdb,
-    rotationPeriod: 57996, obliquityDeg: 28.32, hasSurface: false, J2: 0.003411, equatorialRadius: 24764000, // 16.11 h; no solid surface
+    rotationPeriod: 57996, obliquityDeg: 28.32, poleRaDeg: 299.36, poleDecDeg: 43.46, hasSurface: false, J2: 0.003411, equatorialRadius: 24764000, // 16.11 h; no solid surface. IAU pole.
     standish: {
       a: 30.06992276, aDot: 0.00026291, e: 0.00859048, eDot: 0.00005105,
       i: 1.77004347, iDot: 0.00035372, L: -55.12002969, LDot: 218.45945325,
@@ -346,6 +364,32 @@ export const BODIES: BodyDef[] = [
     kind: "moon", color: 0x8a8278,
     rotationPeriod: 551778.7, hasSurface: true,
     moon: { a: 1.959576e7, e: 0.0001610672790944719, i: 112.8908097641467, node: 227.3916867008565, nodeDot: 0, peri: 172.5855027165132, periDot: 0, M0: 148.6651344828103, MDot: 56.37042275 },
+  },
+  // Pluto's four small outer moons. Unlike every other moon here they orbit the
+  // Pluto–Charon BARYCENTRE (NAIF 9) — which lies ~2130 km outside Pluto — not
+  // Pluto's centre, so each row is the clean conic about that barycentre and
+  // `orbitsBarycenter` tells ephemeris.ts to add the parent→barycentre offset. All
+  // four are nearly coplanar with Charon (i ≈ 113°, the system's ecliptic-frame
+  // plane) and rotate chaotically (no defined sidereal period). GM/radius: Horizons.
+  {
+    id: "styx", name: "Styx", parent: "pluto", mu: 4.05e4, radius: 5.2e3,
+    kind: "moon", color: 0x8c8780, orbitsBarycenter: true, // Styx (905)
+    moon: { a: 4.348685e7, e: 0.029045611888018442, i: 112.86257531782435, node: 227.34402232313283, nodeDot: 0, peri: 195.5152345604441, periDot: 0, M0: 11.764126665319097, MDot: 17.05130361 },
+  },
+  {
+    id: "nix", name: "Nix", parent: "pluto", mu: 1.496e6, radius: 1.8e4,
+    kind: "moon", color: 0xb3a79a, orbitsBarycenter: true, // Nix (902)
+    moon: { a: 4.919213e7, e: 0.01320318422185359, i: 112.88867000083438, node: 227.41587055020645, nodeDot: 0, peri: 135.38244567327953, periDot: 0, M0: 334.2920942760909, MDot: 14.17266306 },
+  },
+  {
+    id: "kerberos", name: "Kerberos", parent: "pluto", mu: 6.038e4, radius: 6.0e3,
+    kind: "moon", color: 0x8c8780, orbitsBarycenter: true, // Kerberos (904)
+    moon: { a: 5.818893e7, e: 0.006224072657823831, i: 113.25955502008745, node: 227.17136635395644, nodeDot: 0, peri: 331.31757541337544, periDot: 0, M0: 314.08029455080487, MDot: 11.01625455 },
+  },
+  {
+    id: "hydra", name: "Hydra", parent: "pluto", mu: 2.01e6, radius: 1.85e4,
+    kind: "moon", color: 0xb8aca0, orbitsBarycenter: true, // Hydra (903)
+    moon: { a: 6.533560e7, e: 0.015152114171760647, i: 112.70418059134666, node: 227.61919793997387, nodeDot: 0, peri: 266.3568726729581, periDot: 0, M0: 344.0285575878257, MDot: 9.25912861 },
   },
   {
     id: "haumea", name: "Haumea", parent: "sun", mu: 2.674e11, radius: 7.98e5,

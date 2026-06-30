@@ -85,6 +85,25 @@ export function bodyStateRelative(body: BodyDef, t: number): State {
   const el = bodyElements(body, t);
   if (!el) return { r: { x: 0, y: 0, z: 0 }, v: { x: 0, y: 0, z: 0 } };
   const parent = body.parent ? BODY_BY_ID.get(body.parent) : undefined;
+
+  // A small moon that circles its parent's BARYCENTRE rather than the parent's
+  // centre (Pluto's Styx/Nix/Kerberos/Hydra, which orbit the Pluto–Charon
+  // barycentre ~2130 km off Pluto). Its row is the clean conic about that point,
+  // governed by the COMBINED mass enclosed — μ_parent + μ_barycenterChild + μ_moon.
+  // We add the parent→barycentre offset f·(sibling relative to the parent centre)
+  // so the returned state is, like every other moon's, relative to the parent's
+  // CENTRE — and the parent chain then lands the moon on the barycentre the pair
+  // visibly circle, not on the wobbling primary.
+  if (body.orbitsBarycenter && parent?.barycenterChild) {
+    const sib = BODY_BY_ID.get(parent.barycenterChild);
+    if (sib) {
+      const ellipse = elementsToState(el, parent.mu + sib.mu + body.mu);
+      const f = sib.mu / (parent.mu + sib.mu);
+      const sibRel = bodyStateRelative(sib, t);
+      return { r: add(ellipse.r, scale(sibRel.r, f)), v: add(ellipse.v, scale(sibRel.v, f)) };
+    }
+  }
+
   // The relative two-body problem is governed by mu = G(M_parent + M_body), not
   // the primary's GM alone. For planets the planet's GM is negligible against
   // the Sun's, but for the Moon (GM_moon ≈ 1.2% of GM_earth) omitting it makes

@@ -190,6 +190,30 @@ export function spinPole(obliquityDeg = 0): Vec3 {
   return { x: 0, y: -Math.sin(e), z: Math.cos(e) };
 }
 
+/** Obliquity of the ecliptic at J2000 (rad) — the tilt between the Earth's mean
+ *  equator and the ecliptic, the angle that rotates an equatorial-frame vector
+ *  into the ecliptic frame the whole sim works in. */
+export const ECLIPTIC_OBLIQUITY = 23.43928 * DEG;
+
+/**
+ * A body's true north spin pole as a unit vector in the ecliptic-J2000 frame, from
+ * its IAU pole direction (right ascension, declination in the J2000 EQUATORIAL
+ * frame, degrees). Unlike spinPole(obliquityDeg) — which keeps only the tilt
+ * magnitude at a canonical azimuth — this preserves the pole's true longitude, so
+ * the body's equatorial plane (its rings, its regular moons' orbits) is reproduced
+ * with the correct orientation, not merely the correct tilt. Pure geometry: build
+ * the equatorial unit vector, then rotate by the ecliptic obliquity about the
+ * shared X (vernal-equinox) axis.
+ */
+export function poleToEcliptic(raDeg: number, decDeg: number): Vec3 {
+  const a = raDeg * DEG, d = decDeg * DEG;
+  const xe = Math.cos(d) * Math.cos(a);
+  const ye = Math.cos(d) * Math.sin(a);
+  const ze = Math.sin(d);
+  const c = Math.cos(ECLIPTIC_OBLIQUITY), s = Math.sin(ECLIPTIC_OBLIQUITY);
+  return { x: xe, y: ye * c + ze * s, z: -ye * s + ze * c };
+}
+
 /** Inclination (rad) of an orbit (whose plane normal is the unit `orbitNormal` = r×v normalized)
  *  to a body's equatorial plane — i.e. the plane-change angle that would make it equatorial. */
 export function inclinationToEquator(orbitNormal: Vec3, obliquityDeg = 0): number {

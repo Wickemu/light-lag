@@ -31,11 +31,12 @@ that no amount of engineering can wish away.
 **Phases 1–6 + core-mechanics expansion complete** — a deterministic physics engine and a
 flyable, to-scale 3D Solar System.
 
-- Real JPL ephemeris for **106 bodies** — the 8 planets; the dwarf planets and large TNOs; a
+- Real JPL ephemeris for **110 bodies** — the 8 planets; the dwarf planets and large TNOs; a
   deep moon roster (the Galileans plus Jupiter's inner Amalthea group and classical irregulars;
   Titan + the major Saturnians plus the ring-shepherds, co-orbitals, Hyperion and Phoebe; the
   five major Uranians plus Puck, Portia, Cressida and the irregular Caliban/Sycorax; Triton plus
-  Neptune's inner regulars and eccentric Nereid; Phobos/Deimos; Charon); the small-body
+  Neptune's inner regulars and eccentric Nereid; Phobos/Deimos; the Pluto system — Charon and the
+  four small moons Styx/Nix/Kerberos/Hydra, which orbit the Pluto–Charon barycentre); the small-body
   populations — the **main asteroid belt** (Ceres, Vesta, Psyche, … 18 in all), **near-Earth
   asteroids** (433 Eros, Bennu, Ryugu, Itokawa, Apophis), the **Jupiter Trojans** (Hektor,
   Patroclus, …), the **Kuiper belt** (Pluto, Quaoar, Orcus, Varuna, Ixion, …), the **scattered
@@ -168,7 +169,7 @@ Controls:
 | Space | Pause / resume |
 | `,` / `.` | Slower / faster time-warp |
 | `1`–`8` | Focus Sun, Mercury, Venus, Earth, Moon, Mars, Jupiter, Saturn |
-| Tab / Shift+Tab | Cycle focus forward / backward through all 106 bodies |
+| Tab / Shift+Tab | Cycle focus forward / backward through all 110 bodies |
 | `F` | Toggle ship designer & flight console |
 | `V` | Cycle camera view angle (isometric → top-down → edge-on) |
 | `M` | Toggle system ⇄ interstellar view |
