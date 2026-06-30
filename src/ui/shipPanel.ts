@@ -117,7 +117,6 @@ export class ShipPanel {
   private interstellarBtn!: HTMLButtonElement;
   private warpDepartBtn!: HTMLButtonElement;
   private actionsEl!: HTMLElement;
-  private deleteBtn!: HTMLButtonElement;
   // The Maneuver controls live in a bottom-centre pop-out, toggled from the bar.
   private maneuverBtn!: HTMLButtonElement;
   private maneuverPanel!: HTMLElement;
@@ -299,58 +298,52 @@ export class ShipPanel {
     this.buildOperations(this.detailTabs.add("ops", "Ops"));
     this.flightEl.appendChild(this.detailTabs.root);
 
-    // ── Command bar: transfer planners · maneuver · warp · delete ─────────────
-    // Type-led, not a column of full-width keys. The two transfer planners fold
-    // into one "Transfer" group (System ⇄ Stellar); the burn console moves to a
-    // pop-out opened from Maneuver; delete demotes to a quiet icon.
+    // ── Command bar: a flat footer anchored to the panel's bottom edge ────────
+    // Any contextual full-width verbs (Land / Launch / Warp) stack above one
+    // segmented box — the System ⇄ Stellar transfer planners and the Burn pop-out
+    // toggle — so the row reads as a single instrument, not scattered keys. The
+    // per-ship delete moved onto the Fleet roster (hover a row), so it isn't here.
     this.actionsEl = el("div", "command-bar");
 
-    // Contextual surface action — updateSurfaceOps shows exactly one of Land /
-    // Launch when the ship is over a landable body or sitting on a surface, and
-    // neither otherwise. Lives first (next to Transfer) as the primary verb.
-    this.surfaceActionEl = el("div", "cmd-surface");
+    // Contextual full-width actions — updateSurfaceOps shows exactly one of Land /
+    // Launch when the ship is over a landable body or on a surface, and the warp
+    // gate shows Warp when a departure is pending. Each button carries its own gap,
+    // so the strip collapses to nothing when none apply (no phantom space).
+    this.surfaceActionEl = el("div", "cmd-context");
     this.landBtn = button("Land", () => this.doLand());
-    this.landBtn.className = "cmd-btn cmd-primary";
+    this.landBtn.className = "cmd-wide cmd-primary";
     this.launchBtn = button("Launch", () => this.doLaunch());
-    this.launchBtn.className = "cmd-btn cmd-primary";
+    this.launchBtn.className = "cmd-wide cmd-primary";
+    this.warpDepartBtn = button("Warp", () => this.warpToDeparture());
+    this.warpDepartBtn.className = "cmd-wide";
     this.landBtn.style.display = "none";
     this.launchBtn.style.display = "none";
-    this.surfaceActionEl.append(this.landBtn, this.launchBtn);
+    this.warpDepartBtn.style.display = "none";
+    this.surfaceActionEl.append(this.landBtn, this.launchBtn, this.warpDepartBtn);
     this.actionsEl.appendChild(this.surfaceActionEl);
 
-    const xferGroup = el("div", "cmd-group");
-    xferGroup.appendChild(el("div", "cmd-label", "Transfer"));
-    const xferSeg = el("div", "cmd-seg");
+    // The segmented box: two transfer planners + the Burn pop-out toggle, as one
+    // flat anchored control with hairline dividers between equal segments.
+    const seg = el("div", "cmd-segbox");
     this.planBtn = button("System", () => { if (this.selectedId && this.onPlanTransfer) this.onPlanTransfer(this.selectedId); });
-    this.planBtn.className = "cmd-btn";
+    this.planBtn.className = "seg-item";
     this.interstellarBtn = button("Stellar", () => { if (this.selectedId && this.onPlanInterstellar) this.onPlanInterstellar(this.selectedId); });
-    this.interstellarBtn.className = "cmd-btn";
-    xferSeg.append(this.planBtn, this.interstellarBtn);
-    xferGroup.appendChild(xferSeg);
-    this.actionsEl.appendChild(xferGroup);
+    this.interstellarBtn.className = "seg-item";
+    this.maneuverBtn = button("Burn", () => this.toggleManeuver());
+    this.maneuverBtn.className = "seg-item";
+    seg.append(this.planBtn, this.interstellarBtn, this.maneuverBtn);
+    this.actionsEl.appendChild(seg);
 
-    this.maneuverBtn = button("Maneuver", () => this.toggleManeuver());
-    this.maneuverBtn.className = "cmd-btn cmd-grow";
-    this.actionsEl.appendChild(this.maneuverBtn);
-
-    this.warpDepartBtn = button("Warp", () => this.warpToDeparture());
-    this.warpDepartBtn.className = "cmd-btn";
-    this.warpDepartBtn.style.display = "none";
-    this.actionsEl.appendChild(this.warpDepartBtn);
-
-    this.deleteBtn = button("Delete", () => this.doDelete());
-    this.deleteBtn.className = "cmd-btn cmd-del danger";
-    this.deleteBtn.title = "Remove this ship from the simulation. Cannot be undone.";
-    this.actionsEl.appendChild(this.deleteBtn);
-
-    this.flightEl.appendChild(this.actionsEl);
-
-    // Rolling event log.
+    // Rolling event log (above the command bar, which anchors to the panel's
+    // bottom edge — the bar is the console's last child so `margin-top: auto`
+    // pins it down regardless of how short the content above runs).
     this.eventsSec = collapsible("Events", { id: "events", open: false });
     this.eventsList = el("div", "events-list");
     this.eventsSec.body.appendChild(this.eventsList);
     this.eventsSec.root.style.display = "none";
     this.flightEl.appendChild(this.eventsSec.root);
+
+    this.flightEl.appendChild(this.actionsEl);
 
     // ── Maneuver pop-out (bottom-centre, toggled from the command bar) ────────
     this.maneuverPanel = el("div", "panel maneuver-popout");
@@ -642,14 +635,7 @@ export class ShipPanel {
         this.shipListEl.appendChild(empty);
       }
       for (const ship of this.sim.world.ships.values()) {
-        const row = button("", () => this.select(ship.id));
-        row.className = "ship-btn";
-        const name = el("span", "ship-name", ship.name);
-        const pill = statPill("", "info");
-        pill.root.classList.add("fleet-pill");
-        row.append(name, pill.root);
-        this.shipListEl.appendChild(row);
-        this.fleetRows.set(ship.id, { row, pill });
+        this.shipListEl.appendChild(this.buildFleetRow(ship));
       }
     }
     for (const [id, { row, pill }] of this.fleetRows) {
@@ -659,6 +645,63 @@ export class ShipPanel {
       const st = shortStatusOf(ship, t);
       pill.set(st.text, st.state);
     }
+  }
+
+  /** One fleet roster row: the selectable ship button, a quiet delete affordance
+   *  that fades in on hover (swapping the status pill), and an inline "Delete?"
+   *  confirm overlay so a stray click never loses a ship. Rows persist across
+   *  frames (the list only rebuilds when the fleet set changes), so the overlay
+   *  controls stick. The delete button and confirm controls are siblings of the
+   *  row button — not nested inside it — so there's no button-in-button. */
+  private buildFleetRow(ship: Ship): HTMLElement {
+    const wrap = el("div", "ship-row");
+    const row = button("", () => this.select(ship.id));
+    row.className = "ship-btn";
+    const name = el("span", "ship-name", ship.name);
+    const pill = statPill("", "info");
+    pill.root.classList.add("fleet-pill");
+    row.append(name, pill.root);
+
+    const del = button("✕", () => this.openConfirm(wrap));
+    del.className = "ship-del";
+    del.title = `Remove ${ship.name}`;
+
+    const confirm = el("div", "ship-confirm");
+    confirm.appendChild(el("span", "confirm-q", "Delete?"));
+    const yes = button("Remove", () => this.removeShip(ship.id));
+    yes.className = "confirm-yes";
+    const no = button("Keep", () => this.closeConfirm(wrap));
+    no.className = "confirm-no";
+    confirm.append(yes, no);
+
+    wrap.append(row, del, confirm);
+    this.fleetRows.set(ship.id, { row, pill });
+    return wrap;
+  }
+
+  /** Open one row's confirm overlay (closing any other that was open). */
+  private openConfirm(wrap: HTMLElement): void {
+    this.shipListEl.querySelectorAll(".ship-row.confirming").forEach((w) => w.classList.remove("confirming"));
+    wrap.classList.add("confirming");
+  }
+  private closeConfirm(wrap: HTMLElement): void {
+    wrap.classList.remove("confirming");
+  }
+
+  /** Remove a ship from the sim (from the Fleet roster's confirm). Refocuses off a
+   *  deleted focus target and clears the console if the removed ship was selected;
+   *  syncFleet then rebuilds the roster without it. */
+  private removeShip(id: string): void {
+    const ship = this.sim.world.ships.get(id);
+    const wasFocused = this.sm.focusId === id;
+    const fallback = ship && ship.primary !== "sun" ? ship.primary : "earth";
+    if (deleteShip(this.sim, id) && wasFocused) this.sm.focusBody(fallback);
+    if (this.selectedId === id) {
+      this.selectedId = null;
+      this.flightEl.style.display = "none";
+      this.toggleManeuver(false);
+    }
+    this.syncFleet(this.sim.world.t);
   }
 
   /** Per-frame refresh. */
@@ -732,7 +775,7 @@ export class ShipPanel {
     const tr = ship.transfer;
     const leg = ship.interstellarLeg;
     const planned = !!tr && !tr.departed;
-    this.warpDepartBtn.style.display = planned ? "block" : "none";
+    this.warpDepartBtn.style.display = planned ? "" : "none";
     if (planned) {
       setDisabled(this.warpDepartBtn, this.sim.anyThrust(), "Can't skip time while a burn is running.");
       this.warpDepartBtn.textContent = `Warp to ${formatDate(tr!.tDepart)}`;
@@ -1044,20 +1087,8 @@ export class ShipPanel {
     this.sim.jumpToTime(tr.tDepart - 300);
   }
 
-  private doDelete(): void {
-    if (!this.selectedId) return;
-    const ship = this.sim.world.ships.get(this.selectedId);
-    const wasFocused = this.sm.focusId === this.selectedId;
-    const fallback = ship && ship.primary !== "sun" ? ship.primary : "earth";
-    if (deleteShip(this.sim, this.selectedId) && wasFocused) this.sm.focusBody(fallback);
-    this.selectedId = null;
-    this.flightEl.style.display = "none";
-    this.toggleManeuver(false);
-    this.syncFleet(this.sim.world.t);
-  }
-
-  /** Console for a destroyed ship: a CONTACT LOST banner, all detail hidden, and
-   *  only Delete live to clear the wreck. */
+  /** Console for a destroyed ship: a CONTACT LOST banner with all detail hidden.
+   *  Clear the wreck from the Fleet roster (hover its row → ✕). */
   private renderLost(ship: Ship): void {
     const where = BODY_BY_ID.get(ship.landed?.bodyId ?? ship.primary)?.name ?? "a body";
     this.nameEl.textContent = ship.name;

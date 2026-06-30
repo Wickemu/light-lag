@@ -349,15 +349,21 @@ body {
 .panel-head .panel-title {
   margin-bottom: 0;
 }
+/* A bare, subtle ✕ — no button chrome (border / fill / radius), just a dim glyph
+   that brightens on hover. */
 .panel-close {
   flex: 0 0 auto;
-  padding: 1px 7px;
-  font-size: 13px;
-  line-height: 1.3;
+  padding: 2px 5px;
+  font-size: 14px;
+  line-height: 1;
   color: var(--text-dim);
+  background: none;
+  border: none;
+  border-radius: 0;
 }
 .panel-close:hover {
   color: var(--text);
+  background: none;
 }
 
 /* Sticky head (FOCUS title) so it stays put while the list scrolls. */
@@ -1836,6 +1842,9 @@ button.danger:hover {
   flex-direction: column;
   gap: 8px;
   margin-top: 4px;
+  /* Fill the panel below the Fleet so the command bar can pin to the bottom. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .console-name {
   font-size: 14px;
@@ -1933,41 +1942,37 @@ button.danger:hover {
 
 .console-actions { display: flex; flex-direction: column; gap: 4px; }
 
-/* ── Command bar (transfer planners · maneuver · warp · delete) ──────────────
-   A single action row, not a stack of full-width keys: a labelled Transfer group
-   (System ⇄ Stellar), the Maneuver toggle (opens the pop-out), a conditional
-   Warp, and a quiet delete icon. */
+/* ── Command bar — a flat footer anchored to the panel's bottom edge ──────────
+   Contextual full-width verbs (Land / Launch / Warp) stack above one segmented
+   box: the System ⇄ Stellar transfer planners and the Burn pop-out toggle. The
+   per-ship delete moved to the Fleet roster, so it isn't here. Sticky to the
+   panel's bottom with a frosted fill, so it reads as anchored chrome. */
 .command-bar {
   display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin-top: 6px;
-  padding-top: 8px;
+  flex-direction: column;
+  /* Pinned to the panel's bottom edge: `auto` eats the slack above when the
+     console underflows; it collapses (and sticky takes over) when it overflows. */
+  margin-top: auto;
+  padding: 9px 0 2px;
   border-top: 1px solid var(--panel-border);
+  position: sticky;
+  bottom: 0;
+  background: var(--panel-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
-/* The contextual surface slot is layout-transparent: its Land/Launch buttons sit
-   directly in the bar's flow, so a hidden slot leaves no phantom gap. */
-.cmd-surface { display: contents; }
-.cmd-group { display: flex; flex-direction: column; gap: 3px; }
-.cmd-label {
-  font-size: 9px;
-  letter-spacing: 0.14em;
+/* Contextual strip: collapses to zero height when empty (its buttons carry the
+   gap via margin), so a hidden strip leaves no phantom space above the box. */
+.cmd-context { display: flex; flex-direction: column; }
+.cmd-wide {
+  width: 100%;
+  display: block;
+  margin-bottom: 7px;
+  padding: 8px 10px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-dim);
-}
-.cmd-seg { display: flex; gap: 4px; }
-.cmd-btn {
-  font-size: 11px;
-  padding: 4px 9px;
-  letter-spacing: 0.04em;
-}
-/* Maneuver fills the slack width but stays button-height (no vertical stretch). */
-.cmd-grow { flex: 1 1 auto; }
-.cmd-btn.active {
-  color: var(--active);
-  border-color: var(--active);
-  background: color-mix(in srgb, var(--active) 14%, var(--btn-bg));
+  border-radius: 0;
 }
 /* The contextual Land / Launch verb reads as the primary action. */
 .cmd-primary {
@@ -1978,18 +1983,38 @@ button.danger:hover {
 .cmd-primary:hover {
   background: color-mix(in srgb, var(--active) 24%, var(--btn-bg));
 }
-/* Delete sits quietly at the far right of the bar. */
-.cmd-del {
-  margin-left: auto;
+/* One flat segmented box: a single bordered strip of equal segments split by
+   hairlines, squared (not pills) so it reads as anchored chrome. */
+.cmd-segbox {
+  display: flex;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
 }
-.cmd-icon {
-  flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  font-size: 13px;
-  line-height: 1;
+.cmd-segbox .seg-item {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 7px 6px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--panel-border);
+  border-radius: 0;
 }
+.cmd-segbox .seg-item:first-child { border-left: none; }
+.cmd-segbox .seg-item:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.cmd-segbox .seg-item.active {
+  color: var(--active);
+  background: color-mix(in srgb, var(--active) 16%, transparent);
+}
+.cmd-segbox .seg-item:disabled { opacity: 0.4; cursor: default; }
 
 /* ── Maneuver pop-out (bottom-centre, toggled from the command bar) ──────────── */
 .maneuver-popout {
@@ -2012,7 +2037,58 @@ button.danger:hover {
   text-align: left;
 }
 .ship-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fleet-pill { flex: 0 0 auto; }
+.fleet-pill { flex: 0 0 auto; transition: opacity 0.12s ease; }
+
+/* Fleet rows wrap the selectable button so a hover-delete + inline confirm can
+   overlay it without nesting buttons. The ✕ fades in on hover, swapping the
+   status pill; clicking it raises a "Delete?" overlay so a stray click is safe. */
+.ship-row { position: relative; }
+.ship-row .ship-btn { width: 100%; }
+.ship-del {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  padding: 0 5px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-radius: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, color 0.15s ease;
+}
+.ship-row:hover .ship-del { opacity: 1; pointer-events: auto; }
+.ship-row:hover .fleet-pill { opacity: 0; }
+.ship-del:hover { color: var(--danger); }
+.ship-confirm {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 9px;
+  background: var(--panel-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.ship-row.confirming .ship-confirm { display: flex; }
+.ship-row.confirming .ship-del { display: none; }
+.confirm-q {
+  flex: 1 1 auto;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ship-confirm button { padding: 3px 8px; font-size: 11px; border-radius: 0; }
+.confirm-yes {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 50%, var(--panel-border));
+}
+.confirm-yes:hover { background: color-mix(in srgb, var(--danger) 18%, var(--btn-bg)); }
 
 /* ── CLOSED-PANEL HUD + event log + dock tabs ───────────────────────────────── */
 .mission-hud {
@@ -2084,8 +2160,10 @@ button.danger:hover {
 .dock-tab:hover { color: var(--text); }
 /* Re-open tabs sit flush against the edge their dock anchors to (shown only when
    that dock is closed, so they never collide with it). */
+/* Both docks collapse to the bottom corners — the Mission glance card already
+   lives bottom-left, so the Nav re-open tab mirrors it at bottom-right. */
 .mission-tab { bottom: 18px; left: 0; border-radius: 0 7px 7px 0; }
-.nav-tab { top: 62px; right: 0; border-radius: 7px 0 0 7px; }
+.nav-tab { bottom: 18px; right: 0; border-radius: 7px 0 0 7px; }
 
 /* ── Responsive: this is a desktop-first sim. These breakpoints keep the
    panels from overlapping or running off-screen on narrow windows/tablets,
