@@ -59,7 +59,7 @@ import { STAR_BY_ID } from "@lightlag/engine/stars";
 import { type BodyDef, BODY_BY_ID, AU, DAY, DEG, RAD, JULIAN_YEAR, j2RefRadius } from "@lightlag/engine/constants";
 import { formatDate } from "@lightlag/engine/time";
 import { length, sub } from "@lightlag/engine/math/vec3";
-import { el, button, kv, setDisabled, numberField, formatDur } from "./dom.ts";
+import { el, button, kvAuto, setDisabled, numberField, formatDur } from "./dom.ts";
 import { collapsible, type Collapsible } from "./collapsible.ts";
 import { markTerm } from "./tooltip.ts";
 import {
@@ -861,9 +861,9 @@ export class ShipPanel {
     const me = shipPropStatus(this.sim, ship.id)!;
     const them = shipPropStatus(this.sim, partner.id)!;
     this.dockReadout.innerHTML =
-      kv("Docked with", `${partner.name} · ${partner.distance.toFixed(0)} m, ${partner.relSpeed.toFixed(2)} m/s`) +
-      kv("This ship", `prop ${(me.available / 1000).toFixed(1)} t · room ${(me.headroom / 1000).toFixed(1)} t`) +
-      kv(partner.name, `prop ${(them.available / 1000).toFixed(1)} t · room ${(them.headroom / 1000).toFixed(1)} t`);
+      kvAuto("Docked with", `${partner.name} · ${partner.distance.toFixed(0)} m, ${partner.relSpeed.toFixed(2)} m/s`) +
+      kvAuto("This ship", `prop ${(me.available / 1000).toFixed(1)} t · room ${(me.headroom / 1000).toFixed(1)} t`) +
+      kvAuto(partner.name, `prop ${(them.available / 1000).toFixed(1)} t · room ${(them.headroom / 1000).toFixed(1)} t`);
     setDisabled(this.receiveBtn, !(them.available > 1 && me.headroom > 1), "Partner has no propellant to give, or this ship's tanks are full.");
     setDisabled(this.sendBtn, !(me.available > 1 && them.headroom > 1), "This ship has no propellant to give, or the partner's tanks are full.");
   }
@@ -901,13 +901,13 @@ export class ShipPanel {
     const entry = shipEntryReadout(ship, this.sim.world.t);
     if (entry) {
       this.surfaceReadout.innerHTML =
-        kv("Status", `entering ${entry.bodyName} → ${entry.outcome}`) +
-        kv("Altitude", `${(entry.altitudeM / 1000).toFixed(1)} km`) +
-        kv("Speed", `${(entry.speedMS / 1000).toFixed(2)} km/s`) +
-        kv("Decel", `${entry.currentG.toFixed(1)} g (peak ${entry.peakDecelG.toFixed(1)})`) +
-        kv("Heat flux", `${(entry.currentHeatFluxW / 1e6).toFixed(2)} MW/m² (peak ${(entry.peakHeatFlux / 1e6).toFixed(1)})`) +
-        kv("Wall temp", `${entry.wallTempK.toFixed(0)} K`) +
-        kv("Heat load", `${(entry.heatLoad / 1e6).toFixed(0)} MJ/m²`) +
+        kvAuto("Status", `entering ${entry.bodyName} → ${entry.outcome}`) +
+        kvAuto("Altitude", `${(entry.altitudeM / 1000).toFixed(1)} km`) +
+        kvAuto("Speed", `${(entry.speedMS / 1000).toFixed(2)} km/s`) +
+        kvAuto("Decel", `${entry.currentG.toFixed(1)} g (peak ${entry.peakDecelG.toFixed(1)})`) +
+        kvAuto("Heat flux", `${(entry.currentHeatFluxW / 1e6).toFixed(2)} MW/m² (peak ${(entry.peakHeatFlux / 1e6).toFixed(1)})`) +
+        kvAuto("Wall temp", `${entry.wallTempK.toFixed(0)} K`) +
+        kvAuto("Heat load", `${(entry.heatLoad / 1e6).toFixed(0)} MJ/m²`) +
         `<div class="ok">${(entry.progress * 100).toFixed(0)}% through the pass</div>`;
       setDisabled(this.landBtn, true, "Flying an entry pass.");
       setDisabled(this.launchBtn, true, "Flying an entry pass.");
@@ -921,10 +921,10 @@ export class ShipPanel {
       const cost = surfaceManeuverCost(remaining, ship.payloadMass, asc.dvTotal);
       const feasible = cost.feasible >= 0 && asc.converged;
       this.surfaceReadout.innerHTML =
-        kv("Status", `landed on ${body.name}`) +
-        kv("Ascent Δv", `${(asc.dvTotal / 1000).toFixed(2)} km/s${asc.converged ? "" : " (impractical)"}`) +
-        kv("  gravity / drag loss", `${(asc.gravityLoss / 1000).toFixed(2)} / ${(asc.dragLoss / 1000).toFixed(2)} km/s`) +
-        kv("Propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
+        kvAuto("Status", `landed on ${body.name}`) +
+        kvAuto("Ascent Δv", `${(asc.dvTotal / 1000).toFixed(2)} km/s${asc.converged ? "" : " (impractical)"}`) +
+        kvAuto("  gravity / drag loss", `${(asc.gravityLoss / 1000).toFixed(2)} / ${(asc.dragLoss / 1000).toFixed(2)} km/s`) +
+        kvAuto("Propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
         (feasible ? `<div class="ok">✓ can reach ${altKm} km orbit</div>` : `<div class="warn">✗ insufficient Δv</div>`);
       setDisabled(this.landBtn, true, `Already landed on ${body.name}.`);
       setDisabled(this.launchBtn, !feasible, "Insufficient Δv to reach the requested orbit.");
@@ -937,11 +937,11 @@ export class ShipPanel {
       const canLand = cost.feasible >= 0;
       const canFlyEntry = !!body.atmosphere && periapsisRadius(orbEl.a, orbEl.e) < body.radius + entryInterfaceAlt(body);
       this.surfaceReadout.innerHTML =
-        kv("Body", `${body.name} (${body.atmosphere ? "atmosphere" : "airless"})`) +
-        kv("Descent Δv", `${(desc.dvTotal / 1000).toFixed(2)} km/s`) +
-        (body.atmosphere ? kv("Aerobraking", `${(desc.aerobrakeFraction * 100).toFixed(0)}% shed for free`) : "") +
+        kvAuto("Body", `${body.name} (${body.atmosphere ? "atmosphere" : "airless"})`) +
+        kvAuto("Descent Δv", `${(desc.dvTotal / 1000).toFixed(2)} km/s`) +
+        (body.atmosphere ? kvAuto("Aerobraking", `${(desc.aerobrakeFraction * 100).toFixed(0)}% shed for free`) : "") +
         (body.atmosphere ? entryHeatRows(body, desc.vOrbit) : "") +
-        kv("Land propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
+        kvAuto("Land propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
         (canFlyEntry ? `<div class="ok">orbit dips into the atmosphere — Fly entry to ride it down</div>` : "") +
         (canLand ? `<div class="ok">✓ can land</div>` : `<div class="warn">✗ insufficient Δv to land</div>`);
       setDisabled(this.landBtn, !canLand, "Insufficient Δv to land.");
@@ -1025,9 +1025,9 @@ export class ShipPanel {
         : "current orbit";
       const perYear = sk.windowS > 0 ? sk.lastDv * (JULIAN_YEAR / sk.windowS) : 0;
       this.fidelityReadout.innerHTML =
-        kv("Station-keeping", sk.holding ? `holding ${target}` : `FAILED — drifting off ${target}`) +
-        kv("Δv spent", `${sk.dvSpent.toFixed(1)} m/s`) +
-        kv("Hold cost", sk.lastDv > 0 ? `${sk.lastDv.toFixed(2)} m/s / ${(sk.windowS / DAY).toFixed(0)} d  (≈${perYear.toFixed(0)} m/s/yr)` : "—");
+        kvAuto("Station-keeping", sk.holding ? `holding ${target}` : `FAILED — drifting off ${target}`) +
+        kvAuto("Δv spent", `${sk.dvSpent.toFixed(1)} m/s`) +
+        kvAuto("Hold cost", sk.lastDv > 0 ? `${sk.lastDv.toFixed(2)} m/s / ${(sk.windowS / DAY).toFixed(0)} d  (≈${perYear.toFixed(0)} m/s/yr)` : "—");
       return;
     }
 
@@ -1046,8 +1046,8 @@ export class ShipPanel {
     }
     const dom = domRatio > 0 ? `${domName} · ${domRatio.toExponential(1)} × central` : "negligible";
     this.fidelityReadout.innerHTML =
-      kv("Mode", on ? "third-body perturbed (flown)" : "two-body (game)") +
-      kv("Dominant 3rd body", dom);
+      kvAuto("Mode", on ? "third-body perturbed (flown)" : "two-body (game)") +
+      kvAuto("Dominant 3rd body", dom);
   }
 
   private doFidelity(): void {
@@ -1081,9 +1081,9 @@ function entryHeatRows(body: BodyDef, vOrbit: number): string {
   const e = entryTrajectory(body, vehicle, { entrySpeed: vOrbit, flightPathAngle: 6 * DEG });
   if (!e) return "";
   return (
-    kv("Peak decel", `${e.peakDecelG.toFixed(1)} g`) +
-    kv("Peak heat flux", `${(e.peakHeatFlux / 1e6).toFixed(1)} MW/m²`) +
-    kv("Wall temp", `${e.peakWallTemp.toFixed(0)} K`) +
-    kv("Heat load", `${(e.heatLoad / 1e6).toFixed(0)} MJ/m²`)
+    kvAuto("Peak decel", `${e.peakDecelG.toFixed(1)} g`) +
+    kvAuto("Peak heat flux", `${(e.peakHeatFlux / 1e6).toFixed(1)} MW/m²`) +
+    kvAuto("Wall temp", `${e.peakWallTemp.toFixed(0)} K`) +
+    kvAuto("Heat load", `${(e.heatLoad / 1e6).toFixed(0)} MJ/m²`)
   );
 }

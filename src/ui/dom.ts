@@ -60,10 +60,14 @@ export function kvNum(k: string, num: string, unit = ""): string {
  *  "— (you are here)", a spectral type). Lets a readout keep passing pre-formatted
  *  strings while gaining a clean aligned number column. */
 export function kvAuto(k: string, v: string): string {
-  const i = v.lastIndexOf(" ");
-  // Split only when the head carries a digit and the tail is a single token (a unit).
-  if (i > 0 && /\d/.test(v.slice(0, i)) && !/\s/.test(v.slice(i + 1))) {
-    return kvNum(k, v.slice(0, i), v.slice(i + 1));
+  // Split ONLY a clean two-token "<number> <unit>" value: the whole string must
+  // be exactly a numeric head (a digit, no letters or parens) and a single-token
+  // unit. Dates, compound phrases ("1.2 km/s (all free)"), bare numbers and
+  // "3.4°" (no space) all fall back to a plain enclosed cell — so a panel can pass
+  // pre-formatted strings freely without a misparse mangling them.
+  const m = /^(\S+)\s+(\S+)$/.exec(v);
+  if (m && /\d/.test(m[1]!) && !/[a-zA-Z(]/.test(m[1]!)) {
+    return kvNum(k, m[1]!, m[2]!);
   }
   return kv(k, v);
 }
