@@ -22,7 +22,6 @@ import {
   defaultDesign,
   spawnShip,
   spawnOnPad,
-  expressToOrbit,
   ascentPreview,
 } from "../app/commands.ts";
 import {
@@ -51,11 +50,11 @@ export class Shipyard {
   private payloadInput!: HTMLInputElement;
   private altInput!: HTMLInputElement;
   private inclInput!: HTMLInputElement;
-  private fromSurfaceToggle!: HTMLInputElement;
   private stagesEl!: HTMLElement;
   private perfEl!: HTMLElement;
   private launchArea!: HTMLElement;
-  private expressBtn: HTMLButtonElement | null = null;
+  /** "Roll to Pad" — disabled (with a reason) when the design can't reach orbit. */
+  private padBtn: HTMLButtonElement | null = null;
 
   constructor(
     private root: HTMLElement,
@@ -128,20 +127,6 @@ export class Shipyard {
       this.design.inclinationDeg = Math.max(0, Math.min(90, v)); this.markCustom(); this.refresh();
     });
     stackCol.appendChild(params);
-
-    const padRow = el("label", "field pad-field");
-    this.fromSurfaceToggle = document.createElement("input");
-    this.fromSurfaceToggle.type = "checkbox";
-    this.fromSurfaceToggle.checked = !!this.design.fromSurface;
-    this.fromSurfaceToggle.onchange = () => {
-      this.design.fromSurface = this.fromSurfaceToggle.checked;
-      this.markCustom();
-      this.renderLaunchArea();
-      this.refresh();
-    };
-    padRow.append(this.fromSurfaceToggle, el("span", "field-label", "Launch vehicle (starts on the pad, flies the ascent)"));
-    padRow.title = "On: a launch vehicle — fly the ascent to LEO, expending its boost stages. Off: an in-space craft deployed directly in LEO with full propellant.";
-    stackCol.appendChild(padRow);
 
     const perfCol = el("div", "yard-col yard-perf");
     perfCol.appendChild(el("div", "section-label", "PERFORMANCE"));
@@ -258,21 +243,20 @@ export class Shipyard {
       statRow("Initial T/W", twr.toFixed(2) + (twr < 1 ? " · low" : ""));
     this.perfEl.appendChild(stats);
 
-    // Launch-vehicle ascent feasibility (and gate Express).
-    if (this.design.fromSurface) {
-      const pv = ascentPreview(this.design);
-      if (pv) {
-        const asc = el("div", "yard-ascent");
-        asc.innerHTML = statRow("Ascent to LEO", `${(pv.ascentDv / 1000).toFixed(2)} km/s`);
-        const verdict = el("div", pv.reachesOrbit ? "yard-ok" : "yard-warn");
-        verdict.textContent = pv.reachesOrbit
-          ? `✓ reaches LEO — survivor ${(pv.survivorMass / 1000).toFixed(1)} t, ${(pv.survivorDv / 1000).toFixed(2)} km/s in orbit`
-          : `✗ ${((pv.ascentDv - pv.stackDv) / 1000).toFixed(2)} km/s short of LEO — trim payload or lower the target orbit`;
-        asc.appendChild(verdict);
-        this.perfEl.appendChild(asc);
-      }
-      if (this.expressBtn) setDisabled(this.expressBtn, !pv?.reachesOrbit, "This design can't reach LEO — trim payload or lower the target orbit.");
+    // Ascent feasibility — always shown, and gates "Roll to Pad": you can only roll
+    // out a design that can actually fly itself to orbit.
+    const pv = ascentPreview(this.design);
+    if (pv) {
+      const asc = el("div", "yard-ascent");
+      asc.innerHTML = statRow("Ascent to LEO", `${(pv.ascentDv / 1000).toFixed(2)} km/s`);
+      const verdict = el("div", pv.reachesOrbit ? "yard-ok" : "yard-warn");
+      verdict.textContent = pv.reachesOrbit
+        ? `✓ reaches LEO — survivor ${(pv.survivorMass / 1000).toFixed(1)} t, ${(pv.survivorDv / 1000).toFixed(2)} km/s in orbit`
+        : `✗ ${((pv.ascentDv - pv.stackDv) / 1000).toFixed(2)} km/s short of LEO — trim payload or lower the target orbit`;
+      asc.appendChild(verdict);
+      this.perfEl.appendChild(asc);
     }
+    if (this.padBtn) setDisabled(this.padBtn, !pv?.reachesOrbit, "This design can't reach orbit from the pad — trim payload or lower the target orbit.");
   }
 
   /** A stacked rocket diagram: each stage a segment (height ∝ total mass), boosters
@@ -380,7 +364,6 @@ export class Shipyard {
     this.payloadInput.value = String(this.design.payloadMass / 1000);
     this.altInput.value = String(this.design.altitudeKm);
     this.inclInput.value = String(this.design.inclinationDeg);
-    this.fromSurfaceToggle.checked = !!this.design.fromSurface;
     this.renderStages();
     this.renderLaunchArea();
     this.refresh();
@@ -402,25 +385,16 @@ export class Shipyard {
 
   private renderLaunchArea(): void {
     this.launchArea.innerHTML = "";
-    this.expressBtn = null;
-    if (this.design.fromSurface) {
-      const pad = button("🚀 Roll out to pad", () => this.finishLaunch(spawnOnPad(this.sim, this.design)));
-      pad.className = "wide-btn";
-      pad.title = "Stand this launch vehicle on the Earth pad. Fly the ascent (⬆ Launch in the flight console) — the boost stages are expended and only the survivor reaches LEO.";
-      const express = button("⏩ Express to LEO", () => {
-        const { id } = expressToOrbit(this.sim, this.design);
-        if (id) this.finishLaunch(id); else this.refresh();
-      });
-      express.className = "wide-btn primary";
-      express.title = "Resolve the ascent instantly: expend the boost stages and seat the surviving stack in a LEO parking orbit.";
-      this.expressBtn = express;
-      this.launchArea.append(pad, express);
-    } else {
-      const deploy = button("▶ Deploy in LEO", () => this.finishLaunch(spawnShip(this.sim, this.design)));
-      deploy.className = "wide-btn primary";
-      deploy.title = "Place this in-space craft directly in a circular low orbit, fully fuelled.";
-      this.launchArea.append(deploy);
-    }
+    // Two paths, always offered: stand it on the pad and fly the ascent yourself,
+    // or place it directly in a parking orbit. "Roll to Pad" is gated by ascent
+    // feasibility (set in refresh()); "Construct In LEO" always works.
+    this.padBtn = button("Roll to Pad", () => this.finishLaunch(spawnOnPad(this.sim, this.design)));
+    this.padBtn.className = "wide-btn";
+    this.padBtn.title = "Stand this vehicle on the Earth pad; fly the ascent with Launch in the flight console.";
+    const construct = button("Construct In LEO", () => this.finishLaunch(spawnShip(this.sim, this.design)));
+    construct.className = "wide-btn primary";
+    construct.title = "Place this craft directly in a circular low orbit, fully fuelled.";
+    this.launchArea.append(this.padBtn, construct);
   }
 
   /** Hand the new ship to the flight console and leave the Shipyard. */
