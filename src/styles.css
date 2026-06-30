@@ -681,6 +681,20 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Header brightness tracks the group's visibility, the same shown/hidden cue a
+   body row gives: bright when fully shown, mid when partial, dimmed when hidden. */
+.body-group.grp-on {
+  color: var(--text);
+  opacity: 0.95;
+}
+.body-group.grp-partial {
+  color: var(--text);
+  opacity: 0.72;
+}
+.body-group.grp-off {
+  color: var(--text-dim);
+  opacity: 0.4;
+}
 .body-group-row {
   display: flex;
   align-items: center;
