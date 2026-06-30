@@ -141,8 +141,10 @@ interface GiantProfile {
   storms: Storm[];
   /** Saturn's north-polar hexagon jet, if any. `lat` is the apothem latitude (the
    *  edge midpoints); `round` blends the corner shape from a circle (0) to a true
-   *  regular hexagon (1) — i.e. how sharply the six corners pinch. */
-  hexagon?: { lat: number; round: number; jet: number; vortex: number };
+   *  regular hexagon (1) — i.e. how sharply the six corners pinch. `fill` is the
+   *  alpha of the semi-opaque interior tint (`vortex` colour); `eye` is the darker
+   *  central polar-cyclone colour. */
+  hexagon?: { lat: number; round: number; fill: number; jet: number; vortex: number; eye: number };
 }
 
 // Latitudes follow the real (planetographic) belt/zone system; colours are
@@ -219,7 +221,7 @@ const GIANT_PROFILES: Record<string, GiantProfile> = {
       // A modest white storm — Saturn's outbreaks are rarer and fainter than Jove's.
       { lon: 95, lat: 36, rx: 4.2, ry: 2.0, core: 0xf0e9d6, rim: 0xd6c79f, swirl: 0.35, wind: 6, alpha: 0.55 },
     ],
-    hexagon: { lat: 77.5, round: 0.92, jet: 0x6e7d71, vortex: 0x7e8d80 },
+    hexagon: { lat: 77.5, round: 0.92, fill: 0.5, jet: 0x6e7d71, vortex: 0x7e8d80, eye: 0x55665f },
   },
 
   // ── Uranus ───────────────────────────────────────────────────────────────────
@@ -303,6 +305,7 @@ export function paintGiant(id: string, w: number, h: number): Uint8ClampedArray 
   const hex = profile.hexagon;
   const hexJet = hex ? hexToRgb(hex.jet) : null;
   const hexVortex = hex ? hexToRgb(hex.vortex) : null;
+  const hexEye = hex ? hexToRgb(hex.eye) : null;
 
   const out = new Uint8ClampedArray(w * h * 4);
   const base: RGB = [0, 0, 0];
@@ -385,17 +388,29 @@ export function paintGiant(id: string, w: number, h: number): Uint8ClampedArray 
       //    A polygon's edge sits at apothem/cos(angle-from-the-edge-normal); we
       //    soften that toward a circle by `round`. Pole-on it reads as the hexagon;
       //    the vortex "eye" is tinted inside.
-      if (hex && hexJet && hexVortex && lat > hex.lat - 12) {
+      if (hex && hexJet && hexVortex && hexEye && lat > hex.lat - 12) {
         const apo = 90 - hex.lat; // apothem colatitude (deg from the pole)
         const phi = (((((lon % 60) + 60) % 60) - 30) * Math.PI) / 180; // ∈ [-30°,30°]
         const poly = 1 / Math.cos(phi); // 1 at an edge midpoint → 1.1547 at a corner
         const edgeLat = 90 - apo * (1 + hex.round * (poly - 1));
         if (lat > edgeLat) {
-          const tin = smoothstep(0, 4, lat - edgeLat);
-          r += (hexVortex[0] - r) * 0.28 * tin;
-          g += (hexVortex[1] - g) * 0.28 * tin;
-          b += (hexVortex[2] - b) * 0.28 * tin;
+          // Semi-opaque fill across the whole interior — feathered only at the rim
+          // so it reads as a solid blue-grey polar region, not a bare outline — the
+          // band texture still shows through at this alpha.
+          const a = hex.fill * smoothstep(0, 1.6, lat - edgeLat);
+          r += (hexVortex[0] - r) * a;
+          g += (hexVortex[1] - g) * a;
+          b += (hexVortex[2] - b) * a;
+          // The central polar-cyclone "eye": a small darker core at the pole.
+          const colat = 90 - lat;
+          const eye = 0.8 * (1 - smoothstep(1.2, 3.2, colat));
+          if (eye > 0) {
+            r += (hexEye[0] - r) * eye;
+            g += (hexEye[1] - g) * eye;
+            b += (hexEye[2] - b) * eye;
+          }
         }
+        // The jet itself: a crisp darker stroke along the six-sided boundary.
         const line = 1 - smoothstep(0, 1.4, Math.abs(lat - edgeLat));
         if (line > 0) {
           r += (hexJet[0] - r) * 0.5 * line;
