@@ -31,12 +31,19 @@ that no amount of engineering can wish away.
 **Phases 1–6 + core-mechanics expansion complete** — a deterministic physics engine and a
 flyable, to-scale 3D Solar System.
 
-- Real JPL ephemeris for **50 bodies** — the 8 planets, the dwarf planets, major asteroids
-  (Vesta, Pallas, 433 Eros, 10 Hygiea, 3 Juno), the Kuiper flyby target Arrokoth, the
-  gas-giant & other moons (Galileans, Titan + six Saturnians, five Uranians, Triton, Phobos/Deimos,
-  Charon), TNOs + comets (Sedna, Quaoar, Gonggong, Orcus, 1P/Halley, 2P/Encke), and major
-  man-made satellites (ISS, Hubble, Tiangong); analytic Keplerian propagation exact at any
-  time-warp, cross-checked to machine precision at J2000 vs Horizons.
+- Real JPL ephemeris for **106 bodies** — the 8 planets; the dwarf planets and large TNOs; a
+  deep moon roster (the Galileans plus Jupiter's inner Amalthea group and classical irregulars;
+  Titan + the major Saturnians plus the ring-shepherds, co-orbitals, Hyperion and Phoebe; the
+  five major Uranians plus Puck, Portia, Cressida and the irregular Caliban/Sycorax; Triton plus
+  Neptune's inner regulars and eccentric Nereid; Phobos/Deimos; Charon); the small-body
+  populations — the **main asteroid belt** (Ceres, Vesta, Psyche, … 18 in all), **near-Earth
+  asteroids** (433 Eros, Bennu, Ryugu, Itokawa, Apophis), the **Jupiter Trojans** (Hektor,
+  Patroclus, …), the **Kuiper belt** (Pluto, Quaoar, Orcus, Varuna, Ixion, …), the **scattered
+  disc** (Eris, Gonggong) and a taste of the **inner Oort cloud** (Sedna, Leleākūhonua);
+  comets (1P/Halley, 2P/Encke); and the major man-made satellites (ISS, Hubble, Tiangong).
+  Every orbit is a real Horizons J2000 osculating conic, propagated analytically (exact at any
+  time-warp) and cross-checked at J2000 vs Horizons; GM/radius/rotation are Horizons physical
+  parameters where published.
 - **Light-lag command** — the thesis of the game: commands propagate from Earth at `c`; your view
   of every ship is a retarded snapshot (delayed by `distance / c`), and orders are acknowledged
   only a round-trip later. A NACK arrives if the ship can't execute (out of propellant, wrong
@@ -161,7 +168,7 @@ Controls:
 | Space | Pause / resume |
 | `,` / `.` | Slower / faster time-warp |
 | `1`–`8` | Focus Sun, Mercury, Venus, Earth, Moon, Mars, Jupiter, Saturn |
-| Tab / Shift+Tab | Cycle focus forward / backward through all 50 bodies |
+| Tab / Shift+Tab | Cycle focus forward / backward through all 106 bodies |
 | `F` | Toggle ship designer & flight console |
 | `V` | Cycle camera view angle (isometric → top-down → edge-on) |
 | `M` | Toggle system ⇄ interstellar view |
@@ -171,11 +178,12 @@ Controls:
 | `◐` (button) | Toggle light / dark theme |
 
 Show / hide is in the **FOCUS** panel: an eye toggle on each body (and each
-group header) hides that object or the whole kind, and a chip row toggles the
-cross-cutting layers — orbit lines, labels, the nearby-star sky, ships, and
-in-flight comms.
+group header) hides that object or the whole group — a kind, a planetary system,
+or a small-body region, depending on how the list is ordered — and a chip row
+toggles the cross-cutting layers — orbit lines, labels, the nearby-star sky,
+ships, and in-flight comms.
 
-The **FOCUS** panel also orders its body list three ways (the choice persists),
+The **FOCUS** panel also orders its body list four ways (the choice persists),
 with a realtime search box above it (type to filter; Enter jumps to the first
 match, Esc clears):
 
@@ -188,6 +196,11 @@ match, Esc clears):
 - **Near** — ordered by live distance to the focused body: your own system
   first with the parent body leading it, then every other system nearest-first,
   re-sorting whenever you change focus.
+- **Region** — splits the heliocentric small bodies into their dynamical
+  populations — near-Earth asteroids, the main belt, the Jupiter Trojans, the
+  Kuiper belt, the scattered disc and the Oort cloud — each a show/hide group
+  (the header eye reveals or hides the whole population at once), with the
+  planets, moons, satellites and comets grouped as in Type.
 
 ## Develop
 
