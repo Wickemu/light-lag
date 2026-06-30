@@ -39,6 +39,7 @@ import { TransferPanel } from "../ui/transferPanel.ts";
 import { InterstellarPanel } from "../ui/interstellarPanel.ts";
 import { KeyboardManager } from "../ui/keyboard.ts";
 import { Sandbox } from "../sandbox/sandbox.ts";
+import { dateToWorldTime } from "../sandbox/satellites.ts";
 import { SandboxPanel } from "../ui/sandboxPanel.ts";
 import { installTermTooltips } from "../ui/tooltip.ts";
 import { getFlag, setFlag } from "../ui/uiState.ts";
@@ -48,7 +49,12 @@ import * as commands from "./commands.ts";
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
 const uiRoot = document.getElementById("ui-root")!;
 
-const world = createWorld();
+// Start the clock at the real current date/time (seconds since J2000), not at
+// J2000 itself. Live satellite TLEs carry a recent epoch, so anchoring "now" to
+// the present keeps a freshly-loaded group inside SGP4's valid window — at J2000
+// the same TLEs propagate ~26 years off-epoch, which fails (and used to crash)
+// and would place satellites nowhere near their true positions.
+const world = createWorld(1, dateToWorldTime(new Date()));
 const sim = new Simulation(world);
 
 const sm = new SceneManager(canvas);
@@ -109,8 +115,11 @@ const sandboxPanel = new SandboxPanel(uiRoot, sandbox, renderOnce);
 // definition card for any term-tagged label (kv readouts, fields, headers, …).
 installTermTooltips(uiRoot);
 
-// Open on a gentle warp so the planets are visibly in motion immediately.
-sim.setWarpIndex(6); // 1 day/s
+// Open at 1× real time, paired with the present-day start above: a live
+// satellite group loaded right away then sits at its true current position and
+// the clock stays near "now". Warp up from here (the planets need it to move
+// visibly) whenever you want to fast-forward.
+sim.setWarpIndex(0); // 1× (real time)
 
 window.addEventListener("resize", () => sm.resize());
 
