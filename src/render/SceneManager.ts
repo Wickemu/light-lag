@@ -21,6 +21,7 @@ import { type Vec3, vec3 } from "@lightlag/engine/math/vec3";
 import { bodyPosition } from "@lightlag/engine/ephemeris";
 import { BODY_BY_ID } from "@lightlag/engine/constants";
 import { metersToUnits, worldToRender } from "./scale.ts";
+import { smoothstep, easedFollowTarget } from "./overlayUtil.ts";
 
 export type Theme = "dark" | "light";
 
@@ -44,6 +45,14 @@ const FLY_ARC_FRACTION = 0.3;
  *  most eccentric members (e.g. Jupiter's Carme/Ananke) sit fully inside the view
  *  rather than grazing the frame. */
 const GROUP_FRAME_FACTOR = 2.6;
+
+/** Duration (real seconds) of the eased glide into a newly-acquired interstellar follow
+ *  target. Short enough to feel responsive, long enough to read as a deliberate move into
+ *  the focus rather than a snap — in the same 0.5–2 s band the in-system fly-to settles in. */
+const INTERSTELLAR_FOLLOW_EASE_S = 0.6;
+
+/** Reused scratch for the eased follow look-at, so the per-frame follow never allocates. */
+const _easeScratch = new THREE.Vector3();
 
 const BG: Record<Theme, number> = {
   dark: 0x05070d,
@@ -105,6 +114,15 @@ export class SceneManager {
    *  so this stays just a selection, never a world reference. Separate from `focusId`
    *  because the interstellar view ignores the in-system floating origin. */
   private interstellarFocus: string | null = null;
+
+  /** An in-progress eased transition INTO a newly-acquired interstellar follow target.
+   *  While set, the camera glides its look-at from where it was toward the target over
+   *  `duration` real seconds (smoothstep), preserving the user's zoom/orbit offset, then
+   *  hands off to the steady-state 1:1 lock (`followInterstellar`). `lastFollowId` tracks
+   *  which target the current ease belongs to, so a focus *change* restarts the glide while
+   *  a continuous follow does not. Render-only; never touches sim state. */
+  private interstellarFollow?: { startTarget: THREE.Vector3; elapsed: number; duration: number; lastMs?: number };
+  private lastFollowId: string | null = null;
 
   /** Body the camera is centred on; its world position is the floating origin. */
   focusId = "sun";
@@ -404,6 +422,12 @@ export class SceneManager {
    *  view it only stores the choice, taking effect when the map is next opened. */
   setInterstellarFocus(id: string | null): void {
     this.interstellarFocus = id;
+    // Clearing ends any in-progress glide and resets the acquisition tracker, so the next
+    // pick (even the same target again) starts a fresh eased glide rather than snapping.
+    if (id === null) {
+      this.interstellarFollow = undefined;
+      this.lastFollowId = null;
+    }
     if (id === null && this.viewMode === "interstellar") this.frameInterstellar();
   }
 
@@ -421,12 +445,61 @@ export class SceneManager {
     this.camera.position.add(delta);
   }
 
+  /** Eased interstellar follow — the gentle version of `followInterstellar`. The view
+   *  calls this each frame with the followed target's live scaled position. On *acquiring*
+   *  a follow (the focus id changed since last frame) it begins a smoothstep glide from the
+   *  camera's current look-at toward the target over ~0.6 s; while gliding it eases the
+   *  look-at (and shifts the camera by the same vector, so zoom/orbit offset stay exactly
+   *  invariant — the `followInterstellar` shift-both trick) toward `lerp(start, pos, e)`,
+   *  with `pos` sampled fresh so a moving ship is still tracked. Once the glide completes it
+   *  falls through to the steady 1:1 lock, so a continuous follow is unchanged. Real
+   *  wall-clock `dt` (like `advanceFlight`), so it is independent of time-warp and never
+   *  feeds back into the sim. */
+  followInterstellarEased(pos: THREE.Vector3): void {
+    // A new/changed follow target: start a fresh glide from wherever the camera is now.
+    if (this.interstellarFocus !== this.lastFollowId) {
+      this.lastFollowId = this.interstellarFocus;
+      this.interstellarFollow = {
+        startTarget: this.controls.target.clone(),
+        elapsed: 0,
+        duration: INTERSTELLAR_FOLLOW_EASE_S,
+        lastMs: undefined,
+      };
+    }
+
+    const fl = this.interstellarFollow;
+    if (!fl) {
+      this.followInterstellar(pos); // steady-state lock (glide already finished)
+      return;
+    }
+
+    const now = typeof performance !== "undefined" ? performance.now() : 0;
+    const dt = fl.lastMs === undefined ? 0 : Math.max(0, (now - fl.lastMs) / 1000);
+    fl.lastMs = now;
+    fl.elapsed += dt;
+    const p = fl.duration > 0 ? Math.min(1, fl.elapsed / fl.duration) : 1;
+
+    // Ease the look-at toward the live target; shift the camera by the same delta so the
+    // user's zoom and orbit offset (|camera − target|) are untouched, exactly as the 1:1
+    // lock does — only the step size is eased rather than the full gap each frame.
+    const desired = easedFollowTarget(fl.startTarget, pos, p, _easeScratch);
+    const delta = desired.sub(this.controls.target);
+    this.controls.target.add(delta);
+    this.camera.position.add(delta);
+
+    if (p >= 1) this.interstellarFollow = undefined; // hand off to the steady lock
+  }
+
   /** Frame the interstellar map: Sol at the render origin, camera above and back
    *  along the ecliptic, the whole 12-ly neighbourhood in view. The in-system
    *  focus is left untouched — the interstellar view computes its own positions
    *  about Sol and never consults the floating origin. */
   private frameInterstellar(): void {
     this.flight = undefined;
+    // A full reframe ends any eased follow and resets the acquisition tracker, so a target
+    // picked after this (including the same one) glides in fresh from the Sol framing.
+    this.interstellarFollow = undefined;
+    this.lastFollowId = null;
     this.controls.minDistance = 5;
     this.controls.maxDistance = 5000;
     this.controls.target.set(0, 0, 0);
@@ -519,7 +592,7 @@ export class SceneManager {
     this.flightLastMs = now;
     f.elapsed += dt;
     const p = f.duration > 0 ? Math.min(1, f.elapsed / f.duration) : 1;
-    const e = p * p * (3 - 2 * p); // smoothstep: ease in and out
+    const e = smoothstep(p); // ease in and out
 
     // Target's position in the *current* (old-origin) render space. Pan the look-at
     // straight across to it; the seat distance is what makes the motion read.

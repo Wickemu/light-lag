@@ -257,6 +257,34 @@ export function dopplerTint(
   return base.getHex();
 }
 
+// ── Eased camera transitions ─────────────────────────────────────────────────
+/** Cubic smoothstep on a clamped 0..1 progress: zero slope at both ends, so a
+ *  camera ease lifts off and settles gently rather than starting/stopping with a
+ *  jerk. The single source of truth for both the in-system fly-to
+ *  (`SceneManager.advanceFlight`) and the interstellar follow ease
+ *  (`SceneManager.followInterstellarEased`). Pure, so it is unit-tested. */
+export function smoothstep(p: number): number {
+  const x = p <= 0 ? 0 : p >= 1 ? 1 : p;
+  return x * x * (3 - 2 * x);
+}
+
+/**
+ * The smoothstep-eased intermediate point between `start` and `focus` at progress
+ * `p` (0..1), written into `out`. `p = 0` returns `start`, `p = 1` returns `focus`,
+ * and the path is monotone in each component — the camera look-at glides from where
+ * it was toward the live target. `focus` is sampled fresh each frame by the caller,
+ * so a moving ship/star is tracked. Pure (no DOM/clock) so the convergence is
+ * unit-testable; the offset-preserving shift that keeps zoom invariant lives in the
+ * SceneManager, which needs a live camera and is verified manually. */
+export function easedFollowTarget(
+  start: THREE.Vector3,
+  focus: THREE.Vector3,
+  p: number,
+  out: THREE.Vector3 = new THREE.Vector3(),
+): THREE.Vector3 {
+  return out.copy(start).lerp(focus, smoothstep(p));
+}
+
 // ── Screen-space marker picking ──────────────────────────────────────────────
 /** The best screen-space marker to a click. Among the entries within `threshold`
  *  pixels of (cx, cy), returns the most *prominent* — the lowest `priority` (e.g. a

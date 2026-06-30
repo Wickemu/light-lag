@@ -33,15 +33,6 @@ export const SKY_RADIUS = 2e7;
  *  The interstellar view keeps its gentle glow (it isn't crowded the same way). */
 const SYSTEM_STAR_GAIN_CAP = 0.8;
 
-/** Legacy compressed-shell radius from the Sun, retained for the interstellar
- *  in-transit streak in `shipViews` until that moves to the interstellar view.
- *  Neptune sits at ~4488 units; the nearest stars start just beyond. */
-const SHELL_BASE = 5200;
-const SHELL_PER_LY = 320;
-export function starShellRadius(distanceLy: number): number {
-  return SHELL_BASE + distanceLy * SHELL_PER_LY;
-}
-
 /** Unit direction (Sun→star) in the shared ecliptic-J2000 frame at time t (s since
  *  J2000); default J2000. Tracks the star's proper-motion drift. */
 export function starDirection(star: StarDef, t = 0): { x: number; y: number; z: number } {

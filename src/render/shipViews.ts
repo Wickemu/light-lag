@@ -1,9 +1,13 @@
 /**
  * Visual representation of ships: a constant-size marker (cyan coasting, hot
- * orange under thrust) plus its name label, and — for an interstellar leg — a
- * streak on the compressed star shell. The trajectory line a ship flies is drawn
+ * orange under thrust) plus its name label. A ship on an interstellar leg is
+ * light-years out — far beyond the orrery — so it is painted on the same
+ * UNZOOMABLE celestial sphere as the stars (camera-anchored at `SKY_RADIUS`, in
+ * the true Sun→ship direction) rather than at a wrong finite range that would
+ * parallax against the planets; the to-scale interstellar view draws it (and its
+ * Sol→target aim) at real distances. The trajectory line a ship flies is drawn
  * separately by TrajectoryViews (the live forecast arc), so this view owns only
- * the marker/label/streak.
+ * the marker and label.
  *
  * Ships are created/destroyed at runtime, so visuals are synced to the world
  * each frame rather than built once.
