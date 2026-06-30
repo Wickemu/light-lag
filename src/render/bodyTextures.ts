@@ -24,6 +24,7 @@ import * as THREE from "three";
 import { type BodyDef, type BodyKind } from "@lightlag/engine/constants";
 import { LAND_POLYS } from "./earthLand.ts";
 import { BODY_FEATURES } from "./bodyFeatures.ts";
+import { paintGiant, paintGiantRing } from "./gasGiant.ts";
 
 // ── Determinism ──────────────────────────────────────────────────────────────
 
@@ -267,73 +268,15 @@ function paintStar(def: BodyDef, w: number, h: number, fbm: ReturnType<typeof ma
   return toTexture(painted, maxAniso, true);
 }
 
-/** Gas/ice giants: latitudinal bands warped by turbulence, plus a signature
- *  storm oval for Jupiter (Great Red Spot) and Neptune (Great Dark Spot). */
-function paintGasGiant(def: BodyDef, w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAniso: number): { surface: THREE.Texture } {
+/** Gas/ice giants: real belt/zone structure, zonal turbulence, shear-line
+ *  filaments and signature storms (Jupiter's Great Red Spot & ovals, Neptune's
+ *  Great Dark Spot, Saturn's polar hexagon). The pixel maths live in gasGiant.ts
+ *  — kept DOM-free so the renderer and the offline preview share one definition;
+ *  here we just blit the painted RGBA buffer onto the canvas and upload it. */
+function paintGasGiant(def: BodyDef, w: number, h: number, maxAniso: number): { surface: THREE.Texture } {
   const { painted } = makeCanvas(w, h);
-
-  // A small palette spun off the body colour: alternating light/dark zones.
-  const zoneLight = shade(def.color, 0.10, -0.05);
-  const zoneDark = shade(def.color, -0.12, 0.05);
-  const beltAccent = shade(def.color, -0.04, 0.12, 0.01);
-
-  // Band count rises with how striped the real planet reads.
-  const bands = def.id === "jupiter" ? 18 : def.id === "saturn" ? 14 : 9;
-  const warp = def.id === "uranus" ? 0.15 : 0.6; // Uranus is famously bland
-  const tmp: RGB = [0, 0, 0];
-  const tmp2: RGB = [0, 0, 0];
-
-  for (let y = 0; y < h; y++) {
-    const v = y / h;
-    const lat = v * Math.PI; // 0..π pole to pole
-    for (let x = 0; x < w; x++) {
-      const u = x / w;
-      // Domain-warp the band coordinate so zones wobble and curl like real flow.
-      const turb = (fbm(u, v, 4, 8) - 0.5) * warp;
-      const band = Math.sin((lat * bands) + turb * 6);
-      const t = clamp01(band * 0.5 + 0.5);
-      lerpRgb(zoneDark, zoneLight, t, tmp);
-      // Thin accent belts at the zone boundaries.
-      const edge = 1 - Math.min(1, Math.abs(band) * 3);
-      lerpRgb(tmp, beltAccent, edge * 0.5, tmp);
-      // Fine longitudinal streaks.
-      const streak = (fbm(u * 1.0, v + 5.0, 3, 40) - 0.5) * 0.12;
-      tmp2[0] = clamp01(tmp[0] + streak);
-      tmp2[1] = clamp01(tmp[1] + streak);
-      tmp2[2] = clamp01(tmp[2] + streak);
-      setPx(painted.data, (y * w + x) * 4, tmp2[0], tmp2[1], tmp2[2]);
-    }
-  }
-
-  // Stamp a storm oval (drawn in canvas space after the per-pixel pass).
-  const ctx = painted.canvas.getContext("2d")!;
-  ctx.putImageData(painted.data, 0, 0);
-  const stamp = (cx: number, cy: number, rx: number, ry: number, color: string, alpha: number) => {
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.translate(cx, cy);
-    ctx.scale(rx, ry);
-    ctx.beginPath();
-    ctx.arc(0, 0, 1, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.restore();
-  };
-  if (def.id === "jupiter") {
-    stamp(w * 0.62, h * 0.62, w * 0.05, h * 0.035, "rgba(170,70,40,0.85)", 1);
-    stamp(w * 0.62, h * 0.62, w * 0.035, h * 0.024, "rgba(120,45,30,0.6)", 1);
-  } else if (def.id === "neptune") {
-    // Great Dark Spot — southern hemisphere (canvas row > h/2), like the real one.
-    stamp(w * 0.4, h * 0.6, w * 0.045, h * 0.03, "rgba(20,30,70,0.7)", 1);
-  }
-
-  const tex = new THREE.CanvasTexture(painted.canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.anisotropy = maxAniso;
-  tex.needsUpdate = true;
-  return { surface: tex };
+  painted.data.data.set(paintGiant(def.id, w, h));
+  return { surface: toTexture(painted, maxAniso, true) };
 }
 
 // ── Real surface features ──────────────────────────────────────────────────
@@ -858,28 +801,13 @@ function paintClouds(def: BodyDef, fbm: ReturnType<typeof makeFbm>, maxAniso: nu
   return toTexture(painted, maxAniso, true);
 }
 
-/** Saturn-style ring texture: a 1-D radial profile of concentric bands with a
- *  Cassini-like gap, written into a wide strip the RingGeometry samples radially. */
-function paintRing(fbm: ReturnType<typeof makeFbm>, maxAniso: number): THREE.Texture {
+/** Saturn's ring texture: a 1-D radial profile sampled by the RingGeometry —
+ *  real ring regions (C/B/Cassini/A with the Encke & Keeler gaps) plus fine
+ *  ringlets, painted in gasGiant.ts and blitted here. */
+function paintRing(maxAniso: number): THREE.Texture {
   const w = 1024, h = 8;
   const { painted } = makeCanvas(w, h);
-  for (let x = 0; x < w; x++) {
-    const r = x / w; // 0 inner → 1 outer
-    // Banded density with a Cassini-like gap. With the chosen inner/outer radii
-    // (1.24–2.27 R) the real Cassini Division falls at ~0.7 of the span.
-    let dens = 0.45 + 0.4 * Math.sin(r * 60) * 0.5 + fbm(r, 0.5, 4, 24) * 0.5;
-    dens = clamp01(dens);
-    if (r > 0.68 && r < 0.74) dens *= 0.1; // Cassini-like division
-    // Soft edges: both the inner and outer rims fade to fully transparent.
-    if (r < 0.06) dens *= clamp01(r / 0.06);
-    else if (r > 0.94) dens *= clamp01((1 - r) / 0.06);
-    const shadeFactor = 0.78 + 0.22 * Math.sin(r * 140);
-    const tone = clamp01(0.7 * shadeFactor);
-    const a = (clamp01(dens) * 235) | 0;
-    for (let y = 0; y < h; y++) {
-      setPx(painted.data, (y * w + x) * 4, tone, tone * 0.92, tone * 0.72, a);
-    }
-  }
+  painted.data.data.set(paintGiantRing(w, h));
   return toTexture(painted, maxAniso, true);
 }
 
@@ -910,7 +838,7 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
     surface = paintStar(def, w, h, fbm, maxAniso);
     roughness = 1;
   } else if (isGiant) {
-    surface = paintGasGiant(def, w, h, fbm, maxAniso).surface;
+    surface = paintGasGiant(def, w, h, maxAniso).surface;
     roughness = 1; // fluid, no specular highlight
   } else if (def.id === "earth") {
     const e = paintEarth(w, h, fbm, maxAniso);
@@ -966,7 +894,7 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
 
   // Saturn's rings (the one body where their absence reads as a bug).
   if (def.id === "saturn") {
-    set.ring = { texture: paintRing(fbm, maxAniso), inner: SATURN_RING_FRACTIONS.inner, outer: SATURN_RING_FRACTIONS.outer };
+    set.ring = { texture: paintRing(maxAniso), inner: SATURN_RING_FRACTIONS.inner, outer: SATURN_RING_FRACTIONS.outer };
   }
 
   return set;
