@@ -172,8 +172,15 @@ export function aimMoonArrival(
     const tSoi = hi;
     const sh = cruise(tSoi);
     const tg = bodyStateRelative(moon, tSoi);
-    const el = stateToElements(sub(sh.r, tg.r), sub(sh.v, tg.v), moon.mu);
-    return { peri: el.a * (1 - el.e), sol, tSoi, vInf: length(sub(sh.v, tg.v)) };
+    const rRel = sub(sh.r, tg.r), vRel = sub(sh.v, tg.v);
+    // Aim at the periapsis the FLIGHT reaches. An oblate moon (e.g. Earth's Moon) flies the
+    // J2-perturbed inbound hyperbola (buildApproachLeg), so integrate the SAME j2Approach here —
+    // otherwise the two-body a(1−e) aim misses the flown periapsis (the aim-must-match-flight
+    // rule, as aimArrival already honours for an oblate planet). A spherical moon stays two-body.
+    const peri = moon.J2
+      ? j2Approach({ mu: moon.mu, J2: moon.J2, Req: j2RefRadius(moon), pole: spinAxis(moon), r0: rRel, v0: vRel }).periR
+      : (() => { const el = stateToElements(rRel, vRel, moon.mu); return el.a * (1 - el.e); })();
+    return { peri, sol, tSoi, vInf: length(vRel) };
   };
 
   // The aim OFFSET must stay inside the moon's SOI: a tight SOI (a Galilean is ~10⁴ km,

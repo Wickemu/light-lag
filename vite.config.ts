@@ -50,5 +50,10 @@ export default defineConfig({
     // integration tests under src/integration).
     environment: "node",
     include: ["src/**/*.test.ts", "packages/engine/src/**/*.test.ts"],
+    // The perturbed-propagation tests integrate real third-body arcs and legitimately run
+    // several seconds each; on slower hardware they straddle Vitest's default 5 s per-test
+    // timeout and flake red. Give the suite comfortable headroom (the degenerate-leg guard
+    // in armPerturbedLeg ensures a genuine hang still fails fast, not at this bound).
+    testTimeout: 20000,
   },
 });

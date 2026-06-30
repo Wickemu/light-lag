@@ -887,7 +887,10 @@ export class Simulation {
    *  complete should be honestly refused, not run dry and falsely acknowledged). */
   private applyBurn(ship: Ship, dv: number, dir: BurnDir): boolean {
     if (dv <= 0 || ship.mode === "thrust") return false;
+    if (ship.status === "lost") return false; // a destroyed wreck cannot execute a delivered order
+    if (ship.approachLeg) return false; // a J2 capture approach owns the state — no clean conic to burn from
     if (dv > dvRemaining(ship)) return false; // can't finish the commanded Δv → NACK
+    if (ship.perturbedLeg) this.stopPerturbed(ship.id); // a delivered burn takes manual control off the perturbed coast
     const state = shipRelativeState(ship, this.world.t);
     ship.r = state.r;
     ship.v = state.v;
@@ -912,10 +915,12 @@ export class Simulation {
     goalPrimary?: string,
   ): boolean {
     if (dvCap <= 0 || ship.mode === "thrust") return false;
-    // No clean osculating conic to trim against in these states.
+    if (ship.status === "lost") return false; // a destroyed wreck cannot execute a delivered order
+    // No clean osculating conic to trim against in these states (a perturbed coast is handled
+    // below: the burn takes control of it once the trim is confirmed reachable).
     if (
       ship.interstellarLeg || ship.spiral || ship.entryLeg ||
-      ship.launchLeg || ship.descentLeg || ship.landed
+      ship.launchLeg || ship.descentLeg || ship.approachLeg || ship.landed
     ) {
       return false;
     }
@@ -927,7 +932,8 @@ export class Simulation {
     if (!(cap > 0)) return false;
     const state = shipRelativeState(ship, this.world.t);
     const dv = solveBurnMagnitude(state.r, state.v, primaryMu(ship), dir, goal, cap);
-    if (dv === null || dv <= 1e-9) return false; // unreachable, or already at goal
+    if (dv === null || dv <= 1e-9) return false; // unreachable, or already at goal — NACK (hold untouched)
+    if (ship.perturbedLeg) this.stopPerturbed(ship.id); // reachable: take manual control off the perturbed coast
     ship.r = state.r;
     ship.v = state.v;
     ship.epoch = this.world.t;
@@ -964,6 +970,10 @@ export class Simulation {
     const tr = ship.transfer;
     if (!tr || tr.departed) return;
     if (Math.abs(evT - tr.tDepart) > 1) return; // stale event from a re-plan
+    // A departing ship leaves any station-keeping / perturbed coast behind: drop the active
+    // leg and its pending finalize so an orphaned perturbed-finalize can't re-osculate the
+    // (now heliocentric) conic in the wrong frame after departure.
+    if (ship.perturbedLeg || ship.fidelity || ship.stationKeep) this.stopPerturbed(ship.id);
 
     const depBody = BODY_BY_ID.get(ship.primary);
     const target = BODY_BY_ID.get(tr.targetId);
@@ -1412,8 +1422,11 @@ export class Simulation {
   ): boolean {
     const ship = this.world.ships.get(shipId);
     if (!ship) return false;
+    const prevFidelity = ship.fidelity;
     ship.fidelity = "perturbed";
-    return this.armPerturbedLeg(ship, this.world.t, opts);
+    const armed = this.armPerturbedLeg(ship, this.world.t, opts);
+    if (!armed) ship.fidelity = prevFidelity; // arm refused — don't leak a perturbed flag with no leg
+    return armed;
   }
 
   /** Stop flying a ship perturbed: drop the active leg + its finalize and re-osculate
@@ -1452,6 +1465,11 @@ export class Simulation {
     });
     if (perturbers.length === 0) return false; // nothing significant to feel
     const leg = buildPerturbedLeg(body, st.r, st.v, t, horizon, perturbers, { includeJ2: opts.includeJ2 });
+    // A leg clamped to zero/negative length — e.g. the start state sits at or just outside the
+    // SOI — would schedule a perturbed-finalize at the CURRENT time, which the event drain
+    // re-pops and re-arms forever (an infinite loop). Refuse a degenerate leg; the caller falls
+    // back to a plain game-mode coast.
+    if (!(leg.tEnd > t)) return false;
     ship.perturbedLeg = leg;
     ship.mode = "coast";
     ship.r = undefined;
@@ -1491,7 +1509,14 @@ export class Simulation {
           sk.lastDv = holdDv;
           ship.elements = stateToElements(nom.r, nom.v, mu);
           ship.epoch = t;
-          this.armPerturbedLeg(ship, t, { horizon: sk.windowS });
+          // Re-arm the next correction window. If it can't be armed (a pending transfer owns
+          // the path, or the re-seated state has no significant perturbers / yields a
+          // degenerate leg), end the hold cleanly on the nominal conic rather than leaving a
+          // dangling perturbed flag with no leg and no finalize event.
+          if (!this.armPerturbedLeg(ship, t, { horizon: sk.windowS })) {
+            ship.stationKeep = undefined;
+            ship.fidelity = undefined;
+          }
           return;
         }
         sk.holding = false; // can't afford the correction — station-keeping has failed
@@ -1503,7 +1528,13 @@ export class Simulation {
     // Default / failed-hold: re-osculate on the drifted exit and keep drifting if perturbed.
     ship.elements = stateToElements(leg.exitR, leg.exitV, mu);
     ship.epoch = t;
-    if (ship.fidelity === "perturbed") this.armPerturbedLeg(ship, t);
+    // Keep drifting under perturbed flight if still in that mode; if the next chunk can't be
+    // armed (degenerate leg / no significant perturbers), drop back to a plain game-mode coast
+    // rather than leaving fidelity flagged with no leg.
+    if (ship.fidelity === "perturbed" && !this.armPerturbedLeg(ship, t)) {
+      ship.fidelity = undefined;
+      ship.stationKeep = undefined;
+    }
   }
 
   // ── Δv-accounted station-keeping (the player-ship paid hold) ──────────────────
@@ -1554,9 +1585,10 @@ export class Simulation {
       : { kind: "orbit", nominal: shipOsculatingElements(ship, this.world.t), nominalEpoch: this.world.t,
           dvSpent: 0, lastDv: 0, windowS, holding: true };
     ship.stationKeep = sk;
+    const prevFidelity = ship.fidelity;
     ship.fidelity = "perturbed";
     const armed = this.armPerturbedLeg(ship, this.world.t, { horizon: windowS });
-    if (!armed) ship.stationKeep = undefined; // couldn't start — leave no dangling hold
+    if (!armed) { ship.stationKeep = undefined; ship.fidelity = prevFidelity; } // couldn't start — leave no dangling hold or perturbed flag
     return armed;
   }
 
