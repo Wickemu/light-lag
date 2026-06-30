@@ -380,7 +380,7 @@ body {
   gap: 4px;
 }
 
-/* FOCUS list ordering selector — a compact Type / System / Near / Region segmented control. */
+/* FOCUS list ordering selector — a compact Type / System segmented control. */
 .focus-order {
   display: flex;
   gap: 4px;
@@ -673,6 +673,13 @@ body {
   color: var(--text-dim);
   opacity: 0.75;
   padding-left: 2px;
+  /* The label takes the slack between the caret/eye and the show-only button,
+     pushing the latter to the right edge. */
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .body-group-row {
   display: flex;
@@ -682,6 +689,68 @@ body {
 }
 .body-group-row:first-of-type {
   margin-top: 2px;
+}
+
+/* Collapse/expand caret: a quiet chevron at the head of each group. */
+.grp-caret {
+  flex: 0 0 auto;
+  width: 16px;
+  padding: 2px 0;
+  font-size: 9px;
+  line-height: 1;
+  text-align: center;
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
+}
+.grp-caret:hover {
+  color: var(--text);
+  background: var(--btn-bg);
+}
+
+/* When the group name is a zoom-to-fit target it reads as a clickable label —
+   same quiet type (default button chrome stripped), with a hover wash + underline
+   to signal it acts. */
+button.body-group {
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 4px;
+  padding: 1px 2px;
+}
+button.body-group:hover {
+  color: var(--text);
+  opacity: 1;
+  text-decoration: underline;
+}
+
+/* "Show only" isolate: hidden until the header row is hovered (or it's the active
+   isolation), so it never clutters the resting list. */
+.grp-solo {
+  flex: 0 0 auto;
+  width: 20px;
+  padding: 2px 0;
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
+  opacity: 0;
+  transition: opacity 0.08s ease;
+}
+.body-group-row:hover .grp-solo,
+.grp-solo:focus-visible {
+  opacity: 0.85;
+}
+.grp-solo:hover {
+  color: var(--text);
+  background: var(--btn-bg);
+  opacity: 1;
+}
+.grp-solo.active {
+  opacity: 1;
+  color: var(--active);
 }
 
 /* One focusable body: an eye toggle plus the (flexible) focus button. */
@@ -729,6 +798,12 @@ body {
 .eye-btn.off {
   color: var(--text-dim);
   opacity: 0.7;
+}
+/* A partly-shown group: the half-filled glyph reads in a muted accent so it's
+   clearly neither fully on nor fully off. */
+.eye-btn.partial {
+  color: var(--active);
+  opacity: 0.85;
 }
 .eye-btn:hover {
   background: var(--btn-bg);

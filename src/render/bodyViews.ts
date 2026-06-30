@@ -481,7 +481,7 @@ export class BodyViews {
       const { def } = vis;
 
       // Honour show/hide: a hidden body drops its marker, sphere and orbit.
-      const shown = this.vis.bodyVisible(def.id, def.kind);
+      const shown = this.vis.bodyVisible(def.id);
       vis.marker.visible = shown;
       vis.node.visible = shown;
       if (vis.orbit) vis.orbit.visible = shown && orbitsOn;

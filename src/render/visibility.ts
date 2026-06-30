@@ -7,16 +7,17 @@
  * its sphere, its orbit line, and its label together, and lets the UI subscribe
  * once to repaint its toggles whenever state changes from anywhere.
  *
- * Two axes of control:
- *   - KIND flags gate a whole class at once (all moons, all comets, …).
- *   - per-body overrides hide one object while its kind stays visible.
- * A body is drawn iff its kind is on AND it is not individually hidden.
+ * Bodies have ONE source of truth: a per-body `hidden` set. A body is drawn iff
+ * it is not in that set. Group actions (show/hide a whole kind, planetary
+ * system or small-body region, or "show only this group") are just bulk writes
+ * to that set — so whichever group action you take last simply WINS, overriding
+ * any per-body or earlier group rule, with no second masking axis to leak a
+ * stale "hidden" through a later "show". This is the supersede contract the FOCUS
+ * list relies on.
  *
  * LAYER flags gate the cross-cutting overlays that aren't a body kind: orbit
  * lines, name labels, the nearby-star sky, ships, and in-flight comms packets.
  */
-
-import { type BodyKind } from "@lightlag/engine/constants";
 
 /** Cross-cutting overlay toggles (not tied to a single body kind). */
 export type LayerKey =
@@ -40,9 +41,6 @@ export const LAYER_KEYS: LayerKey[] = [
 ];
 
 export class Visibility {
-  private kinds: Record<BodyKind, boolean> = {
-    star: true, planet: true, dwarf: true, asteroid: true, moon: true, comet: true, satellite: true,
-  };
   private layers: Record<LayerKey, boolean> = {
     orbits: true, trajectory: true, route: false, perturbed: false, labels: true, ships: true,
     comms: true, doppler_tint: false, stars: true, starLabels: true,
@@ -60,19 +58,6 @@ export class Visibility {
     for (const fn of this.listeners) fn();
   }
 
-  // ── Body kinds ─────────────────────────────────────────────────────────────
-  kindVisible(k: BodyKind): boolean {
-    return this.kinds[k];
-  }
-  setKind(k: BodyKind, on: boolean): void {
-    if (this.kinds[k] === on) return;
-    this.kinds[k] = on;
-    this.emit();
-  }
-  toggleKind(k: BodyKind): void {
-    this.setKind(k, !this.kinds[k]);
-  }
-
   // ── Cross-cutting layers ───────────────────────────────────────────────────
   layer(k: LayerKey): boolean {
     return this.layers[k];
@@ -86,10 +71,10 @@ export class Visibility {
     this.setLayer(k, !this.layers[k]);
   }
 
-  // ── Per-body overrides ─────────────────────────────────────────────────────
-  /** Whether a body is drawn: its kind is on AND it isn't individually hidden. */
-  bodyVisible(id: string, kind: BodyKind): boolean {
-    return this.kinds[kind] && !this.hidden.has(id);
+  // ── Per-body visibility (the single source of truth) ───────────────────────
+  /** Whether a body is drawn: simply that it isn't in the hidden set. */
+  bodyVisible(id: string): boolean {
+    return !this.hidden.has(id);
   }
   bodyHidden(id: string): boolean {
     return this.hidden.has(id);
@@ -102,5 +87,50 @@ export class Visibility {
   }
   toggleBody(id: string): void {
     this.setBodyHidden(id, !this.hidden.has(id));
+  }
+
+  // ── Group actions (the supersede primitives) ───────────────────────────────
+  /** Show or hide a whole set of bodies at once. Writing every member's state
+   *  directly is what lets the latest group action override any earlier rule:
+   *  there is no separate kind flag left to keep a member hidden behind a
+   *  group-level "show". */
+  setGroupHidden(ids: Iterable<string>, hidden: boolean): void {
+    let changed = false;
+    for (const id of ids) {
+      if (hidden) {
+        if (!this.hidden.has(id)) { this.hidden.add(id); changed = true; }
+      } else if (this.hidden.delete(id)) {
+        changed = true;
+      }
+    }
+    if (changed) this.emit();
+  }
+
+  /** Isolate a group: show exactly `show`, hide every other body in `universe`. */
+  showOnly(show: Iterable<string>, universe: Iterable<string>): void {
+    const keep = show instanceof Set ? show : new Set(show);
+    let changed = false;
+    for (const id of universe) {
+      const wantHidden = !keep.has(id);
+      if (wantHidden) {
+        if (!this.hidden.has(id)) { this.hidden.add(id); changed = true; }
+      } else if (this.hidden.delete(id)) {
+        changed = true;
+      }
+    }
+    if (changed) this.emit();
+  }
+
+  /** A copy of the hidden set — paired with {@link restoreHidden} so the HUD can
+   *  snapshot the visibility state before a "show only" and put it back on undo. */
+  snapshotHidden(): Set<string> {
+    return new Set(this.hidden);
+  }
+
+  /** Replace the hidden set wholesale (the "show only" undo). */
+  restoreHidden(snapshot: Set<string>): void {
+    if (this.hidden.size === snapshot.size && [...this.hidden].every((id) => snapshot.has(id))) return;
+    this.hidden = new Set(snapshot);
+    this.emit();
   }
 }

@@ -42,23 +42,22 @@ const GROUPS: { kind: BodyKind; label: string }[] = [
   { kind: "comet", label: "Comets" },
 ];
 
-/** How the FOCUS list is ordered. `type` groups by body kind (the original
- *  layout); `system` groups every body under its parent system (a planet with
- *  its moons & satellites); `near` orders systems by live distance to the
- *  focused body, the focused system first; `region` splits the heliocentric
- *  small bodies into their dynamical populations (the asteroid belt, the Kuiper
- *  belt, the Oort cloud…), each a show/hide group. Persisted across reloads. */
-type OrderMode = "type" | "system" | "near" | "region";
+/** How the FOCUS list is ordered. `type` groups by body kind (planets, dwarfs,
+ *  asteroids, moons, …); `system` groups every body under the primary it orbits —
+ *  each planet with its moons & satellites, and each heliocentric small-body
+ *  REGION (the main belt, the Kuiper belt, …) treated as a system in its own
+ *  right and slotted into the outward distance order beside the planets.
+ *  Persisted across reloads. */
+type OrderMode = "type" | "system";
 
 const ORDER_MODES: { mode: OrderMode; label: string; title: string }[] = [
   { mode: "type", label: "Type", title: "Group by type — planets, dwarfs, asteroids, moons, satellites, comets" },
-  { mode: "system", label: "System", title: "Group by parent system — each planet with its moons & satellites" },
-  { mode: "near", label: "Near", title: "Nearest to the focused body first; the parent body leads each system" },
-  { mode: "region", label: "Region", title: "Group the small bodies by region — near-Earth, main belt, Trojans, Kuiper belt, scattered disc, Oort cloud" },
+  { mode: "system", label: "System", title: "Group by what it orbits — each planet with its moons, and each small-body region (belt, Kuiper, Oort…), in outward distance order" },
 ];
 
-/** Region grouping (Region order mode): the heliocentric small-body populations,
- *  in outward order. Each becomes a show/hide section in the FOCUS list. */
+/** The heliocentric small-body populations, in outward order, with the label each
+ *  gets as a section header. In System mode each becomes a pseudo-system anchored
+ *  on the Sun, slotted among the planets by its members' mean distance. */
 const REGION_GROUPS: { region: BodyRegion; label: string }[] = [
   { region: "near_earth", label: "Near-Earth asteroids" },
   { region: "main_belt", label: "Main belt" },
@@ -67,25 +66,38 @@ const REGION_GROUPS: { region: BodyRegion; label: string }[] = [
   { region: "scattered", label: "Scattered disc" },
   { region: "oort", label: "Oort cloud" },
 ];
+const REGION_LABEL = new Map<BodyRegion, string>(REGION_GROUPS.map((g) => [g.region, g.label]));
+const REGION_ORDER = new Map<BodyRegion, number>(REGION_GROUPS.map((g, i) => [g.region, i]));
 
-/** Read the persisted order mode, validating it against the known set (an
- *  unrecognised stored value falls back to the original Type grouping). */
+/** Read the persisted order mode. Only Type and System survive; the retired Near
+ *  view falls back to Type, and Region — now folded into System — maps to it. */
 function readOrderMode(): OrderMode {
   const saved = getString("focus.order", "type");
-  return saved === "system" || saved === "near" || saved === "region" ? saved : "type";
+  return saved === "system" || saved === "region" ? "system" : "type";
 }
 
 /** One displayed row: a body, optionally a child nested under a system anchor. */
 interface FocusRow { id: string; child: boolean; }
-/** One displayed section: an optional header (its label) plus its rows. A header
- *  may carry an eye that toggles a whole kind (`eyeKind`) or an explicit member
- *  set (`eyeMembers`, used for system groups). */
+/** One displayed section. A headerless section (`label === ""`, e.g. the lone Sun
+ *  or a moonless planet) is just its rows. A headed section carries a stable
+ *  `key` (used to persist its collapse state and identify its "show only"), the
+ *  `members` its header eye / "show only" govern, and — when the group orbits one
+ *  primary — a `zoom` anchor so clicking the header frames the whole group. */
 interface FocusSection {
   label: string;
+  key: string;
   rows: FocusRow[];
-  eyeKind?: BodyKind;
-  eyeMembers?: string[];
+  members: string[];
+  zoom?: { anchorId: string };
 }
+
+/** Kinds whose members all orbit the Sun directly, so a "zoom to this group"
+ *  frames their heliocentric orbits about the Sun. Moons/satellites span many
+ *  parents, so a Type-mode "Moons"/"Satellites" header has no single anchor. */
+const HELIO_KINDS = new Set<BodyKind>(["planet", "dwarf", "asteroid", "comet"]);
+
+/** Every body id — the universe a "show only" hides the complement of. */
+const ALL_BODY_IDS: string[] = BODIES.map((b) => b.id);
 
 /** Each top-level body's descendants (moons, satellites), keyed by the anchor
  *  id. Built once from the static catalog. The anchor itself is not included;
@@ -125,6 +137,16 @@ function semiMajor(b: BodyDef): number {
   return 0;
 }
 
+/** Apoapsis radius (m) about a body's immediate parent — its farthest excursion,
+ *  what a "frame the whole group" zoom must clear. a·(1+e) for whichever element
+ *  set the body carries (moon `a` in metres, heliocentric `a` in AU). */
+function apoapsisMeters(b: BodyDef): number {
+  if (b.moon) return b.moon.a * (1 + b.moon.e);
+  if (b.helio) return b.helio.a * AU * (1 + b.helio.e);
+  if (b.standish) return b.standish.a * AU * (1 + b.standish.e);
+  return 0;
+}
+
 /** Static member order within a system: natural moons before artificial
  *  satellites, innermost first within each. */
 const MEMBER_KIND_RANK: Partial<Record<BodyKind, number>> = { moon: 0, satellite: 1 };
@@ -137,125 +159,109 @@ function memberCompare(a: BodyDef, b: BodyDef): number {
 /** A system section: the anchor row first, its members nested beneath. A
  *  childless anchor becomes a single headerless row (no redundant header). */
 function systemSection(anchor: BodyDef, members: BodyDef[]): FocusSection {
-  if (members.length === 0) return { label: "", rows: [{ id: anchor.id, child: false }] };
+  if (members.length === 0) {
+    return { label: "", key: "", rows: [{ id: anchor.id, child: false }], members: [anchor.id] };
+  }
   return {
     label: anchor.name,
-    eyeMembers: [anchor.id, ...members.map((m) => m.id)],
+    key: `sys:${anchor.id}`,
+    members: [anchor.id, ...members.map((m) => m.id)],
     rows: [{ id: anchor.id, child: false }, ...members.map((m) => ({ id: m.id, child: true }))],
+    zoom: { anchorId: anchor.id },
   };
 }
 
 /** Group by kind — the original FOCUS layout (the Sun alone, then one section
- *  per kind, heliocentric order preserved within each). */
+ *  per kind, heliocentric order preserved within each). Heliocentric kinds get a
+ *  Sun-anchored zoom; moons/satellites span many parents, so they don't. */
 function sectionsByType(): FocusSection[] {
   const out: FocusSection[] = [];
   for (const g of GROUPS) {
     const inGroup = BODIES.filter((b) => b.kind === g.kind);
     if (inGroup.length === 0) continue;
+    const ids = inGroup.map((b) => b.id);
+    if (!g.label) {
+      out.push({ label: "", key: "", rows: inGroup.map((b) => ({ id: b.id, child: false })), members: ids });
+      continue;
+    }
     out.push({
       label: g.label,
-      eyeKind: g.label ? g.kind : undefined,
+      key: `kind:${g.kind}`,
+      members: ids,
       rows: inGroup.map((b) => ({ id: b.id, child: false })),
+      zoom: HELIO_KINDS.has(g.kind) ? { anchorId: "sun" } : undefined,
     });
   }
   return out;
 }
 
-/** Group by parent system: the Sun alone, then each planet (with its moons &
- *  satellites nested), Pluto with Charon, and finally the far heliocentric
- *  bodies that anchor nothing, grouped by kind. */
+/** A Sun-anchored pseudo-system for a small-body population (a region, the
+ *  comets, or any orphan) — its bodies innermost first, framed about the Sun. */
+function regionSection(label: string, key: string, bodies: BodyDef[]): FocusSection {
+  const sorted = bodies.slice().sort((a, b) => semiMajor(a) - semiMajor(b));
+  return {
+    label,
+    key,
+    members: sorted.map((b) => b.id),
+    rows: sorted.map((b) => ({ id: b.id, child: false })),
+    zoom: { anchorId: "sun" },
+  };
+}
+
+/** Mean semi-major axis (m) of a set — the distance key a pseudo-system is
+ *  slotted at among the planet systems. */
+function meanSemiMajor(bodies: BodyDef[]): number {
+  if (bodies.length === 0) return 0;
+  return bodies.reduce((s, b) => s + semiMajor(b), 0) / bodies.length;
+}
+
+/** Group by the primary each body orbits, in outward distance order: the Sun
+ *  alone, then every planet system (its moons & satellites nested) interleaved
+ *  with the small-body regions — each region treated as a system in its own
+ *  right and slotted by its members' mean distance. A heliocentric small body
+ *  with its own moons (Pluto) stays its own system; the rest fall into their
+ *  region, with comets and any untagged body as trailing Sun-anchored groups. */
 function sectionsBySystem(): FocusSection[] {
-  const out: FocusSection[] = [{ label: "", rows: [{ id: "sun", child: false }] }];
-  const tail: BodyDef[] = [];
+  // Sun first, pinned ahead of everything by a sort key below every orbit.
+  const entries: { sortA: number; section: FocusSection }[] = [
+    { sortA: -Infinity, section: { label: "", key: "", rows: [{ id: "sun", child: false }], members: ["sun"] } },
+  ];
+
+  const loose: BodyDef[] = []; // heliocentric small bodies that anchor no moons
   for (const anchor of BODIES.filter((b) => b.parent === "sun")) {
     const members = (SYSTEM_MEMBERS.get(anchor.id) ?? []).slice().sort(memberCompare);
-    // A planet is always its own system; any body with members (e.g. Pluto) too.
-    if (anchor.kind === "planet" || members.length > 0) out.push(systemSection(anchor, members));
-    else tail.push(anchor);
-  }
-  for (const g of GROUPS) {
-    if (!g.label) continue; // the Sun is already placed at the top
-    const inTail = tail.filter((b) => b.kind === g.kind);
-    if (inTail.length === 0) continue;
-    out.push({ label: g.label, eyeKind: g.kind, rows: inTail.map((b) => ({ id: b.id, child: false })) });
-  }
-  return out;
-}
-
-/** Group by dynamical region: the Sun and planets as in Type mode, then one
- *  show/hide section per heliocentric small-body population (near-Earth, main
- *  belt, Trojans, Kuiper belt, scattered disc, Oort cloud) — innermost member
- *  first within each — and finally comets, moons and satellites by kind. The
- *  region sections use an explicit member set (not a kind eye), since asteroids
- *  and dwarfs are split ACROSS regions. */
-function sectionsByRegion(): FocusSection[] {
-  const out: FocusSection[] = [];
-  const star = BODIES.filter((b) => b.kind === "star");
-  if (star.length) out.push({ label: "", rows: star.map((b) => ({ id: b.id, child: false })) });
-
-  const planets = BODIES.filter((b) => b.kind === "planet");
-  if (planets.length) out.push({ label: "Planets", eyeKind: "planet", rows: planets.map((b) => ({ id: b.id, child: false })) });
-
-  const known = new Set<BodyRegion>(REGION_GROUPS.map((g) => g.region));
-  for (const g of REGION_GROUPS) {
-    const members = BODIES.filter((b) => b.region === g.region).sort((a, b) => semiMajor(a) - semiMajor(b));
-    if (members.length === 0) continue;
-    out.push({
-      label: g.label,
-      eyeMembers: members.map((b) => b.id),
-      rows: members.map((b) => ({ id: b.id, child: false })),
-    });
+    if (anchor.kind === "planet" || members.length > 0) {
+      entries.push({ sortA: semiMajor(anchor), section: systemSection(anchor, members) });
+    } else {
+      loose.push(anchor);
+    }
   }
 
-  // Defensive: any heliocentric asteroid/dwarf whose region tag is missing or
-  // unrecognised still gets a home, so a future un-tagged body is never silently
-  // dropped from the navigator (and from Tab cycling). A test asserts the tag is
-  // always present and valid; this is the belt to that suspenders.
-  const orphans = BODIES.filter(
-    (b) => b.parent === "sun" && (b.kind === "asteroid" || b.kind === "dwarf") && !(b.region && known.has(b.region)),
-  ).sort((a, b) => semiMajor(a) - semiMajor(b));
-  if (orphans.length > 0) {
-    out.push({
-      label: "Other small bodies",
-      eyeMembers: orphans.map((b) => b.id),
-      rows: orphans.map((b) => ({ id: b.id, child: false })),
-    });
+  // Bucket the loose small bodies: by region when tagged, else comets together,
+  // else a defensive "other" home so a future untagged body is never dropped.
+  const buckets = new Map<string, { label: string; key: string; order: number; bodies: BodyDef[] }>();
+  const bucket = (key: string, label: string, order: number) => {
+    let b = buckets.get(key);
+    if (!b) buckets.set(key, (b = { key, label, order, bodies: [] }));
+    return b;
+  };
+  for (const b of loose) {
+    if ((b.kind === "asteroid" || b.kind === "dwarf") && b.region && REGION_LABEL.has(b.region)) {
+      bucket(`region:${b.region}`, REGION_LABEL.get(b.region)!, REGION_ORDER.get(b.region)!).bodies.push(b);
+    } else if (b.kind === "comet") {
+      bucket("kind:comet", "Comets", 90).bodies.push(b);
+    } else {
+      bucket("region:other", "Other small bodies", 99).bodies.push(b);
+    }
+  }
+  for (const bk of buckets.values()) {
+    // Tie-break equal mean distances by the canonical region order, so e.g. the
+    // Jupiter Trojans land just beside Jupiter rather than flickering around it.
+    entries.push({ sortA: meanSemiMajor(bk.bodies) + bk.order * 1e-6, section: regionSection(bk.label, bk.key, bk.bodies) });
   }
 
-  // The kinds that don't carry a region stay grouped by kind, as in Type mode.
-  for (const kind of ["comet", "moon", "satellite"] as BodyKind[]) {
-    const inKind = BODIES.filter((b) => b.kind === kind);
-    if (inKind.length === 0) continue;
-    const label = GROUPS.find((gr) => gr.kind === kind)?.label ?? kind;
-    out.push({ label, eyeKind: kind, rows: inKind.map((b) => ({ id: b.id, child: false })) });
-  }
-  return out;
-}
-
-/** Order by proximity to the focused body: its own system first (with the parent
- *  body leading, then siblings closest-to-you first), then every other system by
- *  live distance from the focus. Recomputed whenever the focus changes. */
-function sectionsByProximity(t: number, focusId: string): FocusSection[] {
-  const focusDef = BODY_BY_ID.get(focusId) ?? BODY_BY_ID.get("sun")!;
-  const focusPos = bodyState(focusDef, t).r;
-  const focusAnchor = systemAnchor(focusDef).id;
-  const distToFocus = (id: string) => distance(focusPos, bodyState(BODY_BY_ID.get(id)!, t).r);
-
-  const anchors = [BODY_BY_ID.get("sun")!, ...BODIES.filter((b) => b.parent === "sun")];
-  anchors.sort((a, b) => {
-    if (a.id === focusAnchor) return -1;
-    if (b.id === focusAnchor) return 1;
-    return distToFocus(a.id) - distToFocus(b.id);
-  });
-
-  return anchors.map((anchor) => {
-    const members = (SYSTEM_MEMBERS.get(anchor.id) ?? []).slice();
-    // Inside the system you're in, surface the closest siblings first; elsewhere
-    // the steady innermost-first order reads better than jittering distances.
-    if (anchor.id === focusAnchor) members.sort((a, b) => distToFocus(a.id) - distToFocus(b.id));
-    else members.sort(memberCompare);
-    return systemSection(anchor, members);
-  });
+  entries.sort((a, b) => a.sortA - b.sortA);
+  return entries.map((e) => e.section);
 }
 
 /** Drop rows whose body name doesn't contain the query; keep a section only when
@@ -271,8 +277,12 @@ function filterSections(sections: FocusSection[], query: string): FocusSection[]
   for (const s of sections) {
     const rows = s.rows.filter((r) => matches(r.id));
     if (rows.length === 0) continue;
-    // A system eye should govern only what's actually shown while filtering.
-    out.push({ ...s, rows, eyeMembers: s.eyeMembers ? rows.map((r) => r.id) : undefined });
+    // Only the displayed ROWS are filtered — the header keeps its FULL `members`,
+    // `zoom` and `key`. So showing/hiding/isolating a group or zooming to it always
+    // acts on the whole group, never just the search hits: a "hide Moons" while
+    // searching "io" still hides every moon (supersede holds), and the header
+    // zoom still frames the whole system.
+    out.push({ ...s, rows });
   }
   return out;
 }
@@ -340,18 +350,25 @@ export class Hud {
   // bounding-box test without forcing a layout read every frame.
   private labelWidths = new Map<string, number>();
   private listButtons = new Map<string, HTMLButtonElement>();
-  // Show/hide controls: eye toggles per body and per kind, layer chips, and the
-  // body rows (so a hidden body can be dimmed). Repainted from Visibility.onChange.
+  // Show/hide controls: eye toggles per body, layer chips, and the body rows (so a
+  // hidden body can be dimmed). Repainted from Visibility.onChange.
   private bodyEyes = new Map<string, HTMLButtonElement>();
   private bodyRows = new Map<string, HTMLElement>();
-  // Header eye toggles (kind eyes in Type mode, system eyes in System/Near). Each
-  // entry repaints its own button from the live Visibility state; refreshVisibilityUI
-  // runs them generically. Rebuilt on every list render.
-  private headerEyeRefreshers: (() => void)[] = [];
+  // Header repainters (the group eye's tri-state glyph + the "show only" active
+  // state). Each closure repaints its own controls from the live Visibility / solo
+  // state; refreshVisibilityUI runs them generically. Rebuilt on every list render.
+  private headerRefreshers: (() => void)[] = [];
   private layerChips = new Map<LayerKey, HTMLButtonElement>();
   /** Focus-list order as displayed — drives Tab cycling so the keyboard and the
-   *  visible list agree. Rebuilt with the list whenever order/search/focus change. */
+   *  visible list agree. Holds every body (even those inside a collapsed group),
+   *  so Tab still reaches them; landing on one expands its group. */
   private focusOrder: string[] = [];
+  /** Body id → its section's collapse key, for the bodies that live under a
+   *  collapsible header. Lets focus() expand the group a newly-focused body is in. */
+  private bodyGroupKey = new Map<string, string>();
+  /** Active "show only" isolation: the group key and the hidden-set snapshot to
+   *  restore when it's switched off. Null when nothing is isolated. */
+  private solo: { key: string; prev: Set<string> } | null = null;
   // FOCUS list ordering + realtime search. The order mode persists; the search
   // text is session-only. The body section of the list is rebuilt from these.
   private orderMode: OrderMode = readOrderMode();
@@ -427,7 +444,7 @@ export class Hud {
     const pts: { id: string; x: number; y: number; priority: number }[] = [];
     for (const a of views.labelAnchors()) {
       const def = BODY_BY_ID.get(a.id);
-      if (!def || !this.vis.bodyVisible(a.id, def.kind)) continue;
+      if (!def || !this.vis.bodyVisible(a.id)) continue;
       const ndc = a.ndc;
       if (ndc.z >= 1 || Math.abs(ndc.x) > 1 || Math.abs(ndc.y) > 1) continue;
       // Prominence = the label de-collision rank, so a click in a tight cluster
@@ -632,56 +649,100 @@ export class Hud {
 
   /** Rebuild the scrolling body of the FOCUS list for the active order mode and
    *  search text. Every per-row map is cleared and repopulated together, so the
-   *  visibility repaint, Tab order and focus highlight all stay consistent. */
+   *  visibility repaint, Tab order and focus highlight all stay consistent.
+   *
+   *  `focusOrder` and `bodyGroupKey` index EVERY body, even those inside a
+   *  collapsed group (whose rows aren't in the DOM) — so Tab still cycles through
+   *  them and focus() knows which group to expand — while the DOM holds only the
+   *  rows of expanded sections. */
   private renderFocusList(): void {
     this.listButtons.clear();
     this.bodyEyes.clear();
     this.bodyRows.clear();
-    this.headerEyeRefreshers = [];
+    this.headerRefreshers = [];
     this.focusOrder = [];
+    this.bodyGroupKey.clear();
     this.listBodyEl.replaceChildren();
 
-    let sections: FocusSection[];
-    if (this.orderMode === "system") sections = sectionsBySystem();
-    else if (this.orderMode === "near") sections = sectionsByProximity(this.sim.world.t, this.sm.focusId);
-    else if (this.orderMode === "region") sections = sectionsByRegion();
-    else sections = sectionsByType();
-    sections = filterSections(sections, this.searchText);
+    const sections = filterSections(
+      this.orderMode === "system" ? sectionsBySystem() : sectionsByType(),
+      this.searchText,
+    );
+    // A search forces every matching group open so its hits are actually visible.
+    const searching = this.searchText.length > 0;
 
     if (sections.length === 0) {
       this.listBodyEl.appendChild(el("div", "nav-empty", "No bodies match."));
     }
     for (const s of sections) {
-      if (s.label) this.listBodyEl.appendChild(this.buildSectionHeader(s));
-      for (const r of s.rows) this.listBodyEl.appendChild(this.buildBodyRow(r.id, r.child));
+      const expanded = !s.key || searching || this.isExpanded(s.key);
+      if (s.label) this.listBodyEl.appendChild(this.buildSectionHeader(s, expanded));
+      for (const r of s.rows) {
+        if (s.key) this.bodyGroupKey.set(r.id, s.key);
+        this.focusOrder.push(r.id);
+        if (expanded) this.listBodyEl.appendChild(this.buildBodyRow(r.id, r.child));
+      }
     }
 
     this.refreshVisibilityUI();
     this.applyActiveHighlight(false);
   }
 
-  /** A section header row with its eye toggle (a whole kind, or an explicit member
-   *  set for a system group). */
-  private buildSectionHeader(section: FocusSection): HTMLElement {
+  /** A section header row: a collapse caret, the group's tri-state show/hide eye,
+   *  the group name (click to frame the whole group when it orbits one primary),
+   *  and a hover-revealed "show only" isolate button. */
+  private buildSectionHeader(section: FocusSection, expanded: boolean): HTMLElement {
+    const { key, label, members, zoom } = section;
     const row = el("div", "body-group-row");
-    if (section.eyeKind) {
-      const kind = section.eyeKind;
-      const eye = this.eyeButton(`Show / hide all ${section.label.toLowerCase()}`, () => this.vis.toggleKind(kind));
-      row.appendChild(eye);
-      this.headerEyeRefreshers.push(() => this.setEye(eye, this.vis.kindVisible(kind)));
-    } else if (section.eyeMembers && section.eyeMembers.length > 0) {
-      const members = section.eyeMembers;
-      const eye = this.eyeButton(`Show / hide the ${section.label} system`, () => this.toggleSystem(members));
-      row.appendChild(eye);
-      this.headerEyeRefreshers.push(() => this.setEye(eye, this.systemShown(members)));
+
+    // Collapse caret (left): toggles this group's rows in/out of the list.
+    const caret = button(expanded ? "▾" : "▸", () => this.toggleCollapse(key));
+    caret.className = "grp-caret";
+    caret.title = expanded ? `Collapse ${label}` : `Expand ${label}`;
+    row.appendChild(caret);
+
+    // Group eye: tri-state (all / some / none shown). Clicking a fully-shown group
+    // hides it; clicking a partly- or fully-hidden group reveals ALL of it — the
+    // last group action wins, so a prior per-body or other-group rule never leaves
+    // a member stranded behind a group "show".
+    const eye = this.eyeButton(`Show / hide ${label}`, () => {
+      const allShown = members.every((id) => this.vis.bodyVisible(id));
+      this.vis.setGroupHidden(members, allShown);
+    });
+    row.appendChild(eye);
+
+    // Group name: a zoom-to-fit button when the group orbits one body, else a
+    // plain label (e.g. Type-mode "Moons", which span many parents).
+    let labelEl: HTMLElement;
+    if (zoom) {
+      const b = button(label, () => this.zoomToGroup(zoom.anchorId, members));
+      b.className = "body-group grp-zoom";
+      b.title = `Zoom to frame ${label} within their orbits`;
+      labelEl = b;
+    } else {
+      labelEl = el("span", "body-group", label);
     }
-    row.appendChild(el("span", "body-group", section.label));
+    row.appendChild(labelEl);
+
+    // "Show only" isolate (hover-revealed, far right): show just this group, or
+    // restore the prior visibility when toggled off.
+    const solo = button("◎", () => this.toggleShowOnly(key, members));
+    solo.className = "grp-solo";
+    row.appendChild(solo);
+
+    this.headerRefreshers.push(() => {
+      this.setEye(eye, this.groupState(members));
+      const active = this.solo?.key === key;
+      solo.classList.toggle("active", active);
+      solo.title = active ? `Showing only ${label} — click to restore` : `Show only ${label}`;
+    });
     return row;
   }
 
   /** One focusable body row (eye toggle + colour swatch + focus button), nested
-   *  under its anchor when `child`. Registers itself in the per-row maps and the
-   *  Tab order. */
+   *  under its anchor when `child`. Registers itself in the per-row maps. (The Tab
+   *  order and group index are built in renderFocusList, which sees collapsed rows
+   *  too.) */
   private buildBodyRow(id: string, child: boolean): HTMLElement {
     const b = BODY_BY_ID.get(id)!;
     const row = el("div", child ? "body-row body-row-child" : "body-row");
@@ -695,35 +756,64 @@ export class Hud {
     this.listButtons.set(b.id, btn);
     this.bodyEyes.set(b.id, eye);
     this.bodyRows.set(b.id, row);
-    this.focusOrder.push(b.id);
     return row;
   }
 
-  /** Whether every member of a system is currently drawn (drives the system eye). */
-  private systemShown(members: string[]): boolean {
-    return members.every((id) => {
-      const d = BODY_BY_ID.get(id);
-      return !!d && this.vis.bodyVisible(id, d.kind);
-    });
+  /** A group's aggregate visibility: all members shown, some, or none — the
+   *  tri-state the header eye paints. */
+  private groupState(members: string[]): "all" | "some" | "none" {
+    let shown = 0;
+    for (const id of members) if (this.vis.bodyVisible(id)) shown++;
+    return shown === 0 ? "none" : shown === members.length ? "all" : "some";
   }
 
-  /** Show or hide a whole group (a planetary system or a small-body region) at
-   *  once. Hiding sets a per-body override on each member. Revealing clears those
-   *  overrides AND re-enables any KIND flag that would otherwise keep a member
-   *  hidden — without that, a group whose kind was hidden wholesale elsewhere (e.g.
-   *  the Asteroids kind eye, which Region mode doesn't expose) would paint as a
-   *  dead, unrecoverable toggle: the per-body reveal stays masked by the kind flag. */
-  private toggleSystem(members: string[]): void {
-    const hide = this.systemShown(members);
-    if (hide) {
-      for (const id of members) this.vis.setBodyHidden(id, true);
-      return;
-    }
+  /** Whether a collapsible group is currently expanded (persisted; collapsed by
+   *  default so the freshly-opened list reads as a compact set of headers). */
+  private isExpanded(key: string): boolean {
+    return getFlag(`nav.exp.${key}`, false);
+  }
+
+  /** Toggle a group's collapse state and rebuild the list. */
+  private toggleCollapse(key: string): void {
+    if (!key) return;
+    setFlag(`nav.exp.${key}`, !this.isExpanded(key));
+    this.renderFocusList();
+  }
+
+  /** Frame the whole group within its members' orbits, centred on the body they
+   *  orbit (the Sun for a region, a planet for its moons). The framing distance
+   *  comes from the outermost member apoapsis (see SceneManager.frameGroup); the
+   *  anchor becomes the focus, so the nav list lights it up like any other pick. */
+  private zoomToGroup(anchorId: string, members: string[]): void {
+    if (this.sm.viewMode !== "system") this.setView("system");
+    let maxApo = 0;
     for (const id of members) {
-      const d = BODY_BY_ID.get(id);
-      if (d && !this.vis.kindVisible(d.kind)) this.vis.setKind(d.kind, true);
-      this.vis.setBodyHidden(id, false);
+      if (id === anchorId) continue;
+      const b = BODY_BY_ID.get(id);
+      if (b) maxApo = Math.max(maxApo, apoapsisMeters(b));
     }
+    this.sm.frameGroup(anchorId, maxApo);
+    this.syncFocusUI(anchorId);
+  }
+
+  /** Toggle "show only this group": isolate its members (hiding everything else),
+   *  or restore the pre-isolation visibility when the same group is toggled off.
+   *  Switching directly from one isolated group to another restores first, so the
+   *  saved snapshot is always the natural (un-isolated) state. */
+  private toggleShowOnly(key: string, members: string[]): void {
+    if (this.solo?.key === key) {
+      // Clear the flag BEFORE restoring so the refresh paints the button inactive.
+      const prev = this.solo.prev;
+      this.solo = null;
+      this.vis.restoreHidden(prev);
+    } else {
+      if (this.solo) this.vis.restoreHidden(this.solo.prev);
+      this.solo = { key, prev: this.vis.snapshotHidden() };
+      this.vis.showOnly(members, ALL_BODY_IDS);
+    }
+    // The solo-button active state tracks `this.solo`, which Visibility doesn't
+    // know about — repaint headers even if the hidden set didn't actually change.
+    this.refreshVisibilityUI();
   }
 
   /** Light the focused body's row (and optionally scroll it into view). Called
@@ -735,6 +825,19 @@ export class Hud {
       btn.classList.toggle("active", active);
       if (active && scroll) btn.scrollIntoView({ block: "nearest" });
     }
+  }
+
+  /** Sync the nav list to a new focus id without re-running the camera move: if
+   *  the focused body sits in a collapsed group, expand it (so its row exists to
+   *  highlight), then light and scroll to it. Shared by focus() and the group
+   *  zoom, which both make a body the focus. */
+  private syncFocusUI(id: string): void {
+    const key = this.bodyGroupKey.get(id);
+    if (key && !this.isExpanded(key)) {
+      setFlag(`nav.exp.${key}`, true);
+      this.renderFocusList();
+    }
+    this.applyActiveHighlight(true);
   }
 
   /** The top-right control cluster: view switch, Layers popover, theme, help. */
@@ -907,9 +1010,6 @@ export class Hud {
     this.navDockEl.style.display = open ? "flex" : "none";
     this.navTab.style.display = open ? "none" : "flex";
     setFlag("dock.nav.open", open);
-    // Reopening refreshes the proximity order around the current focus (bodies
-    // drift while the dock is closed; a fresh look should reflect where they are).
-    if (open && this.orderMode === "near") this.renderFocusList();
   }
 
   private setShowFps(on: boolean): void {
@@ -951,17 +1051,22 @@ export class Hud {
     return b;
   }
 
-  private setEye(btn: HTMLButtonElement, shown: boolean): void {
-    btn.textContent = shown ? "◉" : "○";
-    btn.classList.toggle("off", !shown);
+  /** Paint an eye toggle. A per-body eye is a plain boolean; a group eye passes a
+   *  tri-state ("all" / "some" / "none") so a partly-hidden group reads as a
+   *  distinct half-filled glyph rather than masquerading as fully on or off. */
+  private setEye(btn: HTMLButtonElement, state: boolean | "all" | "some" | "none"): void {
+    const s = state === true ? "all" : state === false ? "none" : state;
+    btn.textContent = s === "all" ? "◉" : s === "some" ? "◐" : "○";
+    btn.classList.toggle("off", s === "none");
+    btn.classList.toggle("partial", s === "some");
   }
 
   /** Repaint every visibility control from the shared Visibility state. */
   private refreshVisibilityUI(): void {
     for (const [key, chip] of this.layerChips) chip.classList.toggle("active", this.vis.layer(key));
-    for (const refresh of this.headerEyeRefreshers) refresh();
+    for (const refresh of this.headerRefreshers) refresh();
     for (const b of BODIES) {
-      const shown = this.vis.bodyVisible(b.id, b.kind);
+      const shown = this.vis.bodyVisible(b.id);
       const eye = this.bodyEyes.get(b.id);
       if (eye) this.setEye(eye, shown);
       this.bodyRows.get(b.id)?.classList.toggle("hidden-body", !shown);
@@ -1027,10 +1132,9 @@ export class Hud {
     // map if we're on it, then frame the body.
     if (this.sm.viewMode !== "system") this.setView("system");
     this.sm.focusBody(id);
-    // Proximity ordering is anchored on the focused body, so a focus change
-    // re-sorts the list around the new vantage point before we light it up.
-    if (this.orderMode === "near") this.renderFocusList();
-    this.applyActiveHighlight(true);
+    // Expand the group the body lives in (if collapsed) so its row is there to
+    // light up, then highlight and scroll to it.
+    this.syncFocusUI(id);
   }
 
   /** Step focus through the displayed (grouped) order; used by Tab cycling. */
@@ -1178,7 +1282,7 @@ export class Hud {
       const lbl = this.labels.get(anchor.id);
       if (!lbl) continue;
       const def = BODY_BY_ID.get(anchor.id);
-      if (!labelsOn || !def || !this.vis.bodyVisible(anchor.id, def.kind)) {
+      if (!labelsOn || !def || !this.vis.bodyVisible(anchor.id)) {
         lbl.style.display = "none";
         continue;
       }

@@ -38,6 +38,13 @@ export type ViewMode = "system" | "interstellar";
  *  Only bites when the gap dwarfs the framing distances — short hops just dolly. */
 const FLY_ARC_FRACTION = 0.3;
 
+/** Camera framing distance for a "zoom to group" as a multiple of the group's
+ *  outermost member apoapsis. The vertical FOV is 50°, so an orbit of radius R is
+ *  edge-to-edge at ~2.14·R; ~2.6 leaves a comfortable margin so the farthest,
+ *  most eccentric members (e.g. Jupiter's Carme/Ananke) sit fully inside the view
+ *  rather than grazing the frame. */
+const GROUP_FRAME_FACTOR = 2.6;
+
 const BG: Record<Theme, number> = {
   dark: 0x05070d,
   light: 0xdfe6ef,
@@ -304,8 +311,28 @@ export class SceneManager {
   focusBody(id: string): void {
     const def = BODY_BY_ID.get(id);
     if (!def) return;
-    const dist = def.kind === "star" ? 500 : Math.max(metersToUnits(def.radius) * 30, 0.02);
-    this.setFocusTarget(id, (t) => bodyPosition(id, t), dist);
+    this.setFocusTarget(id, (t) => bodyPosition(id, t), this.bodyFrameDistance(def));
+  }
+
+  /** The framing distance (render units) `focusBody` settles a body at: a fixed
+   *  wide view for the Sun, else ~30 body radii for a close inspection pass. */
+  private bodyFrameDistance(def: { kind: string; radius: number }): number {
+    return def.kind === "star" ? 500 : Math.max(metersToUnits(def.radius) * 30, 0.02);
+  }
+
+  /** Centre on the body a group orbits (the Sun for a small-body region, a planet
+   *  for its moon system) and pull the camera back far enough to frame the whole
+   *  group within their orbits — `maxOrbitRadiusM` is the largest member apoapsis
+   *  in metres. The orbit-fit distance is floored at the body's own close-up
+   *  framing, so a tight system (Mars + Phobos/Deimos) never zooms IN past the
+   *  plain body view. This is the FOCUS list's "zoom to the whole group" — wider
+   *  than clicking the body itself, which frames only the body. */
+  frameGroup(anchorId: string, maxOrbitRadiusM: number): void {
+    const def = BODY_BY_ID.get(anchorId);
+    if (!def) return;
+    const orbitDist = metersToUnits(maxOrbitRadiusM) * GROUP_FRAME_FACTOR;
+    const dist = Math.max(orbitDist, this.bodyFrameDistance(def));
+    this.setFocusTarget(anchorId, (t) => bodyPosition(anchorId, t), dist);
   }
 
   /** The exact in-system camera saved on entering the interstellar map, restored
