@@ -651,10 +651,11 @@ export class Hud {
    *  search text. Every per-row map is cleared and repopulated together, so the
    *  visibility repaint, Tab order and focus highlight all stay consistent.
    *
-   *  `focusOrder` and `bodyGroupKey` index EVERY body, even those inside a
-   *  collapsed group (whose rows aren't in the DOM) — so Tab still cycles through
-   *  them and focus() knows which group to expand — while the DOM holds only the
-   *  rows of expanded sections. */
+   *  `focusOrder` and `bodyGroupKey` index every body in the active list — each
+   *  member of every section, including those inside a collapsed group (whose rows
+   *  aren't in the DOM) — so Tab still cycles through them and focus() knows which
+   *  group to expand, while the DOM holds only the rows of expanded sections. (With
+   *  a search active the "active list" is just the matches, so Tab cycles those.) */
   private renderFocusList(): void {
     this.listButtons.clear();
     this.bodyEyes.clear();
@@ -707,6 +708,7 @@ export class Hud {
     // a member stranded behind a group "show".
     const eye = this.eyeButton(`Show / hide ${label}`, () => {
       const allShown = members.every((id) => this.vis.bodyVisible(id));
+      this.endSolo(); // a manual group show/hide commits the current view as the baseline
       this.vis.setGroupHidden(members, allShown);
     });
     row.appendChild(eye);
@@ -746,7 +748,7 @@ export class Hud {
   private buildBodyRow(id: string, child: boolean): HTMLElement {
     const b = BODY_BY_ID.get(id)!;
     const row = el("div", child ? "body-row body-row-child" : "body-row");
-    const eye = this.eyeButton(`Show / hide ${b.name}`, () => this.vis.toggleBody(b.id));
+    const eye = this.eyeButton(`Show / hide ${b.name}`, () => { this.endSolo(); this.vis.toggleBody(b.id); });
     const btn = button(b.name, () => this.focus(b.id));
     btn.classList.add("body-btn");
     const swatch = el("span", "swatch");
@@ -814,6 +816,15 @@ export class Hud {
     // The solo-button active state tracks `this.solo`, which Visibility doesn't
     // know about — repaint headers even if the hidden set didn't actually change.
     this.refreshVisibilityUI();
+  }
+
+  /** End any active "show only" isolation, committing the current view as the new
+   *  baseline. A manual show/hide (a body or group eye) calls this so that toggling
+   *  show-only off later can't silently revert that edit, and the isolate button
+   *  stops reading as active. Cleared before the visibility mutation that follows,
+   *  whose repaint then paints the button inactive. */
+  private endSolo(): void {
+    this.solo = null;
   }
 
   /** Light the focused body's row (and optionally scroll it into view). Called
