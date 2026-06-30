@@ -19,6 +19,7 @@
 import { describe, it, expect } from "vitest";
 import * as THREE from "three";
 import { fillOrbitLoopWorld, tidalLockOrientation } from "./bodyViews.ts";
+import { SATURN_RING_FRACTIONS } from "./bodyTextures.ts";
 import { SCENE_SCALE } from "./scale.ts";
 import { BODY_BY_ID } from "@lightlag/engine/constants";
 import { bodyState, bodyStateRelative, bodyElements } from "@lightlag/engine/ephemeris";
@@ -206,6 +207,36 @@ describe("Pluto–Charon binary orbit loops", () => {
     const charonLoop = new Float32Array(charonPts.length * 3);
     fillOrbitLoopWorld(charonLoop, charonPts, bary, origin, 1 - f);
     expect(nearVertexToBody(charonLoop, bodyState(CHARON, T0).r, origin), "Charon loop → Charon").toBeLessThan(0.01);
+  });
+});
+
+describe("Saturn's rings span the real ring edges (shepherd moons sit right)", () => {
+  const saturn = BODY_BY_ID.get("saturn")!;
+  // Ring radii are quoted against the EQUATORIAL radius (bodyViews scales them by it).
+  const eqR = saturn.equatorialRadius!;
+  const ringInner = SATURN_RING_FRACTIONS.inner * eqR;
+  const ringOuter = SATURN_RING_FRACTIONS.outer * eqR;
+  const a = (id: string) => bodyElements(BODY_BY_ID.get(id)!, 0)!.a;
+
+  it("the rendered outer edge lands on the real A-ring edge (~136,775 km)", () => {
+    expect(ringOuter / 1000).toBeGreaterThan(135_000);
+    expect(ringOuter / 1000).toBeLessThan(138_000);
+  });
+
+  it("contains the inner shepherd Pan but not the outer shepherds", () => {
+    // Pan orbits within the A ring (the Encke gap) — it must fall inside the disc.
+    expect(a("pan"), "Pan inside the A ring").toBeGreaterThan(ringInner);
+    expect(a("pan"), "Pan inside the A ring").toBeLessThan(ringOuter);
+    // Atlas (A-ring edge), Prometheus/Pandora (F-ring shepherds) and the rest orbit
+    // just beyond the bright rings — correctly outside the rendered disc.
+    for (const id of ["atlas", "prometheus", "pandora", "janus", "epimetheus", "mimas"]) {
+      expect(a(id), `${id} beyond the bright rings`).toBeGreaterThan(ringOuter);
+    }
+  });
+
+  it("regression: scaling the ring by the MEAN radius would strand Pan outside it", () => {
+    // The bug this guards — mean radius shrinks the disc ~3.5%, pushing Pan out.
+    expect(a("pan")).toBeGreaterThan(SATURN_RING_FRACTIONS.outer * saturn.radius);
   });
 });
 

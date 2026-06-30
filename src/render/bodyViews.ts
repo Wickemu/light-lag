@@ -306,8 +306,13 @@ export class BodyViews {
       node.add(shell);
     }
 
-    // Ring system (Saturn): a flat annulus in the equatorial plane.
-    const ringSunDir = tex.ring ? this.addRing(node, radius, tex) : undefined;
+    // Ring system (Saturn): a flat annulus in the equatorial plane. Ring radii are
+    // conventionally quoted as multiples of the EQUATORIAL radius (the ring.inner/
+    // .outer fractions are the C-ring inner and A-ring outer edges in those units),
+    // so scale them by the equatorial radius — not the smaller mean `radius`, which
+    // shrank the disc ~3.5% and left Pan (which orbits inside the A ring) outside it.
+    const ringRadius = metersToUnits(def.equatorialRadius ?? def.radius);
+    const ringSunDir = tex.ring ? this.addRing(node, ringRadius, tex) : undefined;
 
     // The Sun is a light source, not a lit ball — wrap the limb-darkened disk in
     // a layered corona: a tight, hot inner glow over a wide, faint outer halo.
@@ -397,11 +402,13 @@ export class BodyViews {
    *  fragment is darkened when it sits on the anti-sun side of the globe and
    *  within the globe's radius of the sun-line — the cylindrical shadow that
    *  paints the famous dark band over Saturn's rings. Returns the sun-direction
-   *  uniform value so the caller can aim it at the true Sun every frame. */
-  private addRing(node: THREE.Object3D, radius: number, tex: BodyTextureSet): THREE.Vector3 {
+   *  uniform value so the caller can aim it at the true Sun every frame.
+   *  `eqRadius` is the planet's EQUATORIAL radius (render units) — ring radii are
+   *  quoted against it by convention, and it also sets the shadow band's width. */
+  private addRing(node: THREE.Object3D, eqRadius: number, tex: BodyTextureSet): THREE.Vector3 {
     const ring = tex.ring!;
-    const inner = radius * ring.inner;
-    const outer = radius * ring.outer;
+    const inner = eqRadius * ring.inner;
+    const outer = eqRadius * ring.outer;
     const geo = new THREE.RingGeometry(inner, outer, 128, 1);
     const pos = geo.getAttribute("position");
     const uv = geo.getAttribute("uv") as THREE.BufferAttribute;
@@ -419,7 +426,7 @@ export class BodyViews {
     });
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uSunDir = { value: sunDir };
-      shader.uniforms.uPlanetR = { value: radius };
+      shader.uniforms.uPlanetR = { value: eqRadius };
       shader.vertexShader = shader.vertexShader
         .replace("#include <common>", "#include <common>\nvarying vec3 vRingW;\nvarying vec3 vRingC;")
         .replace(
