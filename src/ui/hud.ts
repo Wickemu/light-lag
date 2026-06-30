@@ -12,7 +12,7 @@ import { Simulation } from "@lightlag/engine/sim";
 import { SceneManager } from "../render/SceneManager.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { type Visibility, type LayerKey } from "../render/visibility.ts";
-import { BODIES, BODY_BY_ID, AU, C, MU_SUN, type BodyKind, type BodyDef } from "@lightlag/engine/constants";
+import { BODIES, BODY_BY_ID, AU, C, MU_SUN, type BodyKind, type BodyDef, type BodyRegion } from "@lightlag/engine/constants";
 import { bodyState, bodyElements } from "@lightlag/engine/ephemeris";
 import { solarFlux } from "@lightlag/engine/thermal";
 import { surfaceGravity, escapeVelocity } from "@lightlag/engine/surface";
@@ -45,20 +45,34 @@ const GROUPS: { kind: BodyKind; label: string }[] = [
 /** How the FOCUS list is ordered. `type` groups by body kind (the original
  *  layout); `system` groups every body under its parent system (a planet with
  *  its moons & satellites); `near` orders systems by live distance to the
- *  focused body, the focused system first. Persisted across reloads. */
-type OrderMode = "type" | "system" | "near";
+ *  focused body, the focused system first; `region` splits the heliocentric
+ *  small bodies into their dynamical populations (the asteroid belt, the Kuiper
+ *  belt, the Oort cloud…), each a show/hide group. Persisted across reloads. */
+type OrderMode = "type" | "system" | "near" | "region";
 
 const ORDER_MODES: { mode: OrderMode; label: string; title: string }[] = [
   { mode: "type", label: "Type", title: "Group by type — planets, dwarfs, asteroids, moons, satellites, comets" },
   { mode: "system", label: "System", title: "Group by parent system — each planet with its moons & satellites" },
   { mode: "near", label: "Near", title: "Nearest to the focused body first; the parent body leads each system" },
+  { mode: "region", label: "Region", title: "Group the small bodies by region — near-Earth, main belt, Trojans, Kuiper belt, scattered disc, Oort cloud" },
+];
+
+/** Region grouping (Region order mode): the heliocentric small-body populations,
+ *  in outward order. Each becomes a show/hide section in the FOCUS list. */
+const REGION_GROUPS: { region: BodyRegion; label: string }[] = [
+  { region: "near_earth", label: "Near-Earth asteroids" },
+  { region: "main_belt", label: "Main belt" },
+  { region: "trojan", label: "Jupiter Trojans" },
+  { region: "kuiper", label: "Kuiper belt" },
+  { region: "scattered", label: "Scattered disc" },
+  { region: "oort", label: "Oort cloud" },
 ];
 
 /** Read the persisted order mode, validating it against the known set (an
  *  unrecognised stored value falls back to the original Type grouping). */
 function readOrderMode(): OrderMode {
   const saved = getString("focus.order", "type");
-  return saved === "system" || saved === "near" ? saved : "type";
+  return saved === "system" || saved === "near" || saved === "region" ? saved : "type";
 }
 
 /** One displayed row: a body, optionally a child nested under a system anchor. */
@@ -164,6 +178,40 @@ function sectionsBySystem(): FocusSection[] {
     const inTail = tail.filter((b) => b.kind === g.kind);
     if (inTail.length === 0) continue;
     out.push({ label: g.label, eyeKind: g.kind, rows: inTail.map((b) => ({ id: b.id, child: false })) });
+  }
+  return out;
+}
+
+/** Group by dynamical region: the Sun and planets as in Type mode, then one
+ *  show/hide section per heliocentric small-body population (near-Earth, main
+ *  belt, Trojans, Kuiper belt, scattered disc, Oort cloud) — innermost member
+ *  first within each — and finally comets, moons and satellites by kind. The
+ *  region sections use an explicit member set (not a kind eye), since asteroids
+ *  and dwarfs are split ACROSS regions. */
+function sectionsByRegion(): FocusSection[] {
+  const out: FocusSection[] = [];
+  const star = BODIES.filter((b) => b.kind === "star");
+  if (star.length) out.push({ label: "", rows: star.map((b) => ({ id: b.id, child: false })) });
+
+  const planets = BODIES.filter((b) => b.kind === "planet");
+  if (planets.length) out.push({ label: "Planets", eyeKind: "planet", rows: planets.map((b) => ({ id: b.id, child: false })) });
+
+  for (const g of REGION_GROUPS) {
+    const members = BODIES.filter((b) => b.region === g.region).sort((a, b) => semiMajor(a) - semiMajor(b));
+    if (members.length === 0) continue;
+    out.push({
+      label: g.label,
+      eyeMembers: members.map((b) => b.id),
+      rows: members.map((b) => ({ id: b.id, child: false })),
+    });
+  }
+
+  // The kinds that don't carry a region stay grouped by kind, as in Type mode.
+  for (const kind of ["comet", "moon", "satellite"] as BodyKind[]) {
+    const inKind = BODIES.filter((b) => b.kind === kind);
+    if (inKind.length === 0) continue;
+    const label = GROUPS.find((gr) => gr.kind === kind)?.label ?? kind;
+    out.push({ label, eyeKind: kind, rows: inKind.map((b) => ({ id: b.id, child: false })) });
   }
   return out;
 }
@@ -580,6 +628,7 @@ export class Hud {
     let sections: FocusSection[];
     if (this.orderMode === "system") sections = sectionsBySystem();
     else if (this.orderMode === "near") sections = sectionsByProximity(this.sim.world.t, this.sm.focusId);
+    else if (this.orderMode === "region") sections = sectionsByRegion();
     else sections = sectionsByType();
     sections = filterSections(sections, this.searchText);
 

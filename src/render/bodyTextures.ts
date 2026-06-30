@@ -914,8 +914,16 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
     const r = paintRocky(def, w, h, rng, fbm, maxAniso);
     surface = r.surface;
     bump = r.bump;
-    // Icy bodies get a slight sheen; dusty rock stays matte.
-    const icy = ["europa", "enceladus", "tethys", "dione", "rhea", "mimas", "charon", "triton", "eris", "haumea"].includes(def.id);
+    // Icy bodies get a slight sheen; dusty rock stays matte. Includes the bright
+    // icy ring-shepherds/inner moons added with the expanded set (Saturn's
+    // co-orbitals, Neptune's & Uranus's inner regulars); dark captured irregulars
+    // (Phoebe, the Jovian/Uranian irregulars) and the reddish TNOs stay matte.
+    const icy = [
+      "europa", "enceladus", "tethys", "dione", "rhea", "mimas", "charon", "triton", "eris", "haumea",
+      "pan", "atlas", "prometheus", "pandora", "epimetheus", "janus",
+      "puck", "portia", "cressida",
+      "naiad", "thalassa", "despina", "galatea", "larissa", "proteus",
+    ].includes(def.id);
     roughness = icy ? 0.5 : 0.95;
   }
 

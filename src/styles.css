@@ -380,7 +380,7 @@ body {
   gap: 4px;
 }
 
-/* FOCUS list ordering selector — a compact Type / System / Near segmented control. */
+/* FOCUS list ordering selector — a compact Type / System / Near / Region segmented control. */
 .focus-order {
   display: flex;
   gap: 4px;

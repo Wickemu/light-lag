@@ -16,14 +16,16 @@ windows), patched-conic SOI capture, light-lag command (the thesis), and
 thermal / power / detection ("no stealth in space"). Plus parallel-session
 add-ons: a 30-craft preset catalog and keyboard controls.
 
-**Core-mechanics expansion (latest):** the full Solar System — 50 bodies total:
-the 8 planets, the dwarf planets (Ceres, Pluto, Eris, Haumea, Makemake), major
-asteroids (Vesta, Pallas, plus 433 Eros, 10 Hygiea, 3 Juno), the Kuiper-belt
-flyby target Arrokoth, gas-giant & other moons (Galileans, Titan + six
-Saturnians, five Uranians, Triton, Phobos/Deimos, Charon), TNOs + comets
-(Sedna, Quaoar, Gonggong, Orcus, 1P/Halley, 2P/Encke), and major man-made
+**Core-mechanics expansion (latest):** the full Solar System — 106 bodies total:
+the 8 planets, the dwarf planets and large TNOs, a deep moon roster (the
+Galileans + Jupiter's inner Amalthea group & classical irregulars; Titan + the
+major Saturnians + ring-shepherds, co-orbitals, Hyperion & Phoebe; the major
+Uranians + Puck-group inner moons & irregular Caliban/Sycorax; Triton + Neptune's
+inner regulars & Nereid; Phobos/Deimos; Charon), the small-body populations
+(main belt, near-Earth asteroids, Jupiter Trojans, Kuiper belt, scattered disc,
+inner Oort cloud), comets (1P/Halley, 2P/Encke) and the major man-made
 satellites (ISS, Hubble, Tiangong — a new `satellite` body class), each on a
-JPL-validated ephemeris;
+JPL-validated J2000 osculating ephemeris;
 **landing & takeoff** Δv/propellant budgeting (a calibrated gravity-turn ascent
 through real atmospheres, with aerobraking on descent — now extended with a full
 **atmospheric-entry heating** trajectory and single-pass **aerocapture**); and the first
@@ -789,10 +791,14 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   (`app/launchLeg.test.ts`). Still to do: radiative (shock-layer) heating above
   ~11 km/s; atmospheric co-rotation / lift in the in-sim pass (planar ballistic first cut);
   and a B-plane-targeted aim (the arrival uses a patched-conic periapsis aim today).
-- **More bodies** — DONE: 43 bodies (dwarfs, asteroids, gas-giant & other moons,
+- **More bodies** — DONE: 106 bodies (dwarfs, asteroids, gas-giant & other moons,
   plus TNOs and comets) on the fixed-J2000-conic (`FixedHelioRow`) + `MoonRow`
-  paths, Horizons-checked. Still to do: irregular-moon precession, more small
-  bodies, comet outgassing/non-gravitational forces.
+  paths, Horizons-checked — including a deep moon roster (inner + irregular
+  satellites of the four giants) and the small-body populations grouped by region
+  in the navigator (near-Earth, main belt, Trojans, Kuiper belt, scattered disc,
+  inner Oort cloud). Still to do: irregular-moon precession, the Pluto-system
+  small moons (they orbit the Pluto–Charon barycentre, which the two-body `MoonRow`
+  doesn't yet model), comet outgassing/non-gravitational forces.
 - **Interstellar sky / camera** (presentation) — DONE: two views split the
   unbridgeable scale gap (a 1-AU planet and a 4-ly star differ ~1e6× in distance,
   so no single frame frames both). The **in-system** view paints the real nearby
