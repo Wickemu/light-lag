@@ -174,13 +174,16 @@ export class Hud {
     const rect = this.sm.renderer.domElement.getBoundingClientRect();
     const w = rect.width || window.innerWidth;
     const h = rect.height || window.innerHeight;
-    const pts: { id: string; x: number; y: number }[] = [];
+    const pts: { id: string; x: number; y: number; priority: number }[] = [];
     for (const a of views.labelAnchors()) {
       const def = BODY_BY_ID.get(a.id);
       if (!def || !this.vis.bodyVisible(a.id, def.kind)) continue;
       const ndc = a.ndc;
       if (ndc.z >= 1 || Math.abs(ndc.x) > 1 || Math.abs(ndc.y) > 1) continue;
-      pts.push({ id: a.id, x: (ndc.x * 0.5 + 0.5) * w, y: (-ndc.y * 0.5 + 0.5) * h });
+      // Prominence = the label de-collision rank, so a click in a tight cluster
+      // (Earth + its LEO satellites) lands on the dominant body, not the marker
+      // that happens to be a pixel closer.
+      pts.push({ id: a.id, x: (ndc.x * 0.5 + 0.5) * w, y: (-ndc.y * 0.5 + 0.5) * h, priority: LABEL_PRIORITY[def.kind] });
     }
     return pickNearest(pts, clientX - rect.left, clientY - rect.top, PICK_PX);
   }

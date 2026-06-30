@@ -258,12 +258,17 @@ export function dopplerTint(
 }
 
 // ── Screen-space marker picking ──────────────────────────────────────────────
-/** The nearest screen-space marker to a click. Returns the entry within `threshold`
- *  pixels of (cx, cy) that is closest to it, or `undefined` if none is in range.
- *  Pure (no THREE / DOM) so it is unit-testable; an exact distance tie keeps the
- *  earlier array entry, for a deterministic pick. Shared by the click-to-focus
- *  picks in both the interstellar (star) and in-system (body) views. */
-export function pickNearest<T extends { x: number; y: number }>(
+/** The best screen-space marker to a click. Among the entries within `threshold`
+ *  pixels of (cx, cy), returns the most *prominent* — the lowest `priority` (e.g. a
+ *  planet over a satellite, mirroring the label de-collision order) — and, within a
+ *  single priority, the nearest. This is what makes a click in a tight overlapping
+ *  cluster land on the dominant body (Earth, not one of its LEO satellites) rather
+ *  than on whichever marker happens to be a pixel closer. Entries without a
+ *  `priority` all rank equally, so the result is then simply the nearest — the
+ *  interstellar star-pick relies on that. Returns `undefined` if none is in range.
+ *  An exact (priority, distance) tie keeps the earlier array entry, for a
+ *  deterministic pick. Pure (no THREE / DOM) so it is unit-testable. */
+export function pickNearest<T extends { x: number; y: number; priority?: number }>(
   pts: T[],
   cx: number,
   cy: number,
@@ -271,13 +276,17 @@ export function pickNearest<T extends { x: number; y: number }>(
 ): T | undefined {
   const max2 = threshold * threshold;
   let best: T | undefined;
+  let bestPriority = Infinity;
   let bestD2 = Infinity;
   for (const p of pts) {
     const dx = p.x - cx;
     const dy = p.y - cy;
     const d2 = dx * dx + dy * dy;
-    if (d2 <= max2 && d2 < bestD2) {
+    if (d2 > max2) continue;
+    const pr = p.priority ?? 0;
+    if (pr < bestPriority || (pr === bestPriority && d2 < bestD2)) {
       best = p;
+      bestPriority = pr;
       bestD2 = d2;
     }
   }

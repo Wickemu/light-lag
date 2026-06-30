@@ -110,8 +110,13 @@ plus the nav-list active-button sync, so a click behaves identically to a list/k
 **Render/UI only — nothing reaches `WorldState`, so the golden hash is unmoved (`11f2c9fc7a5876`).**
 The 6 pure `pickNearest` specs moved with it into `render/overlayUtil.test.ts` (suite still 733
 green); the canvas projection / pointer handling / fly-to need a WebGL+DOM context, so they are
-verified manually, as the interstellar pick and the rest of the camera code are. Still to do: pick a
-specific body when several project to one pixel (nearest-to-cursor wins today), and a hover highlight.)*
+verified manually, as the interstellar pick and the rest of the camera code are. **Cluster
+disambiguation (follow-up):** in a tight overlapping group the pick now favours the most *prominent*
+body by kind — the shared `pickNearest` takes an optional per-marker `priority`, and the body pick
+passes the same `LABEL_PRIORITY` rank the label de-collision uses (planet over satellite), breaking
+ties by distance — so an LEO satellite no longer steals a click meant for Earth; selecting a
+less-prominent body in a tight cluster just needs a zoom-in (the star pick, which passes no priority,
+is unchanged). Still to do: a hover highlight before clicking.)*
 
 *(Done since last round: **Click-to-focus a star in the interstellar view**. Last round taught the
 interstellar camera to lock onto a ship in transit, but a STAR could not be selected — there was no
