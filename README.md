@@ -178,30 +178,30 @@ Controls:
 | Escape | Close the open planner / help / ship panel (in that order) |
 | `◐` (button) | Toggle light / dark theme |
 
-Show / hide is in the **FOCUS** panel: an eye toggle on each body (and each
-group header) hides that object or the whole group — a kind, a planetary system,
-or a small-body region, depending on how the list is ordered — and a chip row
-toggles the cross-cutting layers — orbit lines, labels, the nearby-star sky,
-ships, and in-flight comms.
+Show / hide lives on each **FOCUS** group header, which collapses by default to a
+tidy stack of headers and carries four controls: a caret to expand/collapse the
+group, a tri-state eye that shows or hides the whole group at once (whichever
+group action you take last simply wins — it never strands a body hidden behind an
+earlier rule), the group name (click it to zoom the camera out just far enough to
+frame the whole group within their orbits, centred on the body they orbit), and a
+hover-revealed **show only** button that isolates the group and restores the prior
+view when pressed again. Each body row keeps its own eye, and a chip row toggles
+the cross-cutting layers — orbit lines, labels, the nearby-star sky, ships, and
+in-flight comms.
 
-The **FOCUS** panel also orders its body list four ways (the choice persists),
-with a realtime search box above it (type to filter; Enter jumps to the first
-match, Esc clears):
+The **FOCUS** panel orders its body list two ways (the choice persists), with a
+realtime search box above it (type to filter — which also expands the matching
+groups; Enter jumps to the first match, Esc clears):
 
 - **Type** — grouped by kind (planets, dwarfs, asteroids, moons, satellites,
   comets), the default.
-- **System** — grouped by parent system: the Sun, then each planet with its
-  moons & satellites nested beneath it, Pluto with Charon, then the far
-  heliocentric bodies. (This is where the LEO stations — ISS, Hubble, Tiangong —
-  read as Earth's satellites rather than a loose bucket.)
-- **Near** — ordered by live distance to the focused body: your own system
-  first with the parent body leading it, then every other system nearest-first,
-  re-sorting whenever you change focus.
-- **Region** — splits the heliocentric small bodies into their dynamical
-  populations — near-Earth asteroids, the main belt, the Jupiter Trojans, the
-  Kuiper belt, the scattered disc and the Oort cloud — each a show/hide group
-  (the header eye reveals or hides the whole population at once), with the
-  planets, moons, satellites and comets grouped as in Type.
+- **System** — grouped by the primary each body orbits, in outward distance
+  order: the Sun, then each planet with its moons & satellites nested beneath it
+  (this is where the LEO stations — ISS, Hubble, Tiangong — read as Earth's
+  satellites), Pluto with Charon, and each heliocentric small-body region — the
+  near-Earth asteroids, the main belt, the Jupiter Trojans, the Kuiper belt, the
+  scattered disc and the Oort cloud — slotted in as a system in its own right
+  beside the planets it sits among.
 
 ## Develop
 
