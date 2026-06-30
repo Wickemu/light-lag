@@ -76,4 +76,28 @@ describe("pickNearest — screen-space marker picking", () => {
     const pts: { id: string | null; x: number; y: number }[] = [{ id: null, x: 5, y: 5 }];
     expect(pickNearest(pts, 5, 5, 18)?.id).toBeNull();
   });
+
+  it("prefers a more prominent (lower-priority) marker over a nearer one in range", () => {
+    const pts = [
+      { id: "sat", x: 2, y: 0, priority: 6 }, // nearer, but a satellite
+      { id: "earth", x: 12, y: 0, priority: 1 }, // farther, but a planet
+    ];
+    expect(pickNearest(pts, 0, 0, 18)?.id).toBe("earth");
+  });
+
+  it("falls back to nearest among equally prominent markers", () => {
+    const pts = [
+      { id: "a", x: 12, y: 0, priority: 3 },
+      { id: "b", x: 4, y: 0, priority: 3 },
+    ];
+    expect(pickNearest(pts, 0, 0, 18)?.id).toBe("b");
+  });
+
+  it("only ranks prominence among in-range markers (a far prominent one loses to a near one)", () => {
+    const pts = [
+      { id: "earth", x: 40, y: 0, priority: 1 }, // prominent but beyond threshold
+      { id: "sat", x: 3, y: 0, priority: 6 }, // less prominent but in range
+    ];
+    expect(pickNearest(pts, 0, 0, 18)?.id).toBe("sat");
+  });
 });
