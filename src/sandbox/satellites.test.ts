@@ -2,11 +2,12 @@ import { describe, it, expect } from "vitest";
 import { Simulation } from "@lightlag/engine/sim";
 import { createWorld, type Ship } from "@lightlag/engine/world";
 import { coastElements } from "@lightlag/engine/ships";
-import { tleToElementsAtEpoch, spawnSatellite, parseTleText, isSatelliteId } from "./satellites.ts";
+import { tleToElements, tleToElementsAtEpoch, spawnSatellite, spawnSatellites, parseTleText, isSatelliteId } from "./satellites.ts";
 import { TLE_SNAPSHOT } from "./data/tleSnapshot.ts";
 
 const ISS = TLE_SNAPSHOT[0]!;
 const RAD2DEG = 180 / Math.PI;
+const YEAR_S = 365.25 * 86400;
 
 describe("TLE → engine elements", () => {
   it("ingests the ISS element set into a plausible LEO orbit at the right inclination", () => {
@@ -20,6 +21,31 @@ describe("TLE → engine elements", () => {
     expect(el!.a).toBeGreaterThan(6.6e6);
     expect(el!.a).toBeLessThan(7.0e6);
     expect(el!.e).toBeLessThan(0.01);
+  });
+
+  // Regression: loading a live group at the sandbox's default sim time (world
+  // t=0 ≈ J2000) propagates current-epoch TLEs decades before their epoch. Far
+  // enough out, satellite.js returns a bare `[false, false]` ARRAY (sgp4 errors
+  // 1–4) instead of the documented `{ position: false }` object — its `.position`
+  // is `undefined`, which the old guard let through, dereferencing `undefined.x`
+  // ("Cannot read properties of undefined (reading 'x')") and aborting the whole
+  // load. Every off-epoch failure shape must now be a clean null.
+  it("returns null (no throw) when SGP4 fails — both the object- and array-form sentinels", () => {
+    // ~100 y before the ISS set's 2008 epoch → array-form `[false, false]` (error 1):
+    // the exact shape that crashed live ingestion.
+    expect(() => tleToElements(ISS, -100 * YEAR_S)).not.toThrow();
+    expect(tleToElements(ISS, -100 * YEAR_S)).toBeNull();
+    // ~50 y before epoch → object-form `{ position: false }` (decay, error 6).
+    expect(tleToElements(ISS, -50 * YEAR_S)).toBeNull();
+  });
+
+  it("a TLE that cannot be propagated is skipped, not fatal, so the batch survives", () => {
+    const sim = new Simulation(createWorld(1, -100 * YEAR_S, "earth"));
+    // The whole group propagates far before epoch here: each one is skipped and
+    // the loop completes with an empty result instead of throwing mid-batch.
+    expect(() => spawnSatellites(sim, TLE_SNAPSHOT)).not.toThrow();
+    expect(spawnSatellites(sim, TLE_SNAPSHOT)).toEqual([]);
+    expect(spawnSatellite(sim, ISS)).toBeNull();
   });
 
   it("parses 3-line (name + 2 lines) TLE text", () => {

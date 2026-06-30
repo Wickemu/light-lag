@@ -84,10 +84,33 @@ function temeToElements(
   return stateToElements(r, v, MU_EARTH);
 }
 
+/** A real ECI vector (`{x,y,z}` of finite numbers), as opposed to the failure
+ *  sentinels satellite.js returns in a position/velocity slot when propagation
+ *  fails. Validating positively is what makes `elementsFromPv` robust to every
+ *  failure shape below. */
+function isEciVec3(v: unknown): v is { x: number; y: number; z: number } {
+  return (
+    typeof v === "object" && v !== null &&
+    Number.isFinite((v as { x: unknown }).x) &&
+    Number.isFinite((v as { y: unknown }).y) &&
+    Number.isFinite((v as { z: unknown }).z)
+  );
+}
+
 function elementsFromPv(pv: ReturnType<typeof propagate>): KeplerElements | null {
-  // satellite.js sets position/velocity to `false` when propagation errors
-  // (e.g. a decayed orbit, or far past the element set's validity).
-  if (!pv || typeof pv.position === "boolean" || typeof pv.velocity === "boolean") return null;
+  // satellite.js signals a propagation failure (a decayed orbit, or a time too
+  // far from the element set's epoch) in MORE shapes than its published types
+  // admit, and they must all collapse to null:
+  //   • `{ position: false, velocity: false }` — sgp4 error 6 (decay).
+  //   • `[false, false]`                        — sgp4 errors 1–4: a bare ARRAY,
+  //       so `.position`/`.velocity` are `undefined`, NOT `false`.
+  // The old `typeof position === "boolean"` test caught only the first; the array
+  // form slipped through and `temeToElements` dereferenced `undefined.x` — the
+  // "Cannot read properties of undefined (reading 'x')" seen when loading a live
+  // group at a sim time far from the TLEs' epochs. Validate the vector positively
+  // so any non-`{x,y,z}` result (either sentinel, or a non-finite vector) is a
+  // clean skip of that one satellite rather than a crash that aborts the batch.
+  if (!pv || !isEciVec3(pv.position) || !isEciVec3(pv.velocity)) return null;
   return temeToElements(pv.position, pv.velocity);
 }
 
