@@ -31,7 +31,7 @@ import { periapsisRadius } from "@lightlag/engine/orbit";
 import { impactParameter } from "@lightlag/engine/maneuver/flyby";
 import { formatDate } from "@lightlag/engine/time";
 import { type BodyDef, type BodyKind, BODIES, BODY_BY_ID, DAY, DEFAULT_CAPTURE_ALT } from "@lightlag/engine/constants";
-import { div, btn, kv, setDisabled } from "./dom.ts";
+import { div, btn, kvAuto, setDisabled } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
 
 /** A `.section-label` div tagged as a hover term. */
@@ -860,7 +860,8 @@ export class TransferPanel {
     if (this.selI >= 0) {
       const cx = this.selI * cellW + cellW / 2;
       const cy = (tofN - 1 - this.selJ) * cellH + cellH / 2;
-      ctx.strokeStyle = "#4fd1e0";
+      // Match the live accent palette (the canvas can't read CSS vars itself).
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#4fd1e0";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy);
@@ -948,17 +949,17 @@ export class TransferPanel {
     const loose = this.captureApoAlt() !== undefined;
     const feasible = r.dvTotal <= haveDv;
     this.readout.innerHTML =
-      kv("Tour", `via ${r.flybys.map((f) => BODY_BY_ID.get(f.moonId)!.name).join(" → ")}`) +
-      kv("Depart", formatDate(r.tDepart)) +
-      r.flybys.map((f) => kv(`Flyby ${BODY_BY_ID.get(f.moonId)!.name}`,
+      kvAuto("Tour", `via ${r.flybys.map((f) => BODY_BY_ID.get(f.moonId)!.name).join(" → ")}`) +
+      kvAuto("Depart", formatDate(r.tDepart)) +
+      r.flybys.map((f) => kvAuto(`Flyby ${BODY_BY_ID.get(f.moonId)!.name}`,
         `${formatDate(f.t)} · ${(f.dvFlyby / 1000).toFixed(3)} km/s${f.unpowered ? " (free)" : ""}`)).join("") +
-      kv("Arrive", formatDate(r.tArrive)) +
-      kv("Flight time", `${((r.tArrive - r.tDepart) / DAY).toFixed(1)} days`) +
-      kv("Injection Δv", `${(r.dvDepart / 1000).toFixed(3)} km/s`) +
-      kv("Flyby Δv (total)", `${(r.dvFlybyTotal / 1000).toFixed(3)} km/s${r.unpowered ? " (all free)" : ""}`) +
-      kv("Capture Δv", `${(r.dvArrive / 1000).toFixed(3)} km/s${loose ? " (loose ellipse)" : " (circular)"}`) +
-      kv("Total Δv", `${(r.dvTotal / 1000).toFixed(3)} km/s`) +
-      kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+      kvAuto("Arrive", formatDate(r.tArrive)) +
+      kvAuto("Flight time", `${((r.tArrive - r.tDepart) / DAY).toFixed(1)} days`) +
+      kvAuto("Injection Δv", `${(r.dvDepart / 1000).toFixed(3)} km/s`) +
+      kvAuto("Flyby Δv (total)", `${(r.dvFlybyTotal / 1000).toFixed(3)} km/s${r.unpowered ? " (all free)" : ""}`) +
+      kvAuto("Capture Δv", `${(r.dvArrive / 1000).toFixed(3)} km/s${loose ? " (loose ellipse)" : " (circular)"}`) +
+      kvAuto("Total Δv", `${(r.dvTotal / 1000).toFixed(3)} km/s`) +
+      kvAuto("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
       (feasible ? `<div class="ok">✓ within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
     setDisabled(this.commitBtn, !feasible, "Tour Δv exceeds the ship's budget.");
   }
@@ -976,12 +977,12 @@ export class TransferPanel {
     const haveDv = dvRemaining(ship);
     const feasible = plan.dvTotal <= haveDv;
     this.readout.innerHTML =
-      kv("Raise to", `GEO — ${((plan.aSync - body.radius) / 1000).toFixed(0)} km circular (synchronous)`) +
-      kv("Transfer burn", `${(plan.dv1 / 1000).toFixed(3)} km/s`) +
-      kv("Circularize + plane change", `${(plan.dv2 / 1000).toFixed(3)} km/s`) +
-      kv("Total Δv", `${(plan.dvTotal / 1000).toFixed(3)} km/s`) +
-      kv("Transfer time", `${(plan.tof / DAY).toFixed(2)} days`) +
-      kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+      kvAuto("Raise to", `GEO — ${((plan.aSync - body.radius) / 1000).toFixed(0)} km circular (synchronous)`) +
+      kvAuto("Transfer burn", `${(plan.dv1 / 1000).toFixed(3)} km/s`) +
+      kvAuto("Circularize + plane change", `${(plan.dv2 / 1000).toFixed(3)} km/s`) +
+      kvAuto("Total Δv", `${(plan.dvTotal / 1000).toFixed(3)} km/s`) +
+      kvAuto("Transfer time", `${(plan.tof / DAY).toFixed(2)} days`) +
+      kvAuto("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
       (feasible ? `<div class="ok">✓ within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
     setDisabled(this.commitBtn, !feasible, "GEO raise Δv exceeds the ship's budget.");
   }
@@ -1002,13 +1003,13 @@ export class TransferPanel {
     const haveDv = dvRemaining(ship);
     const feasible = cell.total <= haveDv;
     this.readout.innerHTML =
-      kv("Destination", label) + kv("Optimizing", this.criterionLabel()) +
-      kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
-      kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) +
-      kv("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
-      kv(isLagr ? "Station-keeping Δv" : "Capture Δv (circ + plane)", `${(cell.dvArrive / 1000).toFixed(3)} km/s`) +
-      kv("Total Δv", `${(cell.total / 1000).toFixed(3)} km/s`) +
-      kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+      kvAuto("Destination", label) + kvAuto("Optimizing", this.criterionLabel()) +
+      kvAuto("Depart", formatDate(cell.depT)) + kvAuto("Arrive", formatDate(cell.arrT)) +
+      kvAuto("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) +
+      kvAuto("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
+      kvAuto(isLagr ? "Station-keeping Δv" : "Capture Δv (circ + plane)", `${(cell.dvArrive / 1000).toFixed(3)} km/s`) +
+      kvAuto("Total Δv", `${(cell.total / 1000).toFixed(3)} km/s`) +
+      kvAuto("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
       (feasible ? `<div class="ok">✓ within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
     setDisabled(this.commitBtn, !feasible, "Transfer Δv exceeds the ship's budget.");
   }
@@ -1039,17 +1040,17 @@ export class TransferPanel {
       }
       const apoAlt = this.captureApoAlt();
       const ellipseLine = apoAlt !== undefined
-        ? kv("Capture orbit", `${(DEFAULT_CAPTURE_ALT / 1000).toFixed(0)} × ${(apoAlt / 1000).toFixed(0)} km (ellipse)`) : "";
+        ? kvAuto("Capture orbit", `${(DEFAULT_CAPTURE_ALT / 1000).toFixed(0)} × ${(apoAlt / 1000).toFixed(0)} km (ellipse)`) : "";
       const haveDv = dvRemaining(ship);
       const feasible = cell.total <= haveDv;
       this.readout.innerHTML =
-        kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
-        kv("Flight time", `${(cell.tof / DAY).toFixed(1)} days`) +
-        kv("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
-        kv("Capture Δv", `${(cell.dvArrive / 1000).toFixed(3)} km/s`) +
+        kvAuto("Depart", formatDate(cell.depT)) + kvAuto("Arrive", formatDate(cell.arrT)) +
+        kvAuto("Flight time", `${(cell.tof / DAY).toFixed(1)} days`) +
+        kvAuto("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
+        kvAuto("Capture Δv", `${(cell.dvArrive / 1000).toFixed(3)} km/s`) +
         ellipseLine +
-        kv("Total Δv", `${(cell.total / 1000).toFixed(3)} km/s`) +
-        kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+        kvAuto("Total Δv", `${(cell.total / 1000).toFixed(3)} km/s`) +
+        kvAuto("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
         (feasible ? `<div class="ok">✓ within budget</div>` : `<div class="warn">✗ exceeds Δv budget</div>`);
       setDisabled(this.commitBtn, !feasible, "Transfer Δv exceeds the ship's budget.");
       return;
@@ -1077,7 +1078,7 @@ export class TransferPanel {
 
     if (!mission && this.routeMode === "suggest") return; // the list is the readout
 
-    const optLine = kv("Optimizing", this.criterionLabel());
+    const optLine = kvAuto("Optimizing", this.criterionLabel());
 
     if (this.chain && ship) {
       const r = this.chain.result;
@@ -1090,19 +1091,19 @@ export class TransferPanel {
       this.axisEl.innerHTML = `<span>gravity-assist chain via ${names}</span>`;
       this.readout.innerHTML =
         optLine +
-        kv("Depart", formatDate(r.tDepart)) +
+        kvAuto("Depart", formatDate(r.tDepart)) +
         r.flybys.map((f) => {
           const fb = BODY_BY_ID.get(f.bodyId)!;
           const bRadii = (impactParameter(f.vInfIn, fb.mu, f.rp) / fb.radius).toFixed(1);
-          return kv(`Flyby ${fb.name}`,
+          return kvAuto(`Flyby ${fb.name}`,
             `${formatDate(f.t)} · b ${bRadii} R, turn ${((f.turnRequired * 180) / Math.PI).toFixed(0)}° · ${(f.dvFlyby / 1000).toFixed(3)} km/s${f.unpowered ? " (free)" : ""}`);
         }).join("") +
-        kv("Arrive", formatDate(r.tArrive)) +
-        kv("Flight time", `${((r.tArrive - r.tDepart) / DAY).toFixed(0)} days`) +
-        kv("Injection Δv", `${(r.dvDepart / 1000).toFixed(3)} km/s`) +
-        kv("Flyby Δv (total)", `${(r.dvFlybyTotal / 1000).toFixed(3)} km/s${r.unpowered ? " (all free)" : ""}`) +
-        kv("Capture Δv", cap.feasible ? `${(cap.dvArrive / 1000).toFixed(3)} km/s${cap.label}` : cap.label) +
-        kv("Total Δv", `${((r.dvDepart + r.dvFlybyTotal + cap.dvArrive) / 1000).toFixed(3)} km/s`) +
+        kvAuto("Arrive", formatDate(r.tArrive)) +
+        kvAuto("Flight time", `${((r.tArrive - r.tDepart) / DAY).toFixed(0)} days`) +
+        kvAuto("Injection Δv", `${(r.dvDepart / 1000).toFixed(3)} km/s`) +
+        kvAuto("Flyby Δv (total)", `${(r.dvFlybyTotal / 1000).toFixed(3)} km/s${r.unpowered ? " (all free)" : ""}`) +
+        kvAuto("Capture Δv", cap.feasible ? `${(cap.dvArrive / 1000).toFixed(3)} km/s${cap.label}` : cap.label) +
+        kvAuto("Total Δv", `${((r.dvDepart + r.dvFlybyTotal + cap.dvArrive) / 1000).toFixed(3)} km/s`) +
         verdict.html;
       setDisabled(this.commitBtn, !verdict.ok, "Injection + flyby + capture Δv exceeds the ship's budget, or aerocapture infeasible.");
       return;
@@ -1132,15 +1133,15 @@ export class TransferPanel {
       this.axisEl.innerHTML = `<span>gravity assist via ${vb.name}</span>`;
       this.readout.innerHTML =
         optLine +
-        kv("Depart", formatDate(a.tDepart)) +
-        kv(`Flyby ${vb.name}`, `${formatDate(a.tFlyby)} · peri ${(a.flybyRadius / 1000).toFixed(0)} km, b ${bRadii} R, turn ${((a.turnRequired * 180) / Math.PI).toFixed(0)}°`) +
-        kv("Arrive", formatDate(a.tArrive)) +
-        kv("Flight time", `${((a.tArrive - a.tDepart) / DAY).toFixed(0)} days`) +
-        kv("Injection Δv", `${(a.dvDepart / 1000).toFixed(3)} km/s`) +
-        kv("Flyby Δv", `${(a.dvFlyby / 1000).toFixed(3)} km/s${a.unpowered ? " (free)" : ""}`) +
-        kv("Capture Δv", cap.feasible ? `${(cap.dvArrive / 1000).toFixed(3)} km/s${cap.label}` : cap.label) +
-        kv("Total Δv", `${((a.dvDepart + a.dvFlyby + cap.dvArrive) / 1000).toFixed(3)} km/s`) +
-        (directBest ? kv("Direct best Δv", `${(directBest / 1000).toFixed(3)} km/s`) : "") +
+        kvAuto("Depart", formatDate(a.tDepart)) +
+        kvAuto(`Flyby ${vb.name}`, `${formatDate(a.tFlyby)} · peri ${(a.flybyRadius / 1000).toFixed(0)} km, b ${bRadii} R, turn ${((a.turnRequired * 180) / Math.PI).toFixed(0)}°`) +
+        kvAuto("Arrive", formatDate(a.tArrive)) +
+        kvAuto("Flight time", `${((a.tArrive - a.tDepart) / DAY).toFixed(0)} days`) +
+        kvAuto("Injection Δv", `${(a.dvDepart / 1000).toFixed(3)} km/s`) +
+        kvAuto("Flyby Δv", `${(a.dvFlyby / 1000).toFixed(3)} km/s${a.unpowered ? " (free)" : ""}`) +
+        kvAuto("Capture Δv", cap.feasible ? `${(cap.dvArrive / 1000).toFixed(3)} km/s${cap.label}` : cap.label) +
+        kvAuto("Total Δv", `${((a.dvDepart + a.dvFlyby + cap.dvArrive) / 1000).toFixed(3)} km/s`) +
+        (directBest ? kvAuto("Direct best Δv", `${(directBest / 1000).toFixed(3)} km/s`) : "") +
         verdict.html;
       setDisabled(this.commitBtn, !verdict.ok, "Injection + flyby + capture Δv exceeds the ship's budget, or aerocapture infeasible.");
       return;
@@ -1159,13 +1160,13 @@ export class TransferPanel {
     // For a cross-system mission the porkchop targets the parent planet (Stage 1); name both legs.
     const moonName = mission ? BODY_BY_ID.get(this.targetId)!.name : "";
     const stage2 = mission
-      ? kv("Stage 2", `${target!.name} → ${moonName} (auto on arrival)`) : "";
+      ? kvAuto("Stage 2", `${target!.name} → ${moonName} (auto on arrival)`) : "";
     this.axisEl.innerHTML = mission
       ? `<span>Stage 1: ${BODY_BY_ID.get(fromId)?.name} → ${target!.name} &nbsp;·&nbsp; → departure date</span>`
       : `<span>↑ flight time &nbsp; → departure date</span>`;
     const dvMin = this.pork ? bestPorkCell(this.pork, "dv") : null;
     const trade = this.criterion !== "dv" && dvMin
-      ? kv("Min-Δv flight time", `${(dvMin.tof / DAY).toFixed(0)} days @ ${(dvMin.total / 1000).toFixed(2)} km/s`) : "";
+      ? kvAuto("Min-Δv flight time", `${(dvMin.tof / DAY).toFixed(0)} days @ ${(dvMin.total / 1000).toFixed(2)} km/s`) : "";
 
     const aero = this.orbitSlot === "aerocapture" && target?.atmosphere
       ? aerocapturePreview(effId, fromId, cell.depT, cell.arrT) : null;
@@ -1176,12 +1177,12 @@ export class TransferPanel {
         : { ok: false, html: `<div class="warn">✗ arrival too fast to aerocapture here</div>` };
       this.readout.innerHTML =
         optLine +
-        kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
-        kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) + trade +
-        kv("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
-        kv("Capture", aero?.feasible ? "aerocapture — drag pass" : "aerocapture not possible") +
-        (aero?.feasible ? kv("Arrival trim Δv", `${(aero.trimDv / 1000).toFixed(3)} km/s`) : "") +
-        (aero ? kv("Saved vs propulsive", `${(aero.propulsiveDv / 1000).toFixed(3)} km/s`) : "") +
+        kvAuto("Depart", formatDate(cell.depT)) + kvAuto("Arrive", formatDate(cell.arrT)) +
+        kvAuto("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) + trade +
+        kvAuto("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
+        kvAuto("Capture", aero?.feasible ? "aerocapture — drag pass" : "aerocapture not possible") +
+        (aero?.feasible ? kvAuto("Arrival trim Δv", `${(aero.trimDv / 1000).toFixed(3)} km/s`) : "") +
+        (aero ? kvAuto("Saved vs propulsive", `${(aero.propulsiveDv / 1000).toFixed(3)} km/s`) : "") +
         stage2 +
         verdict.html;
       setDisabled(this.commitBtn, !verdict.ok, "Aerocapture infeasible or injection exceeds budget.");
@@ -1195,8 +1196,8 @@ export class TransferPanel {
       ? (captureDvPreview(effId, fromId, cell.depT, cell.arrT, apoAlt) ?? cell.dvArrive)
       : cell.dvArrive;
     const ellipseLine = apoAlt !== undefined
-      ? kv("Capture orbit", `${(DEFAULT_CAPTURE_ALT / 1000).toFixed(0)} × ${(apoAlt / 1000).toFixed(0)} km (ellipse)`) +
-        kv("Saved vs circular", `${((cell.dvArrive - captureDv) / 1000).toFixed(3)} km/s`)
+      ? kvAuto("Capture orbit", `${(DEFAULT_CAPTURE_ALT / 1000).toFixed(0)} × ${(apoAlt / 1000).toFixed(0)} km (ellipse)`) +
+        kvAuto("Saved vs circular", `${((cell.dvArrive - captureDv) / 1000).toFixed(3)} km/s`)
       : "";
     const totalDv = cell.dvDepart + captureDv;
     // Gate on the WHOLE mission (injection + capture), not just injection — a deep-well
@@ -1205,14 +1206,14 @@ export class TransferPanel {
     const verdict = this.budgetVerdict(cell.dvDepart, captureDv, haveDv);
     this.readout.innerHTML =
       optLine +
-      kv("Depart", formatDate(cell.depT)) + kv("Arrive", formatDate(cell.arrT)) +
-      kv("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) + trade +
-      kv("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
-      kv(mission ? "Stage 1 capture Δv" : "Arrival (capture) Δv", `${(captureDv / 1000).toFixed(3)} km/s`) +
+      kvAuto("Depart", formatDate(cell.depT)) + kvAuto("Arrive", formatDate(cell.arrT)) +
+      kvAuto("Flight time", `${(cell.tof / DAY).toFixed(0)} days`) + trade +
+      kvAuto("Injection Δv", `${(cell.dvDepart / 1000).toFixed(3)} km/s`) +
+      kvAuto(mission ? "Stage 1 capture Δv" : "Arrival (capture) Δv", `${(captureDv / 1000).toFixed(3)} km/s`) +
       ellipseLine +
-      kv("Total Δv", `${(totalDv / 1000).toFixed(3)} km/s`) +
+      kvAuto("Total Δv", `${(totalDv / 1000).toFixed(3)} km/s`) +
       stage2 +
-      kv("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
+      kvAuto("Ship Δv available", `${(haveDv / 1000).toFixed(2)} km/s`) +
       verdict.html;
     setDisabled(this.commitBtn, !verdict.ok, "Injection + capture Δv exceeds the ship's budget — pick a cheaper capture (loose ellipse / aerocapture).");
   }

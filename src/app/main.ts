@@ -8,6 +8,15 @@
  */
 
 import "../styles.css";
+// Self-hosted type: Saira (UI/labels/headers) + IBM Plex Mono (live numerics).
+// Bundled by Vite — no external network request.
+import "@fontsource/saira/400.css";
+import "@fontsource/saira/500.css";
+import "@fontsource/saira/600.css";
+import "@fontsource/saira/700.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
 import { createWorld } from "@lightlag/engine/world";
 import { Simulation } from "@lightlag/engine/sim";
 import { SceneManager } from "../render/SceneManager.ts";
@@ -24,6 +33,7 @@ import { ScaleBar } from "../ui/scaleBar.ts";
 import { ShipPanel } from "../ui/shipPanel.ts";
 import { Shipyard } from "../ui/shipyard.ts";
 import { MissionHud } from "../ui/missionHud.ts";
+import { BottomTelemetry } from "../ui/bottomTelemetry.ts";
 import { EventFeed } from "../ui/events.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
 import { InterstellarPanel } from "../ui/interstellarPanel.ts";
@@ -32,6 +42,7 @@ import { Sandbox } from "../sandbox/sandbox.ts";
 import { SandboxPanel } from "../ui/sandboxPanel.ts";
 import { installTermTooltips } from "../ui/tooltip.ts";
 import { getFlag, setFlag } from "../ui/uiState.ts";
+import { initAccent } from "../ui/themes.ts";
 import * as commands from "./commands.ts";
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
@@ -44,6 +55,9 @@ const sm = new SceneManager(canvas);
 // Match the renderer to the theme the head script restored from localStorage,
 // so the scene background agrees with the HUD on the very first frame.
 sm.setTheme(document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark");
+// Sync the 3D overlay accent to the restored colour palette (data-accent), so the
+// canvas agrees with the HUD on the first frame.
+initAccent();
 // Shared show/hide state, written by the HUD's layer controls and read by every view.
 const visibility = new Visibility();
 // Restore persisted scene-layer toggles before any view reads them, then persist
@@ -81,6 +95,9 @@ shipPanel = new ShipPanel(
 const eventFeed = new EventFeed();
 shipPanel.attachEventFeed(eventFeed);
 const missionHud = new MissionHud(uiRoot, sim, shipPanel, eventFeed);
+// The bottom-centre telemetry rail: the selected ship's range + one-way light-lag,
+// always on above the scale bar (the game's defining fact, kept on screen).
+const bottomTelemetry = new BottomTelemetry(uiRoot, sim, shipPanel);
 const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel, interstellarPanel, shipyard);
 
 // The sandbox layer (orbital playground): light-lag policy, live satellites, and
@@ -118,6 +135,7 @@ function renderOnce(): void {
   shipPanel.update(world.t);
   eventFeed.update(world, world.t);
   missionHud.update(world.t);
+  bottomTelemetry.update(world.t);
   sandboxPanel.update();
 }
 

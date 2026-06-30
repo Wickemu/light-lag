@@ -41,10 +41,42 @@ export const btn = button;
 /** A key/value readout row as an HTML string (joined into a readout block).
  *  When the key is a known glossary term, it's tagged so the hover card finds it. */
 export function kv(k: string, v: string): string {
-  const key = defineTerm(k)
+  return `<div class="kv">${kvKey(k)}<span class="v">${v}</span></div>`;
+}
+
+/** A key/value row that splits the NUMBER from its UNIT so the digits right-align
+ *  into a clean column down the readout (the unit sits in its own fixed-width
+ *  column, so a wide unit like "km/s" never shoves the number around). Pass an
+ *  empty `unit` for a bare number — the unit column still reserves its width, so
+ *  the number column stays aligned. */
+export function kvNum(k: string, num: string, unit = ""): string {
+  const u = unit ? `<span class="v-unit">${unit}</span>` : `<span class="v-unit"></span>`;
+  return `<div class="kv">${kvKey(k)}<span class="v"><span class="v-num">${num}</span>${u}</span></div>`;
+}
+
+/** Like {@link kv}, but auto-splits a trailing unit onto its own column so the
+ *  numbers line up — `"1.000 AU"` becomes number "1.000" + unit "AU". Falls back
+ *  to a plain row when the value isn't a "number unit" pair (e.g. "none (airless)",
+ *  "— (you are here)", a spectral type). Lets a readout keep passing pre-formatted
+ *  strings while gaining a clean aligned number column. */
+export function kvAuto(k: string, v: string): string {
+  // Split ONLY a clean two-token "<number> <unit>" value: the whole string must
+  // be exactly a numeric head (a digit, no letters or parens) and a single-token
+  // unit. Dates, compound phrases ("1.2 km/s (all free)"), bare numbers and
+  // "3.4°" (no space) all fall back to a plain enclosed cell — so a panel can pass
+  // pre-formatted strings freely without a misparse mangling them.
+  const m = /^(\S+)\s+(\S+)$/.exec(v);
+  if (m && /\d/.test(m[1]!) && !/[a-zA-Z(]/.test(m[1]!)) {
+    return kvNum(k, m[1]!, m[2]!);
+  }
+  return kv(k, v);
+}
+
+/** The label cell, glossary-tagged when the key is a defined term. */
+function kvKey(k: string): string {
+  return defineTerm(k)
     ? `<span class="k term" data-term="${escapeTermAttr(k.trim())}">${k}</span>`
     : `<span class="k">${k}</span>`;
-  return `<div class="kv">${key}<span class="v">${v}</span></div>`;
 }
 
 /** Toggle a button's disabled state and surface the reason as a native tooltip,

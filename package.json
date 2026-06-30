@@ -23,6 +23,8 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/saira": "^5.2.11",
     "@lightlag/engine": "*",
     "satellite.js": "^5.0.0",
     "three": "^0.171.0"
