@@ -16,12 +16,13 @@ windows), patched-conic SOI capture, light-lag command (the thesis), and
 thermal / power / detection ("no stealth in space"). Plus parallel-session
 add-ons: a 30-craft preset catalog and keyboard controls.
 
-**Core-mechanics expansion (latest):** the full Solar System — 106 bodies total:
+**Core-mechanics expansion (latest):** the full Solar System — 110 bodies total:
 the 8 planets, the dwarf planets and large TNOs, a deep moon roster (the
 Galileans + Jupiter's inner Amalthea group & classical irregulars; Titan + the
 major Saturnians + ring-shepherds, co-orbitals, Hyperion & Phoebe; the major
 Uranians + Puck-group inner moons & irregular Caliban/Sycorax; Triton + Neptune's
-inner regulars & Nereid; Phobos/Deimos; Charon), the small-body populations
+inner regulars & Nereid; Phobos/Deimos; the Pluto system — Charon + the four small
+moons Styx/Nix/Kerberos/Hydra that circle the Pluto–Charon barycentre), the small-body populations
 (main belt, near-Earth asteroids, Jupiter Trojans, Kuiper belt, scattered disc,
 inner Oort cloud), comets (1P/Halley, 2P/Encke) and the major man-made
 satellites (ISS, Hubble, Tiangong — a new `satellite` body class), each on a
@@ -791,14 +792,23 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   (`app/launchLeg.test.ts`). Still to do: radiative (shock-layer) heating above
   ~11 km/s; atmospheric co-rotation / lift in the in-sim pass (planar ballistic first cut);
   and a B-plane-targeted aim (the arrival uses a patched-conic periapsis aim today).
-- **More bodies** — DONE: 106 bodies (dwarfs, asteroids, gas-giant & other moons,
+- **More bodies** — DONE: 110 bodies (dwarfs, asteroids, gas-giant & other moons,
   plus TNOs and comets) on the fixed-J2000-conic (`FixedHelioRow`) + `MoonRow`
   paths, Horizons-checked — including a deep moon roster (inner + irregular
   satellites of the four giants) and the small-body populations grouped by region
   in the navigator (near-Earth, main belt, Trojans, Kuiper belt, scattered disc,
-  inner Oort cloud). Still to do: irregular-moon precession, the Pluto-system
-  small moons (they orbit the Pluto–Charon barycentre, which the two-body `MoonRow`
-  doesn't yet model), comet outgassing/non-gravitational forces.
+  inner Oort cloud). **Pluto's four small moons (Styx/Nix/Kerberos/Hydra) — DONE:**
+  they orbit the Pluto–Charon **barycentre**, not Pluto's centre, so each carries an
+  `orbitsBarycenter` flag and `ephemeris.ts` builds its conic about the barycentre
+  (mu = μ_Pluto + μ_Charon + μ_moon) and adds the parent→barycentre offset — the same
+  external point Pluto and Charon visibly circle, validated against Horizons `@9`.
+  **Ring/spin orientation — DONE:** a body carrying an IAU pole (`poleRaDeg/poleDecDeg`,
+  the four giants) has its rendered globe & rings aimed along the real pole
+  (`poleToEcliptic`), so Saturn's rings lie in the plane its equatorial moons orbit in
+  rather than crossed against them. Still to do: irregular-moon precession; comet
+  outgassing/non-gravitational forces; the engine's surface/launch frame still uses
+  the azimuth-free `spinPole` (fine — only matters for bodies with landed pads, which
+  carry no `poleRaDeg`).
 - **Interstellar sky / camera** (presentation) — DONE: two views split the
   unbridgeable scale gap (a 1-AU planet and a 4-ly star differ ~1e6× in distance,
   so no single frame frames both). The **in-system** view paints the real nearby

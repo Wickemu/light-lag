@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { bodyState, bodyStateRelative, bodyElements } from "./ephemeris.ts";
 import { BODY_BY_ID, AU, DAY, MU_SUN, type BodyRegion } from "./constants.ts";
-import { HORIZONS_ADDED_HELIO, HORIZONS_ADDED_MOONS, type HorizonsRecord } from "./fixtures/horizons.ts";
+import { HORIZONS_ADDED_HELIO, HORIZONS_ADDED_MOONS, HORIZONS_ADDED_BARY_MOONS, type HorizonsRecord } from "./fixtures/horizons.ts";
 import { period } from "./math/kepler.ts";
-import { distance, length, cross } from "./math/vec3.ts";
+import { distance, length, cross, add, scale, sub, type Vec3 } from "./math/vec3.ts";
 
 const KM = 1000;
 const J2000_JD = 2451545.0;
@@ -54,6 +54,57 @@ describe("expanded moons vs JPL Horizons @ J2000 (parent-relative)", () => {
       expect(distance(st.v, v) / length(v)).toBeLessThan(1e-5);
     });
   }
+});
+
+// Pluto's small moons orbit the Pluto–Charon BARYCENTRE, not Pluto's centre. The
+// engine returns them (like every moon) relative to Pluto's CENTRE by adding the
+// parent→barycentre offset; recombining to the barycentre — bodyState(moon) minus
+// the barycentre — must reproduce the @9 Horizons fixture, and stay clear of Pluto.
+describe("Pluto's small moons orbit the Pluto–Charon barycentre", () => {
+  const PLUTO = BODY_BY_ID.get("pluto")!;
+  const CHARON = BODY_BY_ID.get("charon")!;
+  const f = CHARON.mu / (PLUTO.mu + CHARON.mu);
+  // Barycentre world state: Pluto's centre + f·(Charon relative to Pluto's centre).
+  const baryR = (t: number): Vec3 => add(bodyState(PLUTO, t).r, scale(bodyStateRelative(CHARON, t).r, f));
+  const baryV = (t: number): Vec3 => add(bodyState(PLUTO, t).v, scale(bodyStateRelative(CHARON, t).v, f));
+
+  for (const rec of HORIZONS_ADDED_BARY_MOONS) {
+    it(`${rec.body} matches Horizons relative to the barycentre at the epoch`, () => {
+      const body = BODY_BY_ID.get(rec.body)!;
+      expect(body.orbitsBarycenter, `${rec.body} must be flagged orbitsBarycenter`).toBe(true);
+      const t = tOf(rec.jd);
+      const { r, v } = ref(rec);
+      const rRel = sub(bodyState(body, t).r, baryR(t));
+      const vRel = sub(bodyState(body, t).v, baryV(t));
+      // The offset cancels exactly, so this recombines to the clean barycentric
+      // conic — reproduced to the f64 chain floor, far tighter than the 2130 km
+      // barycentre offset it's proving is correctly applied.
+      expect(distance(rRel, r)).toBeLessThan(length(r) * 1e-6);
+      expect(distance(vRel, v) / length(v)).toBeLessThan(1e-6);
+    });
+  }
+
+  it("each small moon stays on its barycentric orbit and clear of Pluto", () => {
+    for (const rec of HORIZONS_ADDED_BARY_MOONS) {
+      const body = BODY_BY_ID.get(rec.body)!;
+      const el = bodyElements(body, 0)!;
+      const peri = el.a * (1 - el.e), apo = el.a * (1 + el.e);
+      for (const t of [0, 90 * DAY, 365 * DAY, 1825 * DAY]) {
+        const d = length(sub(bodyState(body, t).r, baryR(t)));
+        expect(d).toBeGreaterThan(peri * 0.97);
+        expect(d).toBeLessThan(apo * 1.03);
+        expect(d).toBeGreaterThan(PLUTO.radius); // never inside Pluto
+      }
+    }
+  });
+
+  it("the small moons share Charon's orbital plane (~113° in the ecliptic frame)", () => {
+    const charonI = (bodyElements(CHARON, 0)!.i * 180) / Math.PI;
+    for (const id of ["styx", "nix", "kerberos", "hydra"]) {
+      const i = (bodyElements(BODY_BY_ID.get(id)!, 0)!.i * 180) / Math.PI;
+      expect(Math.abs(i - charonI), `${id} coplanar with Charon`).toBeLessThan(1.5);
+    }
+  });
 });
 
 // Every added body is a bound conic that never leaves its [perihelion, apoapsis]

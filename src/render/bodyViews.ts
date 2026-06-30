@@ -16,6 +16,7 @@ import * as THREE from "three";
 import { BODIES, BODY_BY_ID, type BodyDef, type BodyKind } from "@lightlag/engine/constants";
 import { bodyState, bodyStateRelative, bodyElements } from "@lightlag/engine/ephemeris";
 import { orbitPath, period, type State } from "@lightlag/engine/math/kepler";
+import { poleToEcliptic } from "@lightlag/engine/orbit";
 import { type Vec3 } from "@lightlag/engine/math/vec3";
 import { metersToUnits, SCENE_SCALE } from "./scale.ts";
 import { type SceneManager } from "./SceneManager.ts";
@@ -26,6 +27,25 @@ import { createBodyTextures, makeGlowTexture, type AtmoGlow, type BodyTextureSet
 // the loop already passes dead through the marker; the segment budget only sets
 // how smooth the arc reads between vertices when zoomed in.
 const ORBIT_SEGMENTS = 384;
+
+/** Local +Y is a sphere's texture pole; the node rotates it onto the spin axis. */
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+/** A body's spin axis as a unit vector in the ecliptic/render frame. Uses the real
+ *  IAU pole (poleToEcliptic) when the body carries one — so the globe, rings and
+ *  atmosphere lie in the plane its equatorial moons orbit in — and otherwise falls
+ *  back to the canonical obliquity tilt (azimuth-free, in the Y–Z plane). That
+ *  fallback reproduces the historic `rotation.x = π/2 + obliquity` look exactly for
+ *  every poleless body, and matches the engine's spinPole, so a landed pad still
+ *  co-rotates with its globe. */
+function eclipticSpinAxis(def: BodyDef): THREE.Vector3 {
+  if (def.poleRaDeg !== undefined && def.poleDecDeg !== undefined) {
+    const p = poleToEcliptic(def.poleRaDeg, def.poleDecDeg);
+    return new THREE.Vector3(p.x, p.y, p.z);
+  }
+  const obl = (def.obliquityDeg ?? 0) * (Math.PI / 180);
+  return new THREE.Vector3(0, -Math.sin(obl), Math.cos(obl));
+}
 
 /** Constant screen-size for the always-visible body marker, by class. Explicit
  *  per-kind so a newly added BodyKind can't silently inherit a wrong size. */
@@ -225,10 +245,15 @@ export class BodyViews {
     marker.scale.setScalar(MARKER_SCALE[def.kind]);
     this.sm.scene.add(marker);
 
-    // Oriented node: pole along ecliptic +Z, tilted by the body's obliquity.
-    // The local +Y of a child becomes the spin axis (rotating +Y→+Z is +90° about X).
+    // Oriented node: the body's local +Y (its texture pole) is aimed along the real
+    // spin axis in the ecliptic/render frame, so the globe — and the rings and
+    // atmosphere riding in this node — share the plane the body's equatorial moons
+    // orbit in. (Tilting by obliquity about a fixed axis, as before, kept the tilt
+    // magnitude but lost the pole's azimuth, which left Saturn's rings crossed
+    // against its own moons.) A tidally locked body's node is re-aimed each frame in
+    // update(), so this only sets the at-rest orientation of the free-spinning ones.
     const node = new THREE.Object3D();
-    node.rotation.x = Math.PI / 2 + tex.obliquityRad;
+    node.quaternion.setFromUnitVectors(Y_AXIS, eclipticSpinAxis(def));
     this.sm.scene.add(node);
 
     // To-scale sphere (tiny at system zoom, resolves up close).
@@ -505,6 +530,13 @@ export class BodyViews {
             // not the wobbling primary's centre. Re-home the loop there and scale
             // the parent-centre ellipse by (1−f) so it passes through the satellite.
             fillOrbitLoopWorld(vis.orbitArray, pts, systemBary(bin, t), this.sm.origin, 1 - bin.f);
+          } else if (def.orbitsBarycenter) {
+            // Small moon of a binary (Pluto's Styx/Nix/Kerberos/Hydra): its loop is
+            // the conic about the system barycentre, so anchor it there — the same
+            // point Pluto and Charon circle — not on Pluto's offset centre.
+            const pbin = binaryInfo(BODY_BY_ID.get(def.parent)!);
+            const anchor = pbin ? systemBary(pbin, t) : bodyState(BODY_BY_ID.get(def.parent)!, t).r;
+            fillOrbitLoopWorld(vis.orbitArray, pts, anchor, this.sm.origin);
           } else {
             const parentState = bodyState(BODY_BY_ID.get(def.parent)!, t);
             fillOrbitLoopWorld(vis.orbitArray, pts, parentState.r, this.sm.origin);

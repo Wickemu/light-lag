@@ -181,3 +181,15 @@ export const HORIZONS_ADDED_MOONS: HorizonsRecord[] = [
   { body: "proteus", jd: 2451545.0, r_km: [4.6052906920e+4, -9.4010445946e+4, -5.3715079851e+4], v_kms: [6.4479402594e+0, 3.8712503613e+0, -1.2392127717e+0] },
   { body: "nereid", jd: 2451545.0, r_km: [8.9399246727e+5, 9.3176988831e+6, 6.7957795719e+5], v_kms: [-4.4581019930e-1, -1.2819081176e-1, -3.4235151947e-2] },
 ];
+
+/** Ground truth for Pluto's small moons, relative to the Pluto–Charon BARYCENTRE
+ *  (CENTER='500@9') at J2000 — the point those moons actually orbit. The engine
+ *  state, taken relative to the barycentre (bodyStateRelative minus the parent→
+ *  barycentre offset, i.e. bodyState(moon) − bodyState(barycentre)), reproduces
+ *  these to the conic's epoch precision. Validated against @9 in expandedBodies.test. */
+export const HORIZONS_ADDED_BARY_MOONS: HorizonsRecord[] = [
+  { body: "styx", jd: 2451545.0, r_km: [3.0947122642e+4, 2.2221520069e+4, -1.8267469142e+4], v_kms: [-9.4217331653e-3, -8.8508035036e-2, -1.2580074524e-1] },
+  { body: "nix", jd: 2451545.0, r_km: [-2.4479351210e+3, 2.3752432826e+4, 4.2339369179e+4], v_kms: [1.0451058828e-1, 8.6588557467e-2, -4.3482214542e-2] },
+  { body: "kerberos", jd: 2451545.0, r_km: [6.1006111458e+3, -2.5945488553e+4, -5.1443596554e+4], v_kms: [-9.5177339214e-2, -8.2948361585e-2, 3.1205668160e-2] },
+  { body: "hydra", jd: 2451545.0, r_km: [3.2154055406e+4, 6.1484391698e+2, -5.5777841887e+4], v_kms: [-6.6599731233e-2, -9.7104340319e-2, -3.8857286131e-2] },
+];

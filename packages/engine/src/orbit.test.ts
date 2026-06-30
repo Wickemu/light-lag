@@ -13,9 +13,11 @@ import {
   synchronousRadius,
   synchronousFeasible,
   soiRadius,
+  poleToEcliptic,
+  spinPole,
 } from "./orbit.ts";
 import { elementsToState, period } from "./math/kepler.ts";
-import { dot, length } from "./math/vec3.ts";
+import { dot, length, cross, normalize } from "./math/vec3.ts";
 import { bodyStateRelative } from "./ephemeris.ts";
 import { BODY_BY_ID, MU_SUN } from "./constants.ts";
 
@@ -147,6 +149,36 @@ describe("synchronous (geostationary) orbit", () => {
 
   it("is infeasible for a body with no rotation period", () => {
     expect(synchronousFeasible(MU_EARTH, undefined, R_EARTH, 1e9)).toBe(false);
+  });
+});
+
+describe("a body's IAU pole reproduces its equatorial moons' orbital plane (ring fix)", () => {
+  // The renderer aims each gas giant's globe & rings along poleToEcliptic(pole). For
+  // the rings to share the plane the regular (equatorial) moons orbit in, that axis
+  // must be normal to those orbits — i.e. (anti)parallel to their angular momentum
+  // r×v. (Either sign defines the same plane; Uranus's IAU "north" pole happens to
+  // sit opposite its moons' h.) The old obliquity-only pole keeps the tilt but loses
+  // the azimuth, which is why Saturn's rings read crossed against its own moons.
+  const cases: [string, string][] = [
+    ["jupiter", "io"], ["saturn", "titan"], ["uranus", "ariel"], ["neptune", "proteus"],
+  ];
+  for (const [planet, moon] of cases) {
+    it(`${planet}'s pole lies normal to ${moon}'s orbit`, () => {
+      const p = BODY_BY_ID.get(planet)!;
+      const st = bodyStateRelative(BODY_BY_ID.get(moon)!, 1.23e6); // generic phase
+      const hHat = normalize(cross(st.r, st.v));
+      const pole = poleToEcliptic(p.poleRaDeg!, p.poleDecDeg!);
+      expect(Math.abs(dot(pole, hHat)), `${planet} pole ∥ ${moon} orbit normal`).toBeGreaterThan(0.99);
+    });
+  }
+
+  it("the old obliquity-only pole missed Saturn's moon plane (so the azimuth mattered)", () => {
+    const saturn = BODY_BY_ID.get("saturn")!;
+    const st = bodyStateRelative(BODY_BY_ID.get("titan")!, 1.23e6);
+    const hHat = normalize(cross(st.r, st.v));
+    // Real pole: in-plane. Canonical obliquity pole: tens of degrees off.
+    expect(Math.abs(dot(poleToEcliptic(saturn.poleRaDeg!, saturn.poleDecDeg!), hHat))).toBeGreaterThan(0.99);
+    expect(Math.abs(dot(spinPole(saturn.obliquityDeg), hHat))).toBeLessThan(0.7);
   });
 });
 
