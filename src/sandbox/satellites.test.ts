@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Simulation } from "@lightlag/engine/sim";
 import { createWorld, type Ship } from "@lightlag/engine/world";
 import { coastElements } from "@lightlag/engine/ships";
-import { tleToElements, tleToElementsAtEpoch, spawnSatellite, spawnSatellites, parseTleText, isSatelliteId } from "./satellites.ts";
+import { tleToElements, tleToElementsAtEpoch, dateToWorldTime, spawnSatellite, spawnSatellites, parseTleText, isSatelliteId } from "./satellites.ts";
 import { TLE_SNAPSHOT } from "./data/tleSnapshot.ts";
 
 const ISS = TLE_SNAPSHOT[0]!;
@@ -46,6 +46,23 @@ describe("TLE → engine elements", () => {
     expect(() => spawnSatellites(sim, TLE_SNAPSHOT)).not.toThrow();
     expect(spawnSatellites(sim, TLE_SNAPSHOT)).toEqual([]);
     expect(spawnSatellite(sim, ISS)).toBeNull();
+  });
+
+  it("dateToWorldTime anchors the clock so a TLE loaded at its epoch stays in SGP4's window", () => {
+    // The ISS set's own epoch: 2008, day 264.51782528 (J2000 = 2000-01-01T12:00Z).
+    const epochMs = Date.UTC(2008, 0, 1) + (264.51782528 - 1) * 86400 * 1000;
+    const worldT = dateToWorldTime(new Date(epochMs));
+    // Matches the s-since-J2000 the other tests compute by hand — it's the inverse
+    // of the internal worldTime→Date mapping the propagator uses.
+    expect(worldT).toBeCloseTo((epochMs - Date.UTC(2000, 0, 1, 12)) / 1000, 3);
+    // Propagated at (essentially) the epoch, the orbit matches the epoch-anchored
+    // elements — the point of starting the app clock at the present date/time.
+    const atNow = tleToElements(ISS, worldT)!;
+    const atEpoch = tleToElementsAtEpoch(ISS)!;
+    expect(atNow).not.toBeNull();
+    expect(atNow.a).toBeCloseTo(atEpoch.a, 0);
+    expect(atNow.e).toBeCloseTo(atEpoch.e, 6);
+    expect(atNow.i).toBeCloseTo(atEpoch.i, 6);
   });
 
   it("parses 3-line (name + 2 lines) TLE text", () => {

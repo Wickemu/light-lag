@@ -53,6 +53,17 @@ function worldTimeToDate(t: number): Date {
   return new Date(J2000_UNIX_MS + t * 1000);
 }
 
+/**
+ * Sim world-time (seconds since J2000) for a wall-clock instant — the inverse of
+ * the `worldTimeToDate` mapping above. The app anchors the clock to `new Date()`
+ * at startup with this, so a live group loaded right away propagates its current-
+ * epoch TLEs essentially AT their epoch (well inside SGP4's valid window) instead
+ * of decades from it. Treats the wall clock as TT, consistent with `worldTimeToDate`.
+ */
+export function dateToWorldTime(date: Date): number {
+  return (date.getTime() - J2000_UNIX_MS) / 1000;
+}
+
 /** NORAD catalog number from line 1 (columns 3–7), e.g. "25544". */
 function noradId(line1: string): string {
   return line1.slice(2, 7).trim();
