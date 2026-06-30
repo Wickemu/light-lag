@@ -41,10 +41,38 @@ export const btn = button;
 /** A key/value readout row as an HTML string (joined into a readout block).
  *  When the key is a known glossary term, it's tagged so the hover card finds it. */
 export function kv(k: string, v: string): string {
-  const key = defineTerm(k)
+  return `<div class="kv">${kvKey(k)}<span class="v">${v}</span></div>`;
+}
+
+/** A key/value row that splits the NUMBER from its UNIT so the digits right-align
+ *  into a clean column down the readout (the unit sits in its own fixed-width
+ *  column, so a wide unit like "km/s" never shoves the number around). Pass an
+ *  empty `unit` for a bare number — the unit column still reserves its width, so
+ *  the number column stays aligned. */
+export function kvNum(k: string, num: string, unit = ""): string {
+  const u = unit ? `<span class="v-unit">${unit}</span>` : `<span class="v-unit"></span>`;
+  return `<div class="kv">${kvKey(k)}<span class="v"><span class="v-num">${num}</span>${u}</span></div>`;
+}
+
+/** Like {@link kv}, but auto-splits a trailing unit onto its own column so the
+ *  numbers line up — `"1.000 AU"` becomes number "1.000" + unit "AU". Falls back
+ *  to a plain row when the value isn't a "number unit" pair (e.g. "none (airless)",
+ *  "— (you are here)", a spectral type). Lets a readout keep passing pre-formatted
+ *  strings while gaining a clean aligned number column. */
+export function kvAuto(k: string, v: string): string {
+  const i = v.lastIndexOf(" ");
+  // Split only when the head carries a digit and the tail is a single token (a unit).
+  if (i > 0 && /\d/.test(v.slice(0, i)) && !/\s/.test(v.slice(i + 1))) {
+    return kvNum(k, v.slice(0, i), v.slice(i + 1));
+  }
+  return kv(k, v);
+}
+
+/** The label cell, glossary-tagged when the key is a defined term. */
+function kvKey(k: string): string {
+  return defineTerm(k)
     ? `<span class="k term" data-term="${escapeTermAttr(k.trim())}">${k}</span>`
     : `<span class="k">${k}</span>`;
-  return `<div class="kv">${key}<span class="v">${v}</span></div>`;
 }
 
 /** Toggle a button's disabled state and surface the reason as a native tooltip,

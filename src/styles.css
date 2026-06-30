@@ -145,11 +145,13 @@ body {
   pointer-events: auto;
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 10px 12px;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+  /* Flatter than a floating card — a quiet lift off the scene, anchored to its
+     edge rather than hovering. */
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.22);
 }
 
 /* Unobtrusive scrollbars for the overflowing panels (nav list, ship panel). */
@@ -245,6 +247,8 @@ body {
   min-height: 0; /* let this flex child shrink so its own overflow scrolls */
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* Reserve the scrollbar's track so it never sits over the selected row. */
+  scrollbar-gutter: stable;
 }
 .nav-focus {
   flex: 0 0 auto;
@@ -327,17 +331,26 @@ body {
   flex-wrap: wrap;
   gap: 4px;
 }
+/* Overlay toggles are flat toggle BUTTONS — the on-state reads from a tinted
+   fill + accent border (no dot to decode), off is a quiet recessed key. */
 .layer-chip {
-  padding: 2px 6px;
-  font-size: 9px;
-  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-dim);
-  border-radius: 5px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+}
+.layer-chip:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
 }
 .layer-chip.active {
   color: var(--active);
-  border-color: var(--active);
+  border-color: color-mix(in srgb, var(--active) 55%, transparent);
+  background: color-mix(in srgb, var(--active) 16%, transparent);
 }
 
 /* ── Popover (Layers menu) ──────────────────────────────────────────────────── */
@@ -529,6 +542,8 @@ body {
 .body-row.hidden-body .body-btn {
   opacity: 0.4;
 }
+/* Nav rows read as borderless list lines, not a stack of identical buttons — the
+   base button chrome (fill + border) is dropped; hover gives a quiet wash. */
 .body-btn {
   display: flex;
   align-items: center;
@@ -536,6 +551,12 @@ body {
   justify-content: flex-start;
   text-align: left;
   white-space: nowrap;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 5px;
+}
+.body-btn:hover {
+  background: var(--btn-bg);
 }
 
 /* Compact show/hide control; transparent until hovered so the list stays calm. */
@@ -558,8 +579,12 @@ body {
   background: var(--btn-bg);
   color: var(--text);
 }
+/* Selection: a left accent bar drawn INSIDE the row (inset box-shadow) plus a
+   tint fill — never an outline, so the scrollbar can't clip it. */
 .body-btn.active {
-  outline: 1px solid var(--active);
+  background: color-mix(in srgb, var(--active) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--active);
+  border-radius: 0 5px 5px 0;
   color: var(--active);
 }
 .swatch {
@@ -579,17 +604,41 @@ body {
 }
 .kv {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
   font-size: 12px;
-  padding: 2px 0;
+  padding: 2.5px 0;
 }
 .kv .k {
   color: var(--text-dim);
 }
+/* The value sits in a flat, enclosed cell pinned to the right, so a readout reads
+   as one tidy right column instead of values drifting. kvNum splits the number
+   from its unit into two sub-columns (number right-aligned, unit in a fixed-width
+   column) so digits line up no matter the unit's width; a plain kv value just
+   fills the cell, right-aligned. */
 .kv .v {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.kv .v-num {
+  text-align: right;
+}
+.kv .v-unit {
+  flex: 0 0 auto;
+  min-width: 36px;
+  text-align: left;
+  color: var(--text-dim);
 }
 
 /* ── Hover glossary ─────────────────────────────────────────────────────────
@@ -753,6 +802,7 @@ button:hover {
      so the Mission dock can run the full height and scroll only if it overflows. */
   max-height: calc(100vh - 112px);
   overflow-y: auto;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -968,9 +1018,17 @@ button.danger:hover {
 }
 .ship-btn {
   text-align: left;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 5px;
+}
+.ship-btn:hover {
+  background: var(--btn-bg);
 }
 .ship-btn.active {
-  outline: 1px solid var(--active);
+  background: color-mix(in srgb, var(--active) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--active);
+  border-radius: 0 5px 5px 0;
   color: var(--active);
 }
 

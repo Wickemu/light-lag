@@ -22,7 +22,7 @@ import { formatDate } from "@lightlag/engine/time";
 import { STAR_BY_ID, starPosition, LIGHT_YEAR, type StarDef } from "@lightlag/engine/stars";
 import { pickNearest } from "../render/overlayUtil.ts";
 import { interstellarFleet, interstellarStarList } from "../app/commands.ts";
-import { el, button, kv } from "./dom.ts";
+import { el, button, kvAuto } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
 import { popover, type Popover } from "./popover.ts";
 import { ACCENTS, applyAccent, currentAccent, type AccentName } from "./themes.ts";
@@ -700,41 +700,41 @@ export class Hud {
 
     if (def.id !== "sun") {
       const rSun = length(state.r);
-      lines.push(kv("Distance from Sun", `${(rSun / AU).toFixed(3)} AU`));
-      lines.push(kv("Orbital speed", `${(length(state.v) / 1000).toFixed(2)} km/s`));
-      lines.push(kv("Solar flux", `${solarFlux(rSun).toFixed(0)} W/m²`));
+      lines.push(kvAuto("Distance from Sun", `${(rSun / AU).toFixed(3)} AU`));
+      lines.push(kvAuto("Orbital speed", `${(length(state.v) / 1000).toFixed(2)} km/s`));
+      lines.push(kvAuto("Solar flux", `${solarFlux(rSun).toFixed(0)} W/m²`));
 
       const el = bodyElements(def, t);
       const parent = def.parent ? BODY_BY_ID.get(def.parent) : undefined;
       const mu = parent && parent.id !== "sun" ? parent.mu : MU_SUN;
       if (el) {
         const T = orbitalPeriod(el.a, mu);
-        lines.push(kv("Orbital period", formatPeriod(T)));
-        lines.push(kv("Eccentricity", el.e.toFixed(4)));
-        lines.push(kv("Inclination", `${((el.i * 180) / Math.PI).toFixed(2)}°`));
+        lines.push(kvAuto("Orbital period", formatPeriod(T)));
+        lines.push(kvAuto("Eccentricity", el.e.toFixed(4)));
+        lines.push(kvAuto("Inclination", `${((el.i * 180) / Math.PI).toFixed(2)}°`));
       }
 
       // Surface physics (drives the landing/takeoff budget in the ship panel).
-      lines.push(kv("Surface gravity", `${surfaceGravity(def).toFixed(2)} m/s²`));
-      lines.push(kv("Escape velocity", `${(escapeVelocity(def) / 1000).toFixed(2)} km/s`));
+      lines.push(kvAuto("Surface gravity", `${surfaceGravity(def).toFixed(2)} m/s²`));
+      lines.push(kvAuto("Escape velocity", `${(escapeVelocity(def) / 1000).toFixed(2)} km/s`));
       if (def.atmosphere) {
         const bar = def.atmosphere.surfacePressure / 101325;
-        lines.push(kv("Surface pressure", bar >= 0.01 ? `${bar.toFixed(2)} atm` : `${def.atmosphere.surfacePressure.toFixed(1)} Pa`));
+        lines.push(kvAuto("Surface pressure", bar >= 0.01 ? `${bar.toFixed(2)} atm` : `${def.atmosphere.surfacePressure.toFixed(1)} Pa`));
       } else if (def.hasSurface !== false) {
-        lines.push(kv("Atmosphere", "none (airless)"));
+        lines.push(kvAuto("Atmosphere", "none (airless)"));
       }
     } else {
-      lines.push(kv("Role", "central star"));
-      lines.push(kv("Luminosity", "3.828×10²⁶ W"));
+      lines.push(kvAuto("Role", "central star"));
+      lines.push(kvAuto("Luminosity", "3.828×10²⁶ W"));
     }
 
     // The light-lag teaser: one-way light-time from Earth.
     if (def.id !== "earth") {
       const earth = BODY_BY_ID.get("earth")!;
       const d = distance(bodyState(earth, t).r, state.r);
-      lines.push(kv("Light-time from Earth", formatLightTime(d / C)));
+      lines.push(kvAuto("Light-time from Earth", formatLightTime(d / C)));
     } else {
-      lines.push(kv("Light-time from Earth", "— (you are here)"));
+      lines.push(kvAuto("Light-time from Earth", "— (you are here)"));
     }
 
     this.focusBody.innerHTML = lines.join("");
@@ -749,13 +749,13 @@ export class Hud {
     const dLy = length(starPosition(star, t)) / LIGHT_YEAR;
     const lum = star.luminosity >= 1 ? star.luminosity.toFixed(2) : star.luminosity.toPrecision(2);
     const lines = [
-      kv("Distance from Sol", `${dLy.toFixed(2)} ly`),
-      kv("Light-time from Sol", `${dLy.toFixed(2)} yr`),
-      kv("Spectral type", star.spectralType),
-      kv("Luminosity", `${lum} L☉`),
-      kv("Mass", `${star.massSun.toFixed(3)} M☉`),
+      kvAuto("Distance from Sol", `${dLy.toFixed(2)} ly`),
+      kvAuto("Light-time from Sol", `${dLy.toFixed(2)} yr`),
+      kvAuto("Spectral type", star.spectralType),
+      kvAuto("Luminosity", `${lum} L☉`),
+      kvAuto("Mass", `${star.massSun.toFixed(3)} M☉`),
     ];
-    if (star.con) lines.push(kv("Constellation", star.con));
+    if (star.con) lines.push(kvAuto("Constellation", star.con));
     this.focusBody.innerHTML = lines.join("");
   }
 
