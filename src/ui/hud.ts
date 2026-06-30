@@ -727,13 +727,22 @@ export class Hud {
     row.appendChild(labelEl);
 
     // "Show only" isolate (hover-revealed, far right): show just this group, or
-    // restore the prior visibility when toggled off.
-    const solo = button("◎", () => this.toggleShowOnly(key, members));
+    // restore the prior visibility when toggled off. The body the group orbits
+    // (its zoom anchor — the Sun for a region) is kept visible even when it isn't
+    // a member, so isolating a belt doesn't black out the Sun it circles.
+    const solo = button("◎", () => this.toggleShowOnly(key, members, zoom?.anchorId));
     solo.className = "grp-solo";
     row.appendChild(solo);
 
     this.headerRefreshers.push(() => {
-      this.setEye(eye, this.groupState(members));
+      const state = this.groupState(members);
+      this.setEye(eye, state);
+      // Brighten the header to track its group's visibility — bright when fully
+      // shown, mid when partial, dimmed when hidden — the same shown/hidden cue a
+      // body row gives, so a hidden group's header recedes like its rows do.
+      labelEl.classList.toggle("grp-on", state === "all");
+      labelEl.classList.toggle("grp-partial", state === "some");
+      labelEl.classList.toggle("grp-off", state === "none");
       const active = this.solo?.key === key;
       solo.classList.toggle("active", active);
       solo.title = active ? `Showing only ${label} — click to restore` : `Show only ${label}`;
@@ -801,8 +810,11 @@ export class Hud {
   /** Toggle "show only this group": isolate its members (hiding everything else),
    *  or restore the pre-isolation visibility when the same group is toggled off.
    *  Switching directly from one isolated group to another restores first, so the
-   *  saved snapshot is always the natural (un-isolated) state. */
-  private toggleShowOnly(key: string, members: string[]): void {
+   *  saved snapshot is always the natural (un-isolated) state. `anchorId` (the body
+   *  the group orbits) is kept visible alongside the members, so isolating a region
+   *  doesn't also hide the Sun it circles; for a planet system the anchor is already
+   *  a member, so this changes nothing there. */
+  private toggleShowOnly(key: string, members: string[], anchorId?: string): void {
     if (this.solo?.key === key) {
       // Clear the flag BEFORE restoring so the refresh paints the button inactive.
       const prev = this.solo.prev;
@@ -811,7 +823,8 @@ export class Hud {
     } else {
       if (this.solo) this.vis.restoreHidden(this.solo.prev);
       this.solo = { key, prev: this.vis.snapshotHidden() };
-      this.vis.showOnly(members, ALL_BODY_IDS);
+      const keep = anchorId && !members.includes(anchorId) ? [...members, anchorId] : members;
+      this.vis.showOnly(keep, ALL_BODY_IDS);
     }
     // The solo-button active state tracks `this.solo`, which Visibility doesn't
     // know about — repaint headers even if the hidden set didn't actually change.
