@@ -924,12 +924,124 @@ export const BODIES: BodyDef[] = [
     helio: { a: 39.156604792382915, e: 0.2717944138710741, i: 15.500853432663538, node: 169.37508652067854, peri: 68.22561777939755, M0: 337.5266589061018 },
   },
 
-  // ── Detached / inner Oort cloud ──
+  // ── Scattered disc (high-eccentricity TNOs flung outward by Neptune) ──
+  {
+    id: "tc302", name: "84522 (2002 TC302)", parent: "sun", mu: 5.502824e+9, radius: 2.700000e+5,
+    kind: "dwarf", color: 0x9a7a6a, region: "scattered", hasSurface: true,
+    helio: { a: 55.82748113062782, e: 0.2963590371042177, i: 34.92260330415284, node: 23.84563259800765, peri: 85.32116545444943, M0: 309.6776181691697 },
+  },
+  {
+    id: "dziewanna", name: "471143 Dziewanna", parent: "sun", mu: 3.628256e+9, radius: 2.350000e+5,
+    kind: "dwarf", color: 0xa07858, region: "scattered", hasSurface: true,
+    helio: { a: 68.67643641399503, e: 0.5278477105425115, i: 29.51392472573826, node: 346.2406920706553, peri: 285.1319321712854, M0: 335.2438349037687 },
+  },
+  {
+    id: "gkunlhomdima", name: "229762 Gǃkúnǁʼhomdímà", parent: "sun", mu: 8.328742e+9, radius: 3.100000e+5,
+    kind: "dwarf", color: 0xa85038, region: "scattered", hasSurface: true,
+    helio: { a: 74.4998140899208, e: 0.4933192605054432, i: 23.35484872733563, node: 131.1520309628198, peri: 345.4573545979051, M0: 334.3662581396201 },
+  },
+  {
+    id: "tl66", name: "15874 (1996 TL66)", parent: "sun", mu: 1.373539e+9, radius: 1.700000e+5,
+    kind: "dwarf", color: 0x8a8a86, region: "scattered", hasSurface: true,
+    helio: { a: 85.38367323871751, e: 0.5896748315134774, i: 23.91972719661196, node: 217.7635715334055, peri: 184.5303660188996, M0: 359.3567781468731 },
+  },
+  {
+    id: "rm43", name: "145451 Rumina", parent: "sun", mu: 6.818492e+9, radius: 2.900000e+5,
+    kind: "dwarf", color: 0x9a8a80, region: "scattered", hasSurface: true,
+    helio: { a: 92.9887502744235, e: 0.6223482496360484, i: 28.72702972146025, node: 84.70181344454876, peri: 318.1300419037878, M0: 358.0780611208812 },
+  },
+  {
+    id: "fy27", name: "532037 Chiminigagua", parent: "sun", mu: 1.570691e+10, radius: 3.830000e+5,
+    kind: "dwarf", color: 0xb08a72, region: "scattered", hasSurface: true,
+    helio: { a: 58.67830110718968, e: 0.396342355273845, i: 33.26573002658537, node: 186.8851702898177, peri: 139.8137407164799, M0: 197.1234340254349 },
+  },
+
+  // ── Detached / inner Oort cloud (very-high-perihelion sednoids — Neptune
+  //    cannot have scattered them; their q stays far beyond it) ──
   {
     id: "leleakuhonua", name: "541132 Leleākūhonua", parent: "sun", mu: 5.581663e+8, radius: 1.100000e+5,
     kind: "dwarf", color: 0x8a5a48, region: "oort",
     hasSurface: true,
     helio: { a: 1573.3756064438815, e: 0.9587637616128466, i: 11.672452560815143, node: 301.00861415790826, peri: 117.8418800481208, M0: 359.54973494311804 },
+  },
+  {
+    id: "vp113", name: "2012 VP113", parent: "sun", mu: 2.976887e+9, radius: 2.200000e+5,
+    kind: "dwarf", color: 0xa86048, region: "oort", hasSurface: true,
+    helio: { a: 275.3017809287873, e: 0.7074594891199041, i: 24.02158224546075, node: 90.89314081528244, peri: 293.9886153145242, M0: 1.620522598093668 },
+  },
+  {
+    id: "gb174", name: "2010 GB174", parent: "sun", mu: 6.142206e+8, radius: 1.300000e+5,
+    kind: "dwarf", color: 0x8a5a48, region: "oort", hasSurface: true,
+    helio: { a: 344.3435610681781, e: 0.8593930865402777, i: 21.56938448787949, node: 130.7256745497954, peri: 346.8482101301083, M0: 2.731444315749788 },
+  },
+  {
+    id: "vn112", name: "474640 Alicanto", parent: "sun", mu: 9.435569e+8, radius: 1.500000e+5,
+    kind: "dwarf", color: 0x9a6048, region: "oort", hasSurface: true,
+    helio: { a: 357.5627461291151, e: 0.8676245775025173, i: 25.50773333146644, node: 66.114904018161, peri: 326.8467708516591, M0: 359.4902852627391 },
+  },
+  {
+    id: "sy99", name: "2013 SY99", parent: "sun", mu: 5.460399e+8, radius: 1.250000e+5,
+    kind: "dwarf", color: 0x9a6850, region: "oort", hasSurface: true,
+    helio: { a: 885.6392042956377, e: 0.9434998543678843, i: 4.214168393595276, node: 29.60226036109862, peri: 31.72296787384228, M0: 359.2537064694565 },
+  },
+
+  // ── More comets (spacecraft targets, meteor-shower parents & great comets) ──
+  // Like 1P/Halley & 2P/Encke above, these keep kind "comet" and carry NO region:
+  // a region tags where a body ORBITS now (the navigator's belt/Kuiper/Oort
+  // grouping), and a comet's whole nature is that it has been flung in from its
+  // source reservoir onto an inner-system orbit. Jupiter-family comets (the low-i,
+  // ~6 yr group below) descend from the scattered disc; the steeply-inclined
+  // Halley-types (55P/109P/12P) and Hale–Bopp descend from the Oort cloud — but
+  // none of them sits there now, so they are grouped by kind, not by region.
+  {
+    id: "tempel1", name: "9P/Tempel 1", parent: "sun", mu: 3.774228e+3, radius: 3.000000e+3,
+    kind: "comet", color: 0xcfd8e0, hasSurface: true,
+    helio: { a: 3.118336628490742, e: 0.518959038578271, i: 10.54138826897671, node: 68.96688418061288, peri: 178.9110289310209, M0: 359.8000832105448 },
+  },
+  {
+    id: "wild2", name: "81P/Wild 2", parent: "sun", mu: 1.118290e+3, radius: 2.000000e+3,
+    kind: "comet", color: 0xc7d2dc, hasSurface: true,
+    helio: { a: 3.445354317035957, e: 0.5386326375312492, i: 3.240177118525407, node: 136.1432871408561, peri: 41.88735456365148, M0: 149.6836086188995 },
+  },
+  {
+    id: "churyumov", name: "67P/Churyumov–Gerasimenko", parent: "sun", mu: 6.622e+2, radius: 1.700000e+3,
+    kind: "comet", color: 0xcfd8e0, hasSurface: true,
+    helio: { a: 3.51099974617797, e: 0.6314091826603773, i: 7.122338008973926, node: 50.99112348870829, peri: 11.3501620274385, M0: 216.2283918701555 },
+  },
+  {
+    id: "giacobini", name: "21P/Giacobini–Zinner", parent: "sun", mu: 1.397862e+2, radius: 1.000000e+3,
+    kind: "comet", color: 0xc7d2dc, hasSurface: true,
+    helio: { a: 3.522296085403499, e: 0.7063365861614467, i: 31.85778518127124, node: 195.3982494425629, peri: 172.5606730577457, M0: 60.59949260496183 },
+  },
+  {
+    id: "hartley2", name: "103P/Hartley 2", parent: "sun", mu: 7.157054e+1, radius: 8.000000e+2,
+    kind: "comet", color: 0xd2dbe2, hasSurface: true,
+    helio: { a: 3.446275654068535, e: 0.7005469035445803, i: 13.6240974247176, node: 219.932892465384, peri: 180.7804680053928, M0: 114.0507501256008 },
+  },
+  {
+    id: "borrelly", name: "19P/Borrelly", parent: "sun", mu: 1.932405e+3, radius: 2.400000e+3,
+    kind: "comet", color: 0xc7d2dc, hasSurface: true,
+    helio: { a: 3.612539487003933, e: 0.6236446231553225, i: 30.32078905614673, node: 75.41876136254261, peri: 353.333048076214, M0: 270.6889987666727 },
+  },
+  {
+    id: "tempeltuttle", name: "55P/Tempel–Tuttle", parent: "sun", mu: 8.152332e+2, radius: 1.800000e+3,
+    kind: "comet", color: 0xcfd8e0, hasSurface: true,
+    helio: { a: 10.32774836665759, e: 0.9053369798161823, i: 162.4891691926437, node: 235.2659360366994, peri: 172.5168273200271, M0: 19.97113392812815 },
+  },
+  {
+    id: "ponsbrooks", name: "12P/Pons–Brooks", parent: "sun", mu: 6.867697e+5, radius: 1.700000e+4,
+    kind: "comet", color: 0xbfe0d8, hasSurface: true,
+    helio: { a: 16.9914439659665, e: 0.9540857702946376, i: 74.82114940431609, node: 256.1429641204611, peri: 199.0065241942018, M0: 235.2135790382731 },
+  },
+  {
+    id: "swifttuttle", name: "109P/Swift–Tuttle", parent: "sun", mu: 3.071103e+5, radius: 1.300000e+4,
+    kind: "comet", color: 0xd2dbe2, hasSurface: true,
+    helio: { a: 26.34271940569137, e: 0.9631624069830728, i: 113.3406285992539, node: 139.5133225675405, peri: 153.2379818767868, M0: 18.77942625229999 },
+  },
+  {
+    id: "halebopp", name: "C/1995 O1 (Hale–Bopp)", parent: "sun", mu: 3.774228e+6, radius: 3.000000e+4,
+    kind: "comet", color: 0xdfe6ec, hasSurface: true,
+    helio: { a: 180.4854165722298, e: 0.99493578407957, i: 89.42843189911119, node: 282.3414899912315, peri: 130.5650117304499, M0: 0.4087156982535376 },
   },
 
   // ── Major crewed/scientific satellites in Earth orbit ────────────────────────

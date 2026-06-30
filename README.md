@@ -31,7 +31,7 @@ that no amount of engineering can wish away.
 **Phases 1–6 + core-mechanics expansion complete** — a deterministic physics engine and a
 flyable, to-scale 3D Solar System.
 
-- Real JPL ephemeris for **110 bodies** — the 8 planets; the dwarf planets and large TNOs; a
+- Real JPL ephemeris for **130 bodies** — the 8 planets; the dwarf planets and large TNOs; a
   deep moon roster (the Galileans plus Jupiter's inner Amalthea group and classical irregulars;
   Titan + the major Saturnians plus the ring-shepherds, co-orbitals, Hyperion and Phoebe; the
   five major Uranians plus Puck, Portia, Cressida and the irregular Caliban/Sycorax; Triton plus
@@ -40,8 +40,11 @@ flyable, to-scale 3D Solar System.
   populations — the **main asteroid belt** (Ceres, Vesta, Psyche, … 18 in all), **near-Earth
   asteroids** (433 Eros, Bennu, Ryugu, Itokawa, Apophis), the **Jupiter Trojans** (Hektor,
   Patroclus, …), the **Kuiper belt** (Pluto, Quaoar, Orcus, Varuna, Ixion, …), the **scattered
-  disc** (Eris, Gonggong) and a taste of the **inner Oort cloud** (Sedna, Leleākūhonua);
-  comets (1P/Halley, 2P/Encke); and the major man-made satellites (ISS, Hubble, Tiangong).
+  disc** (Eris, Gonggong, Chiminigagua, Gǃkúnǁʼhomdímà, Rumina, … 8 in all) and the **inner Oort
+  cloud** of detached sednoids (Sedna, Leleākūhonua, 2012 VP113, Alicanto, … 6 in all);
+  twelve comets — spacecraft targets (67P/Churyumov–Gerasimenko, 81P/Wild 2, 9P/Tempel 1),
+  meteor-shower parents (55P/Tempel–Tuttle, 109P/Swift–Tuttle) and great comets (Hale–Bopp)
+  alongside 1P/Halley and 2P/Encke; and the major man-made satellites (ISS, Hubble, Tiangong).
   Every orbit is a real Horizons J2000 osculating conic, propagated analytically (exact at any
   time-warp) and cross-checked at J2000 vs Horizons; GM/radius/rotation are Horizons physical
   parameters where published.
@@ -169,7 +172,7 @@ Controls:
 | Space | Pause / resume |
 | `,` / `.` | Slower / faster time-warp |
 | `1`–`8` | Focus Sun, Mercury, Venus, Earth, Moon, Mars, Jupiter, Saturn |
-| Tab / Shift+Tab | Cycle focus forward / backward through all 110 bodies |
+| Tab / Shift+Tab | Cycle focus forward / backward through all 130 bodies |
 | `F` | Toggle ship designer & flight console |
 | `V` | Cycle camera view angle (isometric → top-down → edge-on) |
 | `M` | Toggle system ⇄ interstellar view |
