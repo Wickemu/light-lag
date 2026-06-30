@@ -154,6 +154,7 @@ export class ShipPanel {
   private fidelityEl!: HTMLElement;
   private fidelityReadout!: HTMLElement;
   private fidelityBtn!: HTMLButtonElement;
+  private fidelityHoldBtn!: HTMLButtonElement;
   private dockEl!: HTMLElement;
   private dockReadout!: HTMLElement;
   private dockSelect!: HTMLSelectElement;
@@ -413,6 +414,10 @@ export class ShipPanel {
     this.fidelityBtn.className = "wide-btn";
     this.fidelityBtn.title = "Fly this ship under continuous third-body gravity (Sun/Moon on a high orbit, Earth at an L-point) instead of the default two-body coast. Toggle the Perturbed layer to also see the forecast arc.";
     this.fidelityEl.appendChild(this.fidelityBtn);
+    this.fidelityHoldBtn = button("⚓ Hold station", () => this.doHold());
+    this.fidelityHoldBtn.className = "wide-btn";
+    this.fidelityHoldBtn.title = "Spend Δv to actively HOLD this point/orbit against the third-body drift — an L-point or a high orbit is not kept for free. The ship drifts off once it can no longer afford the correction.";
+    this.fidelityEl.appendChild(this.fidelityHoldBtn);
     host.appendChild(this.fidelityEl);
 
     this.dockEl = el("div", "surface-ops");
@@ -994,11 +999,31 @@ export class ShipPanel {
     const eligible = !!body && ship.mode === "coast" && !ship.landed && !ship.interstellarLeg
       && !ship.entryLeg && !ship.approachLeg && !ship.spiral && !ship.launchLeg && !ship.descentLeg
       && !(ship.transfer && !ship.transfer.arrived);
+    // Station-keeping is offered for any coasting ship; on an L-point arrival it holds the
+    // point, otherwise it holds the current orbit.
+    const canHold = eligible && !ship.landed;
+    this.fidelityHoldBtn.style.display = canHold ? "" : "none";
     this.fidelityEl.style.display = eligible ? "block" : "none";
     if (!eligible || !body) return;
     const on = ship.fidelity === "perturbed";
+    const sk = ship.stationKeep;
     this.fidelityBtn.textContent = on ? "✦ Stop perturbed" : "✦ Fly perturbed";
+    this.fidelityHoldBtn.textContent = sk ? "⚓ Release station" : "⚓ Hold station";
 
+    if (sk) {
+      // Holding: show the target, the cost, and the projected annual budget.
+      const target = sk.kind === "lagrange"
+        ? `${BODY_BY_ID.get(sk.secondaryId ?? "")?.name ?? sk.secondaryId ?? "?"} ${sk.point ?? ""}`.trim()
+        : "current orbit";
+      const perYear = sk.windowS > 0 ? sk.lastDv * (JULIAN_YEAR / sk.windowS) : 0;
+      this.fidelityReadout.innerHTML =
+        kv("Station-keeping", sk.holding ? `holding ${target}` : `FAILED — drifting off ${target}`) +
+        kv("Δv spent", `${sk.dvSpent.toFixed(1)} m/s`) +
+        kv("Hold cost", sk.lastDv > 0 ? `${sk.lastDv.toFixed(2)} m/s / ${(sk.windowS / DAY).toFixed(0)} d  (≈${perYear.toFixed(0)} m/s/yr)` : "—");
+      return;
+    }
+
+    // Not holding: show the dominant third body's tidal share of the central pull.
     const rel = shipRelativeState(ship, t);
     const d = Math.max(length(rel.r), 1);
     const central = body.mu / (d * d);
@@ -1024,6 +1049,21 @@ export class ShipPanel {
     if (!ship) return;
     if (ship.fidelity === "perturbed") this.sim.stopPerturbed(id);
     else this.sim.flyPerturbed(id);
+  }
+
+  private doHold(): void {
+    const id = this.selectedId;
+    if (!id) return;
+    const ship = this.sim.world.ships.get(id);
+    if (!ship) return;
+    if (ship.stationKeep) { this.sim.releaseStation(id); return; }
+    // Hold the L-point if the ship arrived at one; otherwise hold its current orbit.
+    const arr = ship.transfer?.arrival;
+    if (arr?.kind === "lagrange" && ship.transfer) {
+      this.sim.holdStation(id, { kind: "lagrange", secondaryId: ship.transfer.targetId, point: arr.point, central: ship.transfer.central });
+    } else {
+      this.sim.holdStation(id, { kind: "orbit" });
+    }
   }
 }
 

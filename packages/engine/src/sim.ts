@@ -20,7 +20,7 @@
  *    chunkings only by the per-step truncation (~sub-metre, see serialize.ts).
  */
 
-import { type WorldState, type Ship, type ShipBurn, type ShipCommand, type BurnDir, type BurnGoal } from "./world.ts";
+import { type WorldState, type Ship, type ShipBurn, type ShipCommand, type BurnDir, type BurnGoal, type StationKeep, type LagrangePoint } from "./world.ts";
 import { EventQueue, WARP_LEVELS, type SimEvent } from "./time.ts";
 import { rk4 } from "./math/integrators.ts";
 import { orbitFrame, hyperbolicBurnDv, periapsisRadius, soiRadius, visVivaSpeed, j2Rates, synchronousRadius, combinedPlaneChangeDv, inclinationToEquator, spinPole } from "./orbit.ts";
@@ -31,7 +31,7 @@ import {
 import { selectPerturbers, type Perturber } from "./perturbed.ts";
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
-import { type KeplerElements, stateToElements, meanMotion, wrapTwoPi } from "./math/kepler.ts";
+import { type KeplerElements, type State, stateToElements, elementsToState, propagate, meanMotion, wrapPi, wrapTwoPi } from "./math/kepler.ts";
 import { bodyState, bodyElements, bodyStateRelative } from "./ephemeris.ts";
 import { signalArrival } from "./comms.ts";
 import { aimArrival, aimMoonArrival } from "./maneuver/arrival.ts";
@@ -64,6 +64,10 @@ const PERTURBED_LEG_HORIZON = 30 * 86400; // 30 days
  *  acceleration is below this fraction of the central pull — keeps the integrated set
  *  small (e.g. Moon+Sun at GEO, not every planet) without losing the dominant terms. */
 const PERTURBED_SELECT_THRESHOLD = 1e-5;
+/** Default station-keeping correction cadence (the perturbed-leg horizon while holding).
+ *  Shorter than the free-drift horizon: a tighter deadband corrects more often, so the
+ *  drift per window — and the Δv it costs — stays small for an unstable point. */
+const STATIONKEEP_WINDOW = 7 * 86400; // 7 days
 
 /** Replace a Map's contents in place (keeps the same Map instance). */
 function copyMap<V>(dst: Map<string, V>, src: Map<string, V>): void {
@@ -1418,6 +1422,7 @@ export class Simulation {
     const ship = this.world.ships.get(shipId);
     if (!ship) return;
     ship.fidelity = undefined;
+    ship.stationKeep = undefined; // station-keeping rides on perturbed legs; it can't run without them
     if (ship.perturbedLeg) {
       const st = shipRelativeState(ship, this.world.t);
       ship.elements = stateToElements(st.r, st.v, primaryMu(ship));
@@ -1458,20 +1463,107 @@ export class Simulation {
     return true;
   }
 
-  /** End a perturbed-coast leg: re-osculate onto a fresh conic from the leg's exit state
-   *  and, while still in perturbed mode, re-arm the next bounded chunk — so the perturbed
-   *  flight continues indefinitely without ever storing an unbounded spline. */
+  /** End a perturbed-coast leg. With a station-keeping hold active, charge the correction
+   *  Δv that returns the ship from its drifted exit to the nominal target — re-seating it
+   *  on the nominal and re-arming, UNLESS it can't afford it (then the hold fails and it
+   *  drifts on). Without a hold, just re-osculate on the drifted exit and, while still in
+   *  perturbed mode, re-arm the next bounded chunk. */
   private finalizePerturbed(ship: Ship): void {
     const leg = ship.perturbedLeg;
     if (!leg) return;
     const t = this.world.t; // == leg.tEnd
-    ship.elements = stateToElements(leg.exitR, leg.exitV, primaryMu(ship));
-    ship.epoch = t;
+    const mu = primaryMu(ship);
     ship.perturbedLeg = undefined;
     ship.mode = "coast";
     ship.r = undefined;
     ship.v = undefined;
+
+    // Station-keeping: pay to return to the nominal target, or fail and drift.
+    const sk = ship.stationKeep;
+    if (sk && sk.holding) {
+      const nom = this.stationNominalState(ship, sk, t);
+      if (nom) {
+        // Velocity-restore correction (deadband: the small position drift is re-seated for
+        // free, mirroring arriveAtLagrange's velocity-match — a documented abstraction).
+        const holdDv = length(sub(leg.exitV, nom.v));
+        if (applyImpulsiveDv(ship, holdDv)) {
+          sk.dvSpent += holdDv;
+          sk.lastDv = holdDv;
+          ship.elements = stateToElements(nom.r, nom.v, mu);
+          ship.epoch = t;
+          this.armPerturbedLeg(ship, t, { horizon: sk.windowS });
+          return;
+        }
+        sk.holding = false; // can't afford the correction — station-keeping has failed
+      } else {
+        sk.holding = false; // nominal target unresolvable — stop holding
+      }
+    }
+
+    // Default / failed-hold: re-osculate on the drifted exit and keep drifting if perturbed.
+    ship.elements = stateToElements(leg.exitR, leg.exitV, mu);
+    ship.epoch = t;
     if (ship.fidelity === "perturbed") this.armPerturbedLeg(ship, t);
+  }
+
+  // ── Δv-accounted station-keeping (the player-ship paid hold) ──────────────────
+
+  /** The nominal target state (body-relative, in the ship's primary frame) a hold tracks:
+   *  a co-moving L-point (`lagrangeState`), or a fixed orbit advanced by Kepler + secular
+   *  J2. Null if the target can't be resolved. */
+  private stationNominalState(ship: Ship, sk: StationKeep, t: number): State | null {
+    if (sk.kind === "lagrange") {
+      const secondary = sk.secondaryId ? BODY_BY_ID.get(sk.secondaryId) : undefined;
+      if (!secondary || !sk.point) return null;
+      const geocentric = sk.central !== undefined && sk.central !== "sun";
+      return geocentric ? lagrangeStateRelative(secondary, sk.point, t) : lagrangeState(secondary, sk.point, t);
+    }
+    if (!sk.nominal || sk.nominalEpoch === undefined) return null;
+    const body = BODY_BY_ID.get(ship.primary);
+    if (!body) return null;
+    const dt = t - sk.nominalEpoch;
+    const el = propagate(sk.nominal, body.mu, dt);
+    if (body.J2 && el.e < 1) {
+      const r = j2Rates(body.mu, j2RefRadius(body), body.J2, el.a, el.e, el.i);
+      el.Omega = wrapPi(el.Omega + r.nodeDot * dt);
+      el.omega = wrapPi(el.omega + r.periDot * dt);
+      el.M = wrapPi(el.M + r.anomalyDot * dt);
+    }
+    return elementsToState(el, body.mu);
+  }
+
+  /**
+   * Engage Δv-accounted station-keeping: the ship spends propellant each correction window
+   * to hold `target` against the third-body drift the perturbed model reveals, and drifts
+   * off once it can no longer afford the hold. Runs ON TOP of perturbed flight (arms a
+   * short-horizon perturbed leg). `target` is an L-point (nominal from `lagrangeState`) or
+   * the ship's current orbit (`{kind:"orbit"}`). Returns false if it can't be armed
+   * (thrusting, on another leg, landed, mid-transfer).
+   */
+  holdStation(
+    shipId: string,
+    target: { kind: "lagrange"; secondaryId: string; point: LagrangePoint; central?: string } | { kind: "orbit" },
+    opts: { windowS?: number } = {},
+  ): boolean {
+    const ship = this.world.ships.get(shipId);
+    if (!ship) return false;
+    const windowS = Math.max(3600, opts.windowS ?? STATIONKEEP_WINDOW);
+    const sk: StationKeep = target.kind === "lagrange"
+      ? { kind: "lagrange", secondaryId: target.secondaryId, point: target.point, central: target.central,
+          dvSpent: 0, lastDv: 0, windowS, holding: true }
+      : { kind: "orbit", nominal: shipOsculatingElements(ship, this.world.t), nominalEpoch: this.world.t,
+          dvSpent: 0, lastDv: 0, windowS, holding: true };
+    ship.stationKeep = sk;
+    ship.fidelity = "perturbed";
+    const armed = this.armPerturbedLeg(ship, this.world.t, { horizon: windowS });
+    if (!armed) ship.stationKeep = undefined; // couldn't start — leave no dangling hold
+    return armed;
+  }
+
+  /** Stop station-keeping; the ship reverts to a plain game-mode coast (also stops the
+   *  underlying perturbed flight). */
+  releaseStation(shipId: string): void {
+    this.stopPerturbed(shipId); // clears stationKeep + perturbedLeg, re-osculates onto a conic
   }
 
   /** Circularize a same-primary GEO raise at apoapsis: a combined burn that circularizes at the

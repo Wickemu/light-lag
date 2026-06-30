@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is the `@lightlag/engine` workspace package
-(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 752 passing
+(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 758 passing
 physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
@@ -74,7 +74,16 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-*(Most recent: **higher-fidelity propagation — the explicit fidelity-mode framework + third-body
+*(Most recent: **Δv-accounted station-keeping — holding a point is no longer free.** Building on the
+perturbed tier, a ship can now `holdStation` an L-point or a high orbit: it spends correction Δv
+each window to cancel the third-body drift and **drifts off once it can't afford it** (the "not for
+free" consequence — e.g. a sim must ensure a craft has the propulsion to maintain L2). `Ship.stationKeep`
++ `Simulation.holdStation`/`releaseStation`; charged impulsively at the leg finalize ⇒ chunk-invariant
+and golden-hash-neutral; surfaced in the flight-console FIDELITY block (target, Δv spent, ≈Δv/yr).
+Validated: a held GEO orbit holds its inclination for ~hundreds of m/s/yr while an unheld one drifts;
+a held Sun–Earth L2 craft stays on-point where an unheld one wanders ~1900 Mm in 40 days. The free
+catalog-satellite `stationKept` model is unchanged. See the "Player-ship station-keeping" backlog
+entry. The round before: **higher-fidelity propagation — the explicit fidelity-mode framework + third-body
 perturbed arcs** (the single biggest realism gap, from `docs/physics-assessment.md` §B-1). Three
 named tiers — **game** (default, untouched), **perturbed** (a ship flown under continuous
 third-body gravity via `Ship.fidelity` + a `PerturbedLeg`), and **high-fidelity planning** (the
@@ -505,17 +514,28 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   for max fidelity is to keep the `SatRec` and propagate satellites through SGP4 itself
   (app-layer, not engine ships) — collapses drift to the irreducible SGP4-vs-reality
   floor at the cost of serialize/replay determinism for those objects.
-- **Player-ship station-keeping (Δv-accounted)** — `Ship.stationKept` today is the FREE,
-  implicit-burn model: `coastElements` simply suppresses the drag decay. Correct for
-  catalog satellites (maintained in reality, no propellant we track), but a player-built
-  ship that one day experiences drag (rung-2, once player orbits are drag-flagged) should
-  instead PAY for it: automatically spend preserved Δv to hold its orbit, sized from the
-  orbit's natural decay rate (`drag.nDot` → an along-track/SMA make-up budget, ~the drag
-  Δv per year at that altitude). Surface the reserved station-keeping Δv in the ship
-  console and refuse/age-out a ship that can no longer afford to hold station (it then
-  reverts to an un-kept decaying coast → eventual reentry via the existing
-  `impactTime`/`crashShip` path). Until player orbits carry drag, there is nothing to
-  counter, so this is purely future work.
+- **Player-ship station-keeping (Δv-accounted)** — **DONE (first cut), driven by
+  third-body drift.** `Ship.stationKept` remains the FREE, implicit-burn model for catalog
+  satellites (`coastElements` suppresses drag decay; no propellant tracked). The PLAYER
+  paid model now exists as `Ship.stationKeep` + `Simulation.holdStation`/`releaseStation`
+  (`sim.ts`): a ship actively spends Δv each correction window to hold a nominal target
+  against the third-body drift the perturbed model reveals, and **drifts off once it can
+  no longer afford the hold** (`holding=false` → the uncontrolled perturbed leg takes over
+  → possible reentry via the existing `impactTime`/`crashShip` path). It runs ON TOP of the
+  perturbed leg: each window is a short `PerturbedLeg` that drifts off, then a correction
+  Δv (a velocity-restore to the nominal, the deadband generalization of `arriveAtLagrange`'s
+  velocity match) is charged via `applyImpulsiveDv` and the ship re-seated on the nominal.
+  Two target kinds: an **L-point** (nominal from `lagrangeState`) and a **high orbit**
+  (nominal = the arrived orbit, advanced by Kepler + secular J2). The flight console's
+  FIDELITY block surfaces the hold target, Δv spent, and the projected Δv/yr; charged
+  impulsively at the finalize event so it stays chunk-invariant and (opt-in ⇒) golden-hash
+  neutral. Validated: a held GEO orbit holds its inclination for ~tens-to-hundreds of m/s/yr
+  while an unheld one drifts; a held Sun–Earth L2 craft stays on-point where an unheld one
+  wanders ~1900 Mm in 40 days; a small-tank craft runs out and drifts off. **Still to do:**
+  this is driven by third-body drift, not yet by *atmospheric drag* — wiring it to
+  `drag.nDot` (sized from the orbit's natural decay) once player orbits are drag-flagged
+  (rung-2) is the remaining half; plus a position-correction term (the deadband re-seats the
+  small position drift for free today) and an auto-engage option.
 - **Spacecraft hazards & lifecycle** — surface-impact loss is DONE for coasting conics
   (`sim.impactTime`/`crashShip`: a ship whose orbit dips below the primary's radius is
   destroyed at the analytic surface crossing and frozen as a wreck). Follow-ups:
