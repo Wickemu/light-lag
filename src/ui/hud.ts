@@ -197,14 +197,17 @@ export class Hud {
     // Note: do NOT clear this.root here — other overlays (ship labels, panels)
     // share #ui-root and would be wiped.
 
-    // Compact wordmark (top-left). The subtitle moved to the Help overlay; the
-    // mark just anchors the corner now that the controls live on the right.
-    const header = el("div", "panel header");
-    header.innerHTML = `<div class="title">LIGHTLAG</div>`;
-    this.root.appendChild(header);
+    // One full-width header bar anchored across the top — wordmark (left), the
+    // clock + time-warp (centre), and the control cluster (right) — instead of
+    // three separate floating cards. The side docks anchor flush to the edges
+    // below it (see styles.css), so the chrome reads as a built-in frame.
+    const topbar = el("div", "topbar");
 
-    // Clock + warp (top centre) — the one always-critical global control.
-    const clock = el("div", "panel clock");
+    const brand = el("div", "topbar-brand");
+    brand.innerHTML = `<div class="title">LIGHTLAG</div>`;
+    topbar.appendChild(brand);
+
+    const clock = el("div", "topbar-clock");
     this.dateEl = el("div", "date");
     this.warpEl = el("div", "warp");
     const warpRow = el("div", "warp-row");
@@ -213,12 +216,13 @@ export class Hud {
     const up = button("»", () => this.sim.cycleWarp(1));
     warpRow.append(down, this.pauseBtn, up, this.warpEl);
     clock.append(this.dateEl, warpRow);
-    this.root.appendChild(clock);
+    topbar.appendChild(clock);
 
-    // Top-right control cluster: the scene's chrome, gathered into one card
-    // instead of scattered loose icons — view switch, a Layers popover (the
-    // cross-cutting overlay toggles), theme, and help.
-    this.root.appendChild(this.buildTopCluster());
+    // Right control cluster: view switch, a Layers popover, the theme picker and
+    // help (the Sandbox opener joins these from sandboxPanel.ts).
+    topbar.appendChild(this.buildTopCluster());
+
+    this.root.appendChild(topbar);
 
     // Right "Navigation" dock: the body selector (scrolls — 43 bodies overflow)
     // with the focused-body readout pinned beneath it, so you pick and inspect in
@@ -339,7 +343,7 @@ export class Hud {
 
   /** The top-right control cluster: view switch, Layers popover, theme, help. */
   private buildTopCluster(): HTMLElement {
-    const cluster = el("div", "panel top-cluster");
+    const cluster = el("div", "topbar-controls");
 
     // System ⇄ Interstellar segmented toggle (keyboard: M).
     const seg = el("div", "view-switch");
