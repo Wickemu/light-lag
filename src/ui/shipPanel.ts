@@ -121,6 +121,8 @@ export class ShipPanel {
   // The Maneuver controls live in a bottom-centre pop-out, toggled from the bar.
   private maneuverBtn!: HTMLButtonElement;
   private maneuverPanel!: HTMLElement;
+  // Contextual surface action in the command bar — shows Land OR Launch (or neither).
+  private surfaceActionEl!: HTMLElement;
 
   // Instruments.
   private nameEl!: HTMLElement;
@@ -144,6 +146,10 @@ export class ShipPanel {
   private thermTable!: StatTable; private thermKeys = new Set<string>();
   private commsTable!: StatTable; private commsKeys = new Set<string>();
   private xferTable!: StatTable; private xferKeys = new Set<string>();
+  // Rich in-tab gauges: a hull-temp dial + detectability bar (Heat), drive power (Drive).
+  private hullGauge!: RadialGauge;
+  private irMeter!: Meter;
+  private drivePowerMeter!: Meter;
   /** Reference Δv (the most a ship has had) so the Δv bar reads as "fuel for maneuvering". */
   private maxDv = new Map<string, number>();
 
@@ -272,10 +278,20 @@ export class ShipPanel {
     this.detailTabs = tabs({ id: "console" });
     this.navTable = this.makeTable(this.detailTabs.add("nav", "Nav"),
       ["Frame", "Distance from Sun", "Orbiting", "Periapsis", "Apoapsis", "Period", "Node precession", "Apsidal precession"]);
-    this.propTable = this.makeTable(this.detailTabs.add("drive", "Drive"),
-      ["Mass", "Active stage", "Drive power", "Drive thrust", "Spiraling"]);
-    this.thermTable = this.makeTable(this.detailTabs.add("heat", "Heat"),
-      ["Solar flux", "Hull temp", "IR signature", "Detectable to", "Min signal", "Waste heat", "Radiator"]);
+    const drivePane = this.detailTabs.add("drive", "Drive");
+    this.drivePowerMeter = meter("Drive power", { term: false });
+    drivePane.appendChild(this.drivePowerMeter.root);
+    this.propTable = this.makeTable(drivePane,
+      ["Mass", "Active stage", "Drive thrust", "Spiraling"]);
+
+    const heatPane = this.detailTabs.add("heat", "Heat");
+    const heatGauges = el("div", "tab-gauges");
+    this.hullGauge = radialGauge({ size: 70, label: "Hull K" });
+    this.irMeter = meter("Detectability", { term: false });
+    heatGauges.append(this.hullGauge.root, this.irMeter.root);
+    heatPane.appendChild(heatGauges);
+    this.thermTable = this.makeTable(heatPane,
+      ["Solar flux", "Detectable to", "Min signal", "Waste heat", "Radiator"]);
     this.commsTable = this.makeTable(this.detailTabs.add("comms", "Comms"),
       ["Doppler", "Order ETA"]);
     this.xferTable = this.makeTable(this.detailTabs.add("route", "Route"),
@@ -288,6 +304,19 @@ export class ShipPanel {
     // into one "Transfer" group (System ⇄ Stellar); the burn console moves to a
     // pop-out opened from Maneuver; delete demotes to a quiet icon.
     this.actionsEl = el("div", "command-bar");
+
+    // Contextual surface action — updateSurfaceOps shows exactly one of Land /
+    // Launch when the ship is over a landable body or sitting on a surface, and
+    // neither otherwise. Lives first (next to Transfer) as the primary verb.
+    this.surfaceActionEl = el("div", "cmd-surface");
+    this.landBtn = button("Land", () => this.doLand());
+    this.landBtn.className = "cmd-btn cmd-primary";
+    this.launchBtn = button("Launch", () => this.doLaunch());
+    this.launchBtn.className = "cmd-btn cmd-primary";
+    this.landBtn.style.display = "none";
+    this.launchBtn.style.display = "none";
+    this.surfaceActionEl.append(this.landBtn, this.launchBtn);
+    this.actionsEl.appendChild(this.surfaceActionEl);
 
     const xferGroup = el("div", "cmd-group");
     xferGroup.appendChild(el("div", "cmd-label", "Transfer"));
@@ -304,13 +333,13 @@ export class ShipPanel {
     this.maneuverBtn.className = "cmd-btn cmd-grow";
     this.actionsEl.appendChild(this.maneuverBtn);
 
-    this.warpDepartBtn = button("⏩ Warp", () => this.warpToDeparture());
+    this.warpDepartBtn = button("Warp", () => this.warpToDeparture());
     this.warpDepartBtn.className = "cmd-btn";
     this.warpDepartBtn.style.display = "none";
     this.actionsEl.appendChild(this.warpDepartBtn);
 
-    this.deleteBtn = button("🗑", () => this.doDelete());
-    this.deleteBtn.className = "cmd-icon danger";
+    this.deleteBtn = button("Delete", () => this.doDelete());
+    this.deleteBtn.className = "cmd-btn cmd-del danger";
     this.deleteBtn.title = "Remove this ship from the simulation. Cannot be undone.";
     this.actionsEl.appendChild(this.deleteBtn);
 
@@ -419,13 +448,12 @@ export class ShipPanel {
     this.surfaceAltInput.value = "200";
     this.surfaceAltInput.min = "0";
     this.surfaceAltInput.className = "dv-input";
+    // The landing-target altitude stays with the surface readout; the Land/Launch
+    // actions themselves live in the command bar (built once a ship is selected).
     surfRow.append(el("span", "dv-label", "orbit (km)"), this.surfaceAltInput);
-    this.landBtn = button("⬇ Land", () => this.doLand());
-    this.launchBtn = button("⬆ Launch", () => this.doLaunch());
-    surfRow.append(this.landBtn, this.launchBtn);
     this.surfaceEl.appendChild(surfRow);
     const entryRow = el("div", "dv-row");
-    this.flyEntryBtn = button("🜂 Fly entry", () => this.doFlyEntry());
+    this.flyEntryBtn = button("Fly entry", () => this.doFlyEntry());
     entryRow.append(this.flyEntryBtn);
     this.surfaceEl.appendChild(entryRow);
     host.appendChild(this.surfaceEl);
@@ -438,7 +466,7 @@ export class ShipPanel {
     this.spiralAltInput.value = "35786"; // GEO
     this.spiralAltInput.min = "0";
     this.spiralAltInput.className = "dv-input";
-    this.spiralBtn = button("⟳ Spiral", () => this.doSpiral());
+    this.spiralBtn = button("Spiral", () => this.doSpiral());
     elRow.append(el("span", "dv-label", "to (km)"), this.spiralAltInput, this.spiralBtn);
     this.electricEl.appendChild(elRow);
     host.appendChild(this.electricEl);
@@ -447,11 +475,11 @@ export class ShipPanel {
     this.fidelityEl.appendChild(sectionLabel("FIDELITY"));
     this.fidelityReadout = el("div", "surface-readout");
     this.fidelityEl.appendChild(this.fidelityReadout);
-    this.fidelityBtn = button("✦ Fly perturbed", () => this.doFidelity());
+    this.fidelityBtn = button("Fly perturbed", () => this.doFidelity());
     this.fidelityBtn.className = "wide-btn";
     this.fidelityBtn.title = "Fly this ship under continuous third-body gravity (Sun/Moon on a high orbit, Earth at an L-point) instead of the default two-body coast. Toggle the Perturbed layer to also see the forecast arc.";
     this.fidelityEl.appendChild(this.fidelityBtn);
-    this.fidelityHoldBtn = button("⚓ Hold station", () => this.doHold());
+    this.fidelityHoldBtn = button("Hold station", () => this.doHold());
     this.fidelityHoldBtn.className = "wide-btn";
     this.fidelityHoldBtn.title = "Spend Δv to actively HOLD this point/orbit against the third-body drift — an L-point or a high orbit is not kept for free. The ship drifts off once it can no longer afford the correction.";
     this.fidelityEl.appendChild(this.fidelityHoldBtn);
@@ -471,11 +499,11 @@ export class ShipPanel {
     this.dockAmountInput.placeholder = "max";
     this.dockAmountInput.min = "0";
     this.dockAmountInput.className = "dv-input";
-    this.receiveBtn = button("⛽ Receive", () => this.doTransfer("receive"));
-    this.sendBtn = button("⛽ Send", () => this.doTransfer("send"));
+    this.receiveBtn = button("Receive", () => this.doTransfer("receive"));
+    this.sendBtn = button("Send", () => this.doTransfer("send"));
     dockRow.append(el("span", "dv-label", "prop (t)"), this.dockAmountInput, this.receiveBtn, this.sendBtn);
     this.dockEl.appendChild(dockRow);
-    this.assembleBtn = button("⊕ Assemble (merge)", () => this.doAssemble());
+    this.assembleBtn = button("Assemble (merge)", () => this.doAssemble());
     this.assembleBtn.className = "wide-btn";
     this.assembleBtn.title = "Dock-merge the selected ship into this one — its stages and payload join this vehicle and it is consumed. In-orbit construction; cannot be undone.";
     this.dockEl.appendChild(this.assembleBtn);
@@ -707,7 +735,7 @@ export class ShipPanel {
     this.warpDepartBtn.style.display = planned ? "block" : "none";
     if (planned) {
       setDisabled(this.warpDepartBtn, this.sim.anyThrust(), "Can't skip time while a burn is running.");
-      this.warpDepartBtn.textContent = `⏩ Warp to ${formatDate(tr!.tDepart)}`;
+      this.warpDepartBtn.textContent = `Warp to ${formatDate(tr!.tDepart)}`;
     }
     setDisabled(this.planBtn, ship.primary === "sun" || !!leg || !!ship.landed || (!!tr && tr.departed),
       ship.landed ? "Launch to a parking orbit first." : "Plan a transfer only from a parking orbit around a body (not mid-transfer or interstellar).");
@@ -768,8 +796,15 @@ export class ShipPanel {
       const power = availablePowerW(stage.electric, rHelio);
       const thr = thrustAt(stage, rHelio);
       const accel = thr / totalMass(ship);
-      rows.push({ key: "Drive power", value: `${(power / 1000).toFixed(2)} kW${stage.electric.solar ? ` @ ${(rHelio / AU).toFixed(2)} AU` : " (reactor)"}` });
+      // Drive power is the gauge atop the Drive tab (vs rated — shows solar falloff).
+      this.drivePowerMeter.set(power / Math.max(stage.electric.powerW, 1), {
+        text: fmtPower(power) + (stage.electric.solar ? ` @ ${(rHelio / AU).toFixed(2)} AU` : " · reactor"),
+        state: "info",
+      });
+      this.drivePowerMeter.root.style.display = "";
       rows.push({ key: "Drive thrust", value: `${(thr * 1000).toFixed(1)} mN · ${(accel * 1e6).toFixed(2)} mm/s²` });
+    } else {
+      this.drivePowerMeter.root.style.display = "none";
     }
     if (ship.spiral) {
       const left = (ship.spiral.tEnd - t) / DAY;
@@ -779,10 +814,15 @@ export class ShipPanel {
   }
 
   private fillThermal(th: ReturnType<typeof shipThermalState>): void {
+    // Hull temp + detectability are the gauges atop the Heat tab (not table rows).
+    this.hullGauge.set(Math.min(1, th.hullTempK / 600), {
+      text: th.hullTempK.toFixed(0),
+      state: th.hullTempK < 320 ? "ok" : th.hullTempK < 450 ? "warn" : "danger",
+    });
+    const sigFrac = Math.min(1, Math.max(0, Math.log10(Math.max(th.signatureW, 1)) / 9));
+    this.irMeter.set(sigFrac, { text: fmtPower(th.signatureW) + (th.thrusting ? " · HOT" : ""), state: th.thrusting ? "warn" : "info" });
     const rows: Row[] = [
       { key: "Solar flux", value: `${th.solarFlux.toFixed(0)} W/m² @ ${(th.distanceFromSun / AU).toFixed(2)} AU` },
-      { key: "Hull temp", value: `${th.hullTempK.toFixed(0)} K` },
-      { key: "IR signature", value: fmtPower(th.signatureW) + (th.thrusting ? " · HOT" : ""), state: th.thrusting ? "warn" : undefined },
       { key: "Detectable to", value: `${fmtRange(th.detectionRangeM)} (${th.snrThreshold}σ, ${(th.integrationTimeS / 3600).toFixed(0)}h)` },
       { key: "Min signal", value: `${(th.minDetectablePowerW * 1e18).toFixed(1)} aW` },
     ];
@@ -926,7 +966,12 @@ export class ShipPanel {
     const body = landed ? BODY_BY_ID.get(landed.bodyId) : BODY_BY_ID.get(ship.primary);
     const inTransfer = !!ship.transfer && ship.transfer.departed && !ship.transfer.arrived;
     const showable = !!body && body.hasSurface !== false && ship.primary !== "sun" && ship.mode === "coast" && !inTransfer;
-    if (!showable || !body) { this.surfaceEl.style.display = "none"; return; }
+    if (!showable || !body) {
+      this.surfaceEl.style.display = "none";
+      this.landBtn.style.display = "none";
+      this.launchBtn.style.display = "none";
+      return;
+    }
     this.surfaceEl.style.display = "block";
     const remaining = ship.stages.slice(ship.activeStage);
 
@@ -941,8 +986,8 @@ export class ShipPanel {
         kvAuto("Wall temp", `${entry.wallTempK.toFixed(0)} K`) +
         kvAuto("Heat load", `${(entry.heatLoad / 1e6).toFixed(0)} MJ/m²`) +
         `<div class="ok">${(entry.progress * 100).toFixed(0)}% through the pass</div>`;
-      setDisabled(this.landBtn, true, "Flying an entry pass.");
-      setDisabled(this.launchBtn, true, "Flying an entry pass.");
+      this.landBtn.style.display = "none";
+      this.launchBtn.style.display = "none";
       setDisabled(this.flyEntryBtn, true, "Already flying an entry pass.");
       return;
     }
@@ -958,7 +1003,8 @@ export class ShipPanel {
         kvAuto("  gravity / drag loss", `${(asc.gravityLoss / 1000).toFixed(2)} / ${(asc.dragLoss / 1000).toFixed(2)} km/s`) +
         kvAuto("Propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
         (feasible ? `<div class="ok">✓ can reach ${altKm} km orbit</div>` : `<div class="warn">✗ insufficient Δv</div>`);
-      setDisabled(this.landBtn, true, `Already landed on ${body.name}.`);
+      this.landBtn.style.display = "none";
+      this.launchBtn.style.display = "";
       setDisabled(this.launchBtn, !feasible, "Insufficient Δv to reach the requested orbit.");
       setDisabled(this.flyEntryBtn, true, `Landed on ${body.name}.`);
     } else {
@@ -976,8 +1022,9 @@ export class ShipPanel {
         kvAuto("Land propellant", `${(cost.propellant / 1000).toFixed(1)} t`) +
         (canFlyEntry ? `<div class="ok">orbit dips into the atmosphere — Fly entry to ride it down</div>` : "") +
         (canLand ? `<div class="ok">✓ can land</div>` : `<div class="warn">✗ insufficient Δv to land</div>`);
+      this.landBtn.style.display = "";
       setDisabled(this.landBtn, !canLand, "Insufficient Δv to land.");
-      setDisabled(this.launchBtn, true, "Land first to enable ascent.");
+      this.launchBtn.style.display = "none";
       setDisabled(this.flyEntryBtn, !canFlyEntry, body.atmosphere ? "Lower periapsis into the atmosphere first." : `${body.name} has no atmosphere.`);
     }
   }
@@ -1049,8 +1096,8 @@ export class ShipPanel {
     if (!eligible || !body) return;
     const on = ship.fidelity === "perturbed";
     const sk = ship.stationKeep;
-    this.fidelityBtn.textContent = on ? "✦ Stop perturbed" : "✦ Fly perturbed";
-    this.fidelityHoldBtn.textContent = sk ? "⚓ Release station" : "⚓ Hold station";
+    this.fidelityBtn.textContent = on ? "Stop perturbed" : "Fly perturbed";
+    this.fidelityHoldBtn.textContent = sk ? "Release station" : "Hold station";
 
     if (sk) {
       // Holding: show the target, the cost, and the projected annual budget.

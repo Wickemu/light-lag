@@ -1878,6 +1878,20 @@ button.danger:hover {
   padding: 2px 0 4px;
 }
 
+/* A tab's gauge strip: a radial dial alongside a bar meter that fills the rest. */
+.tab-gauges {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0 5px;
+}
+.tab-gauges .ins-gauge {
+  flex: 0 0 auto;
+}
+.tab-gauges .ins-meter {
+  flex: 1 1 auto;
+}
+
 /* ── Detail tabs ────────────────────────────────────────────────────────────
    A type-led strip (active label underlined in the accent — same vocabulary as
    the header view switch, not boxed buttons) over a single shown pane. */
@@ -1932,6 +1946,9 @@ button.danger:hover {
   padding-top: 8px;
   border-top: 1px solid var(--panel-border);
 }
+/* The contextual surface slot is layout-transparent: its Land/Launch buttons sit
+   directly in the bar's flow, so a hidden slot leaves no phantom gap. */
+.cmd-surface { display: contents; }
 .cmd-group { display: flex; flex-direction: column; gap: 3px; }
 .cmd-label {
   font-size: 9px;
@@ -1945,11 +1962,25 @@ button.danger:hover {
   padding: 4px 9px;
   letter-spacing: 0.04em;
 }
-.cmd-grow { flex: 1 1 auto; align-self: stretch; }
+/* Maneuver fills the slack width but stays button-height (no vertical stretch). */
+.cmd-grow { flex: 1 1 auto; }
 .cmd-btn.active {
   color: var(--active);
   border-color: var(--active);
   background: color-mix(in srgb, var(--active) 14%, var(--btn-bg));
+}
+/* The contextual Land / Launch verb reads as the primary action. */
+.cmd-primary {
+  color: var(--active);
+  border-color: color-mix(in srgb, var(--active) 50%, var(--panel-border));
+  background: color-mix(in srgb, var(--active) 14%, var(--btn-bg));
+}
+.cmd-primary:hover {
+  background: color-mix(in srgb, var(--active) 24%, var(--btn-bg));
+}
+/* Delete sits quietly at the far right of the bar. */
+.cmd-del {
+  margin-left: auto;
 }
 .cmd-icon {
   flex: 0 0 auto;
@@ -1958,7 +1989,6 @@ button.danger:hover {
   padding: 0;
   font-size: 13px;
   line-height: 1;
-  align-self: center;
 }
 
 /* ── Maneuver pop-out (bottom-centre, toggled from the command bar) ──────────── */
