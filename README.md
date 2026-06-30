@@ -175,6 +175,20 @@ group header) hides that object or the whole kind, and a chip row toggles the
 cross-cutting layers — orbit lines, labels, the nearby-star sky, ships, and
 in-flight comms.
 
+The **FOCUS** panel also orders its body list three ways (the choice persists),
+with a realtime search box above it (type to filter; Enter jumps to the first
+match, Esc clears):
+
+- **Type** — grouped by kind (planets, dwarfs, asteroids, moons, satellites,
+  comets), the default.
+- **System** — grouped by parent system: the Sun, then each planet with its
+  moons & satellites nested beneath it, Pluto with Charon, then the far
+  heliocentric bodies. (This is where the LEO stations — ISS, Hubble, Tiangong —
+  read as Earth's satellites rather than a loose bucket.)
+- **Near** — ordered by live distance to the focused body: your own system
+  first with the parent body leading it, then every other system nearest-first,
+  re-sorting whenever you change focus.
+
 ## Develop
 
 ```bash

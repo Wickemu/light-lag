@@ -12,7 +12,7 @@ import { Simulation } from "@lightlag/engine/sim";
 import { SceneManager } from "../render/SceneManager.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { type Visibility, type LayerKey } from "../render/visibility.ts";
-import { BODIES, BODY_BY_ID, AU, C, MU_SUN, type BodyKind } from "@lightlag/engine/constants";
+import { BODIES, BODY_BY_ID, AU, C, MU_SUN, type BodyKind, type BodyDef } from "@lightlag/engine/constants";
 import { bodyState, bodyElements } from "@lightlag/engine/ephemeris";
 import { solarFlux } from "@lightlag/engine/thermal";
 import { surfaceGravity, escapeVelocity } from "@lightlag/engine/surface";
@@ -26,7 +26,7 @@ import { el, button, kvAuto } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
 import { popover, type Popover } from "./popover.ts";
 import { ACCENTS, applyAccent, currentAccent, type AccentName } from "./themes.ts";
-import { getFlag, setFlag } from "./uiState.ts";
+import { getFlag, setFlag, getString, setString } from "./uiState.ts";
 
 /** Focus-list groups, in display order. The Sun (star) gets no header — it sits
  *  alone at the top, directly under FOCUS. BODIES is ordered by heliocentric
@@ -41,6 +41,177 @@ const GROUPS: { kind: BodyKind; label: string }[] = [
   { kind: "satellite", label: "Satellites" },
   { kind: "comet", label: "Comets" },
 ];
+
+/** How the FOCUS list is ordered. `type` groups by body kind (the original
+ *  layout); `system` groups every body under its parent system (a planet with
+ *  its moons & satellites); `near` orders systems by live distance to the
+ *  focused body, the focused system first. Persisted across reloads. */
+type OrderMode = "type" | "system" | "near";
+
+const ORDER_MODES: { mode: OrderMode; label: string; title: string }[] = [
+  { mode: "type", label: "Type", title: "Group by type — planets, dwarfs, asteroids, moons, satellites, comets" },
+  { mode: "system", label: "System", title: "Group by parent system — each planet with its moons & satellites" },
+  { mode: "near", label: "Near", title: "Nearest to the focused body first; the parent body leads each system" },
+];
+
+/** Read the persisted order mode, validating it against the known set (an
+ *  unrecognised stored value falls back to the original Type grouping). */
+function readOrderMode(): OrderMode {
+  const saved = getString("focus.order", "type");
+  return saved === "system" || saved === "near" ? saved : "type";
+}
+
+/** One displayed row: a body, optionally a child nested under a system anchor. */
+interface FocusRow { id: string; child: boolean; }
+/** One displayed section: an optional header (its label) plus its rows. A header
+ *  may carry an eye that toggles a whole kind (`eyeKind`) or an explicit member
+ *  set (`eyeMembers`, used for system groups). */
+interface FocusSection {
+  label: string;
+  rows: FocusRow[];
+  eyeKind?: BodyKind;
+  eyeMembers?: string[];
+}
+
+/** Each top-level body's descendants (moons, satellites), keyed by the anchor
+ *  id. Built once from the static catalog. The anchor itself is not included;
+ *  the Sun anchors nothing here (its "children" are whole planetary systems, not
+ *  members), so heliocentric bodies stand on their own. */
+const SYSTEM_MEMBERS: Map<string, BodyDef[]> = (() => {
+  const m = new Map<string, BodyDef[]>();
+  for (const b of BODIES) {
+    const anchor = systemAnchor(b);
+    if (anchor.id === b.id) continue;
+    const arr = m.get(anchor.id);
+    if (arr) arr.push(b);
+    else m.set(anchor.id, [b]);
+  }
+  return m;
+})();
+
+/** The top-level body a body belongs to: walk up the parent chain until the
+ *  parent is the Sun (or there is none). A moon/satellite resolves to its
+ *  planet, a planet/dwarf/asteroid/comet to itself, the Sun to itself. */
+function systemAnchor(b: BodyDef): BodyDef {
+  let cur = b;
+  while (cur.parent && cur.parent !== "sun") {
+    const p = BODY_BY_ID.get(cur.parent);
+    if (!p) break;
+    cur = p;
+  }
+  return cur;
+}
+
+/** Orbit size (m) for ordering members within a system: moon rows store `a` in
+ *  metres, heliocentric rows in AU. */
+function semiMajor(b: BodyDef): number {
+  if (b.moon) return b.moon.a;
+  if (b.helio) return b.helio.a * AU;
+  if (b.standish) return b.standish.a * AU;
+  return 0;
+}
+
+/** Static member order within a system: natural moons before artificial
+ *  satellites, innermost first within each. */
+const MEMBER_KIND_RANK: Partial<Record<BodyKind, number>> = { moon: 0, satellite: 1 };
+function memberCompare(a: BodyDef, b: BodyDef): number {
+  const ra = MEMBER_KIND_RANK[a.kind] ?? 2;
+  const rb = MEMBER_KIND_RANK[b.kind] ?? 2;
+  return ra !== rb ? ra - rb : semiMajor(a) - semiMajor(b);
+}
+
+/** A system section: the anchor row first, its members nested beneath. A
+ *  childless anchor becomes a single headerless row (no redundant header). */
+function systemSection(anchor: BodyDef, members: BodyDef[]): FocusSection {
+  if (members.length === 0) return { label: "", rows: [{ id: anchor.id, child: false }] };
+  return {
+    label: anchor.name,
+    eyeMembers: [anchor.id, ...members.map((m) => m.id)],
+    rows: [{ id: anchor.id, child: false }, ...members.map((m) => ({ id: m.id, child: true }))],
+  };
+}
+
+/** Group by kind — the original FOCUS layout (the Sun alone, then one section
+ *  per kind, heliocentric order preserved within each). */
+function sectionsByType(): FocusSection[] {
+  const out: FocusSection[] = [];
+  for (const g of GROUPS) {
+    const inGroup = BODIES.filter((b) => b.kind === g.kind);
+    if (inGroup.length === 0) continue;
+    out.push({
+      label: g.label,
+      eyeKind: g.label ? g.kind : undefined,
+      rows: inGroup.map((b) => ({ id: b.id, child: false })),
+    });
+  }
+  return out;
+}
+
+/** Group by parent system: the Sun alone, then each planet (with its moons &
+ *  satellites nested), Pluto with Charon, and finally the far heliocentric
+ *  bodies that anchor nothing, grouped by kind. */
+function sectionsBySystem(): FocusSection[] {
+  const out: FocusSection[] = [{ label: "", rows: [{ id: "sun", child: false }] }];
+  const tail: BodyDef[] = [];
+  for (const anchor of BODIES.filter((b) => b.parent === "sun")) {
+    const members = (SYSTEM_MEMBERS.get(anchor.id) ?? []).slice().sort(memberCompare);
+    // A planet is always its own system; any body with members (e.g. Pluto) too.
+    if (anchor.kind === "planet" || members.length > 0) out.push(systemSection(anchor, members));
+    else tail.push(anchor);
+  }
+  for (const g of GROUPS) {
+    if (!g.label) continue; // the Sun is already placed at the top
+    const inTail = tail.filter((b) => b.kind === g.kind);
+    if (inTail.length === 0) continue;
+    out.push({ label: g.label, eyeKind: g.kind, rows: inTail.map((b) => ({ id: b.id, child: false })) });
+  }
+  return out;
+}
+
+/** Order by proximity to the focused body: its own system first (with the parent
+ *  body leading, then siblings closest-to-you first), then every other system by
+ *  live distance from the focus. Recomputed whenever the focus changes. */
+function sectionsByProximity(t: number, focusId: string): FocusSection[] {
+  const focusDef = BODY_BY_ID.get(focusId) ?? BODY_BY_ID.get("sun")!;
+  const focusPos = bodyState(focusDef, t).r;
+  const focusAnchor = systemAnchor(focusDef).id;
+  const distToFocus = (id: string) => distance(focusPos, bodyState(BODY_BY_ID.get(id)!, t).r);
+
+  const anchors = [BODY_BY_ID.get("sun")!, ...BODIES.filter((b) => b.parent === "sun")];
+  anchors.sort((a, b) => {
+    if (a.id === focusAnchor) return -1;
+    if (b.id === focusAnchor) return 1;
+    return distToFocus(a.id) - distToFocus(b.id);
+  });
+
+  return anchors.map((anchor) => {
+    const members = (SYSTEM_MEMBERS.get(anchor.id) ?? []).slice();
+    // Inside the system you're in, surface the closest siblings first; elsewhere
+    // the steady innermost-first order reads better than jittering distances.
+    if (anchor.id === focusAnchor) members.sort((a, b) => distToFocus(a.id) - distToFocus(b.id));
+    else members.sort(memberCompare);
+    return systemSection(anchor, members);
+  });
+}
+
+/** Drop rows whose body name doesn't contain the query; keep a section only when
+ *  something in it matches (its header survives to frame the hits). */
+function filterSections(sections: FocusSection[], query: string): FocusSection[] {
+  if (!query) return sections;
+  const needle = query.toLowerCase();
+  const matches = (id: string) => {
+    const def = BODY_BY_ID.get(id);
+    return !!def && (def.name.toLowerCase().includes(needle) || def.id.includes(needle));
+  };
+  const out: FocusSection[] = [];
+  for (const s of sections) {
+    const rows = s.rows.filter((r) => matches(r.id));
+    if (rows.length === 0) continue;
+    // A system eye should govern only what's actually shown while filtering.
+    out.push({ ...s, rows, eyeMembers: s.eyeMembers ? rows.map((r) => r.id) : undefined });
+  }
+  return out;
+}
 
 /** Label de-collision order: when several bodies project to the same pixel
  *  (a planet with its moons and satellites, common when zoomed out), the
@@ -109,11 +280,20 @@ export class Hud {
   // body rows (so a hidden body can be dimmed). Repainted from Visibility.onChange.
   private bodyEyes = new Map<string, HTMLButtonElement>();
   private bodyRows = new Map<string, HTMLElement>();
-  private kindEyes = new Map<BodyKind, HTMLButtonElement>();
+  // Header eye toggles (kind eyes in Type mode, system eyes in System/Near). Each
+  // entry repaints its own button from the live Visibility state; refreshVisibilityUI
+  // runs them generically. Rebuilt on every list render.
+  private headerEyeRefreshers: (() => void)[] = [];
   private layerChips = new Map<LayerKey, HTMLButtonElement>();
-  /** Focus-list order as displayed (grouped by kind) — drives Tab cycling so the
-   *  keyboard and the visible list agree. */
+  /** Focus-list order as displayed — drives Tab cycling so the keyboard and the
+   *  visible list agree. Rebuilt with the list whenever order/search/focus change. */
   private focusOrder: string[] = [];
+  // FOCUS list ordering + realtime search. The order mode persists; the search
+  // text is session-only. The body section of the list is rebuilt from these.
+  private orderMode: OrderMode = readOrderMode();
+  private searchText = "";
+  private listBodyEl!: HTMLElement;
+  private orderButtons = new Map<OrderMode, HTMLButtonElement>();
   // Interstellar FOLLOW selector (shown only on the interstellar map): a Sol button
   // plus one per ship in transit. Rebuilt only when the in-transit id-set changes.
   private followSection!: HTMLElement;
@@ -243,36 +423,16 @@ export class Hud {
     navClose.title = "Hide the Navigation dock (N or Esc)";
     headRow.appendChild(navClose);
     head.appendChild(headRow);
+    // Ordering selector + realtime search, pinned in the sticky head above the list.
+    head.appendChild(this.buildOrderControl());
+    head.appendChild(this.buildSearchBox());
     list.appendChild(head);
 
-    for (const g of GROUPS) {
-      const inGroup = BODIES.filter((b) => b.kind === g.kind);
-      if (inGroup.length === 0) continue;
-      if (g.label) {
-        const groupRow = el("div", "body-group-row");
-        const eye = this.eyeButton(`Show / hide all ${g.label.toLowerCase()}`, () =>
-          this.vis.toggleKind(g.kind),
-        );
-        groupRow.append(eye, el("span", "body-group", g.label));
-        this.kindEyes.set(g.kind, eye);
-        list.appendChild(groupRow);
-      }
-      for (const b of inGroup) {
-        this.focusOrder.push(b.id);
-        const row = el("div", "body-row");
-        const eye = this.eyeButton(`Show / hide ${b.name}`, () => this.vis.toggleBody(b.id));
-        const btn = button(b.name, () => this.focus(b.id));
-        btn.classList.add("body-btn");
-        const swatch = el("span", "swatch");
-        swatch.style.background = `#${b.color.toString(16).padStart(6, "0")}`;
-        btn.prepend(swatch);
-        row.append(eye, btn);
-        this.listButtons.set(b.id, btn);
-        this.bodyEyes.set(b.id, eye);
-        this.bodyRows.set(b.id, row);
-        list.appendChild(row);
-      }
-    }
+    // The scrolling body of the list — rebuilt from scratch on order/search/focus
+    // changes (cheap for ~50 rows, and it keeps every map in lock-step).
+    this.listBodyEl = el("div", "nav-list-body");
+    list.appendChild(this.listBodyEl);
+    this.renderFocusList();
     dock.appendChild(list);
 
     // Interstellar FOLLOW selector — shown only on the interstellar map, where the
@@ -343,6 +503,161 @@ export class Hud {
     }
 
     this.focus(this.sm.focusId);
+  }
+
+  /** The FOCUS-list ordering selector: a compact Type / System / Near segmented
+   *  control in the sticky head. */
+  private buildOrderControl(): HTMLElement {
+    const row = el("div", "focus-order");
+    for (const d of ORDER_MODES) {
+      const b = button(d.label, () => this.setOrderMode(d.mode));
+      b.className = "order-btn";
+      b.title = d.title;
+      this.orderButtons.set(d.mode, b);
+      row.appendChild(b);
+    }
+    this.refreshOrderButtons();
+    return row;
+  }
+
+  private setOrderMode(mode: OrderMode): void {
+    if (this.orderMode === mode) return;
+    this.orderMode = mode;
+    setString("focus.order", mode);
+    this.refreshOrderButtons();
+    this.renderFocusList();
+  }
+
+  private refreshOrderButtons(): void {
+    for (const [m, b] of this.orderButtons) b.classList.toggle("active", m === this.orderMode);
+  }
+
+  /** The realtime search box: filters the list as you type, Enter jumps to the
+   *  first match, Escape clears (then blurs). The keyboard manager ignores keys
+   *  while an input is focused, so typing here never triggers shortcuts. */
+  private buildSearchBox(): HTMLElement {
+    const wrap = el("div", "focus-search");
+    const input = document.createElement("input");
+    input.type = "search";
+    input.placeholder = "Search bodies…";
+    input.className = "focus-search-input";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.oninput = () => {
+      this.searchText = input.value.trim();
+      this.renderFocusList();
+    };
+    input.onkeydown = (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        if (input.value) {
+          input.value = "";
+          this.searchText = "";
+          this.renderFocusList();
+        } else {
+          input.blur();
+        }
+      } else if (e.key === "Enter") {
+        const first = this.focusOrder[0];
+        if (first) this.focus(first);
+      }
+    };
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  /** Rebuild the scrolling body of the FOCUS list for the active order mode and
+   *  search text. Every per-row map is cleared and repopulated together, so the
+   *  visibility repaint, Tab order and focus highlight all stay consistent. */
+  private renderFocusList(): void {
+    this.listButtons.clear();
+    this.bodyEyes.clear();
+    this.bodyRows.clear();
+    this.headerEyeRefreshers = [];
+    this.focusOrder = [];
+    this.listBodyEl.replaceChildren();
+
+    let sections: FocusSection[];
+    if (this.orderMode === "system") sections = sectionsBySystem();
+    else if (this.orderMode === "near") sections = sectionsByProximity(this.sim.world.t, this.sm.focusId);
+    else sections = sectionsByType();
+    sections = filterSections(sections, this.searchText);
+
+    if (sections.length === 0) {
+      this.listBodyEl.appendChild(el("div", "nav-empty", "No bodies match."));
+    }
+    for (const s of sections) {
+      if (s.label) this.listBodyEl.appendChild(this.buildSectionHeader(s));
+      for (const r of s.rows) this.listBodyEl.appendChild(this.buildBodyRow(r.id, r.child));
+    }
+
+    this.refreshVisibilityUI();
+    this.applyActiveHighlight(false);
+  }
+
+  /** A section header row with its eye toggle (a whole kind, or an explicit member
+   *  set for a system group). */
+  private buildSectionHeader(section: FocusSection): HTMLElement {
+    const row = el("div", "body-group-row");
+    if (section.eyeKind) {
+      const kind = section.eyeKind;
+      const eye = this.eyeButton(`Show / hide all ${section.label.toLowerCase()}`, () => this.vis.toggleKind(kind));
+      row.appendChild(eye);
+      this.headerEyeRefreshers.push(() => this.setEye(eye, this.vis.kindVisible(kind)));
+    } else if (section.eyeMembers && section.eyeMembers.length > 0) {
+      const members = section.eyeMembers;
+      const eye = this.eyeButton(`Show / hide the ${section.label} system`, () => this.toggleSystem(members));
+      row.appendChild(eye);
+      this.headerEyeRefreshers.push(() => this.setEye(eye, this.systemShown(members)));
+    }
+    row.appendChild(el("span", "body-group", section.label));
+    return row;
+  }
+
+  /** One focusable body row (eye toggle + colour swatch + focus button), nested
+   *  under its anchor when `child`. Registers itself in the per-row maps and the
+   *  Tab order. */
+  private buildBodyRow(id: string, child: boolean): HTMLElement {
+    const b = BODY_BY_ID.get(id)!;
+    const row = el("div", child ? "body-row body-row-child" : "body-row");
+    const eye = this.eyeButton(`Show / hide ${b.name}`, () => this.vis.toggleBody(b.id));
+    const btn = button(b.name, () => this.focus(b.id));
+    btn.classList.add("body-btn");
+    const swatch = el("span", "swatch");
+    swatch.style.background = `#${b.color.toString(16).padStart(6, "0")}`;
+    btn.prepend(swatch);
+    row.append(eye, btn);
+    this.listButtons.set(b.id, btn);
+    this.bodyEyes.set(b.id, eye);
+    this.bodyRows.set(b.id, row);
+    this.focusOrder.push(b.id);
+    return row;
+  }
+
+  /** Whether every member of a system is currently drawn (drives the system eye). */
+  private systemShown(members: string[]): boolean {
+    return members.every((id) => {
+      const d = BODY_BY_ID.get(id);
+      return !!d && this.vis.bodyVisible(id, d.kind);
+    });
+  }
+
+  /** Show or hide a whole system at once via per-body overrides: hide all if all
+   *  are currently shown, otherwise reveal all. */
+  private toggleSystem(members: string[]): void {
+    const hide = this.systemShown(members);
+    for (const id of members) this.vis.setBodyHidden(id, hide);
+  }
+
+  /** Light the focused body's row (and optionally scroll it into view). Called
+   *  after every render and on each focus change. */
+  private applyActiveHighlight(scroll: boolean): void {
+    const id = this.sm.focusId;
+    for (const [bid, btn] of this.listButtons) {
+      const active = bid === id;
+      btn.classList.toggle("active", active);
+      if (active && scroll) btn.scrollIntoView({ block: "nearest" });
+    }
   }
 
   /** The top-right control cluster: view switch, Layers popover, theme, help. */
@@ -515,6 +830,9 @@ export class Hud {
     this.navDockEl.style.display = open ? "flex" : "none";
     this.navTab.style.display = open ? "none" : "flex";
     setFlag("dock.nav.open", open);
+    // Reopening refreshes the proximity order around the current focus (bodies
+    // drift while the dock is closed; a fresh look should reflect where they are).
+    if (open && this.orderMode === "near") this.renderFocusList();
   }
 
   private setShowFps(on: boolean): void {
@@ -564,7 +882,7 @@ export class Hud {
   /** Repaint every visibility control from the shared Visibility state. */
   private refreshVisibilityUI(): void {
     for (const [key, chip] of this.layerChips) chip.classList.toggle("active", this.vis.layer(key));
-    for (const [kind, eye] of this.kindEyes) this.setEye(eye, this.vis.kindVisible(kind));
+    for (const refresh of this.headerEyeRefreshers) refresh();
     for (const b of BODIES) {
       const shown = this.vis.bodyVisible(b.id, b.kind);
       const eye = this.bodyEyes.get(b.id);
@@ -632,12 +950,10 @@ export class Hud {
     // map if we're on it, then frame the body.
     if (this.sm.viewMode !== "system") this.setView("system");
     this.sm.focusBody(id);
-    for (const [bid, btn] of this.listButtons) {
-      const active = bid === id;
-      btn.classList.toggle("active", active);
-      // Keep the focused body visible when it's selected from off-screen (Tab/1–8).
-      if (active) btn.scrollIntoView({ block: "nearest" });
-    }
+    // Proximity ordering is anchored on the focused body, so a focus change
+    // re-sorts the list around the new vantage point before we light it up.
+    if (this.orderMode === "near") this.renderFocusList();
+    this.applyActiveHighlight(true);
   }
 
   /** Step focus through the displayed (grouped) order; used by Tab cycling. */
