@@ -212,9 +212,16 @@ export class ShipPanel {
     head.appendChild(close);
     panel.appendChild(head);
 
-    const buildBtn = button("✚ Build a ship — Shipyard ▸", () => this.onOpenShipyard?.());
+    // Flex-laid spans (not inline glyphs) so the leading + and trailing chevron
+    // sit centred on the label baseline regardless of the font's symbol metrics.
+    const buildBtn = button("", () => this.onOpenShipyard?.());
     buildBtn.className = "wide-btn yard-open-btn";
     buildBtn.title = "Open the Shipyard (B) to design and launch a vehicle.";
+    buildBtn.append(
+      el("span", "btn-ico", "+"),
+      el("span", "btn-label", "Build a ship — Shipyard"),
+      el("span", "btn-arrow", "›"),
+    );
     panel.appendChild(buildBtn);
 
     // ── Fleet ────────────────────────────────────────────────────────────────
@@ -572,8 +579,9 @@ export class ShipPanel {
       this.fleetRows.clear();
       this.fleetSection.badge.textContent = ids.length ? String(ids.length) : "";
       if (ids.length === 0) {
-        const empty = button("No ships yet — open the Shipyard ▸", () => this.onOpenShipyard?.());
+        const empty = button("", () => this.onOpenShipyard?.());
         empty.className = "wide-btn ship-empty-btn";
+        empty.append(el("span", "btn-label", "No ships yet — open the Shipyard"), el("span", "btn-arrow", "›"));
         this.shipListEl.appendChild(empty);
       }
       for (const ship of this.sim.world.ships.values()) {

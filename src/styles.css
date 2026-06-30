@@ -1836,3 +1836,78 @@ button.danger:hover {
 input[type="number"] {
   font-family: var(--font-mono);
 }
+
+/* ── Bottom-centre telemetry rail (selected-ship range + one-way light-lag) ──── */
+.telemetry-rail {
+  position: absolute;
+  bottom: 46px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 13px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.trail-name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+.trail-seg {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.trail-lab {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.trail-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.trail-div {
+  width: 1px;
+  height: 12px;
+  background: var(--panel-border);
+}
+
+/* Arrow buttons: the leading +/chevron sit as flex siblings, centred on the
+   label line — fixes glyphs riding off the baseline under the proportional font. */
+.yard-open-btn,
+.ship-empty-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.yard-open-btn {
+  justify-content: center;
+}
+.ship-empty-btn {
+  justify-content: flex-start;
+}
+.btn-ico,
+.btn-arrow {
+  flex: 0 0 auto;
+  line-height: 1;
+}
+.btn-ico {
+  font-size: 1.1em;
+}
+.btn-arrow {
+  font-size: 0.95em;
+  opacity: 0.65;
+}

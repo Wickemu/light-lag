@@ -33,6 +33,7 @@ import { ScaleBar } from "../ui/scaleBar.ts";
 import { ShipPanel } from "../ui/shipPanel.ts";
 import { Shipyard } from "../ui/shipyard.ts";
 import { MissionHud } from "../ui/missionHud.ts";
+import { BottomTelemetry } from "../ui/bottomTelemetry.ts";
 import { EventFeed } from "../ui/events.ts";
 import { TransferPanel } from "../ui/transferPanel.ts";
 import { InterstellarPanel } from "../ui/interstellarPanel.ts";
@@ -94,6 +95,9 @@ shipPanel = new ShipPanel(
 const eventFeed = new EventFeed();
 shipPanel.attachEventFeed(eventFeed);
 const missionHud = new MissionHud(uiRoot, sim, shipPanel, eventFeed);
+// The bottom-centre telemetry rail: the selected ship's range + one-way light-lag,
+// always on above the scale bar (the game's defining fact, kept on screen).
+const bottomTelemetry = new BottomTelemetry(uiRoot, sim, shipPanel);
 const km = new KeyboardManager(sim, sm, hud, shipPanel, transferPanel, interstellarPanel, shipyard);
 
 // The sandbox layer (orbital playground): light-lag policy, live satellites, and
@@ -131,6 +135,7 @@ function renderOnce(): void {
   shipPanel.update(world.t);
   eventFeed.update(world, world.t);
   missionHud.update(world.t);
+  bottomTelemetry.update(world.t);
   sandboxPanel.update();
 }
 
