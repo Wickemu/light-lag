@@ -180,6 +180,13 @@ const TEX_W_OVERRIDE: Record<string, number> = {
   saturn: 1024,
 };
 
+/** Saturn's ring extent as multiples of the planet's EQUATORIAL radius: the C-ring
+ *  inner edge (~1.24) and the A-ring outer edge (~2.27). bodyViews scales these by
+ *  the equatorial radius, so the rendered disc lands on the real ring edges and the
+ *  inner shepherd Pan falls inside the A ring. Exported so the renderer and its
+ *  regression test share one definition. */
+export const SATURN_RING_FRACTIONS = { inner: 1.24, outer: 2.27 };
+
 
 // ── Public shape ─────────────────────────────────────────────────────────────
 
@@ -959,7 +966,7 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
 
   // Saturn's rings (the one body where their absence reads as a bug).
   if (def.id === "saturn") {
-    set.ring = { texture: paintRing(fbm, maxAniso), inner: 1.24, outer: 2.27 };
+    set.ring = { texture: paintRing(fbm, maxAniso), inner: SATURN_RING_FRACTIONS.inner, outer: SATURN_RING_FRACTIONS.outer };
   }
 
   return set;

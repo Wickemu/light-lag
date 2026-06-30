@@ -183,9 +183,13 @@ export interface BodyDef {
    *  to (j2Rates / sunSyncInclination, via j2RefRadius). DISTINCT from `radius`
    *  (the mean radius). Only meaningful for, and only set on, bodies that carry a
    *  J2; falls back to mean `radius` when absent. Do NOT use it for surface
-   *  gravity, SOI, escape velocity, altitudes, or rendering — those use mean
-   *  `radius`. For an oblate giant (Jupiter/Saturn) equatorial exceeds mean by
-   *  several %, and the J2 rate (∝ R²) is wrong by ~5–7% if fed the mean radius. */
+   *  gravity, SOI, escape velocity, altitudes, or the rendered globe — those use
+   *  mean `radius`. The ONE rendering exception is a ring system: ring radii are
+   *  quoted as multiples of the equatorial radius by convention, so bodyViews scales
+   *  Saturn's rings by this (using mean would shrink the disc ~3.5% and strand the
+   *  inner shepherd Pan outside the A ring). For an oblate giant (Jupiter/Saturn)
+   *  equatorial exceeds mean by several %, and the J2 rate (∝ R²) is wrong by ~5–7%
+   *  if fed the mean radius. */
   equatorialRadius?: number;
   /** This body's orbit row tracks the BARYCENTRE of itself and the named
    *  co-orbiting satellite, not its own centre — so ephemeris.ts shifts the body
