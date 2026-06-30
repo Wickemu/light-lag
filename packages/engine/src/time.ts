@@ -53,7 +53,8 @@ export type SimEventKind =
   | "entry-end"
   | "launch-arrive"
   | "land-arrive"
-  | "aero-trim";
+  | "aero-trim"
+  | "perturbed-finalize";
 
 export interface SimEvent {
   t: number; // absolute sim time the event fires (s since J2000)
@@ -134,6 +135,16 @@ export class EventQueue {
     if (kept.length === this.heap.length) return; // nothing removed
     this.heap = kept;
     // Floyd build-heap: sift down from the last internal node up to the root.
+    for (let i = (this.heap.length >> 1) - 1; i >= 0; i--) this.siftDown(i);
+  }
+
+  /** Drop an entity's pending events of ONE kind (e.g. cancel a perturbed-finalize
+   *  before re-arming a new leg), preserving everything else. Same heap-rebuild as
+   *  `removeByEntity`, so determinism is unaffected. */
+  removeByEntityKind(entityId: string, kind: SimEvent["kind"]): void {
+    const kept = this.heap.filter((e) => !(e.entityId === entityId && e.kind === kind));
+    if (kept.length === this.heap.length) return; // nothing removed
+    this.heap = kept;
     for (let i = (this.heap.length >> 1) - 1; i >= 0; i--) this.siftDown(i);
   }
 

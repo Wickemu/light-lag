@@ -31,6 +31,8 @@ export * as relativity from "./math/relativity.ts";
 export * as constants from "./constants.ts";
 export * as ephemeris from "./ephemeris.ts";
 export * as orbit from "./orbit.ts";
+export * as perturbations from "./perturbations.ts";
+export * as perturbed from "./perturbed.ts";
 export * as propulsion from "./propulsion.ts";
 export * as ships from "./ships.ts";
 export * as refuel from "./refuel.ts";

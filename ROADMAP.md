@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is the `@lightlag/engine` workspace package
-(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 733 passing
+(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 752 passing
 physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
@@ -74,12 +74,17 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-*(Most recent: **click-to-focus extended to the in-system orrery** — click any body (planet, moon,
-dwarf, asteroid, comet, satellite, the Sun) to frame it, the in-system twin of last round's
-**Click-to-focus a star in the interstellar view**. Both reuse one shared `pickNearest`
-(`render/overlayUtil.ts`); the body pick routes through the existing `hud.focus`/`focusBody` fly-to,
-the star pick through `setInterstellarFocus`/`followInterstellar`. See the two "Done since last round"
-notes. The round before, candidate #1 — **Follow ships in the interstellar view** — landed.)*
+*(Most recent: **higher-fidelity propagation — the explicit fidelity-mode framework + third-body
+perturbed arcs** (the single biggest realism gap, from `docs/physics-assessment.md` §B-1). Three
+named tiers — **game** (default, untouched), **perturbed** (a ship flown under continuous
+third-body gravity via `Ship.fidelity` + a `PerturbedLeg`), and **high-fidelity planning** (the
+read-time `perturbedForecast` preview) — built on a shared "one gravity law" term library
+(`perturbations.ts`) and a deterministic perturbed integrator (`perturbed.ts`). Opt-in ⇒ golden
+hash unmoved; preview is pure read-time; the flown leg is chunk-invariant. Validated against the
+textbook GEO lunisolar inclination drift (~0.85–0.95°/yr) and the Sun–Earth L2 instability — a
+craft at L2 now actually drifts off the kinematic point, closing the PR-#80 Lagrange gap. A magenta
+"Perturbed" overlay + a FIDELITY console toggle surface it. See the backlog entry and the "Done
+since last round" note. The round before, **click-to-focus extended to the in-system orrery** landed.)*
 
 1. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
    DONE (a first cut — `packages/engine/src/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
@@ -633,31 +638,40 @@ detection curve, comet outgassing, drop-tank cross-feed) live in the backlog ent
   J2 perturbation on an AEROCAPTURE approach (the above-atmosphere arc to the interface — the drag-pass
   entry leg is unchanged today).
 - **Higher-fidelity propagation — explicit fidelity modes + third-body/perturbed arcs**
-  (the structured successor to the scattered "full N-body / J3+" notes above; raised by
-  the `docs/physics-assessment.md` second-opinion pass). The single biggest realism gap
-  is that ships coast as two-body conics about one primary (with SOI switches) and burn
-  under central gravity only — they never *continuously* feel the Sun in Earth/Moon
-  orbit, moons inside a planet's SOI, or lunar/solar perturbations on high orbits except
-  through patched events. The shape that fits this engine without breaking it:
-  - **Make fidelity a first-class, explicit choice.** The code already spans tiers
-    (analytic Kepler · J2 secular · J2-perturbed approach spline · RK4 powered flight ·
-    entry integration). Name them: **game/default** (today's deterministic patched-conic
-    model) · **perturbed** (central + selected third-body + *numerical* J2 on chosen
-    arcs) · **high-fidelity planning** (slower, for preview/analysis, not always-on).
-    This keeps the game responsive while allowing reality checks, and is the keystone
-    that lets the rest land without moving the default game's golden hash.
-  - **Third-body / perturbed propagation** — opt-in, gated to close approaches and long
-    coasts, **fixed-step** for determinism, **preview-first** before it ever mutates
-    live ship `WorldState`. The biggest gap, and explicitly **deferred** — captured
-    here, not scheduled.
-  - **Integrated (flown) low-thrust arcs** — reuse the existing RK4 powered integrator
-    for an in-sim electric spiral (the analytic Edelbaum leg lands first today; "in-sim
-    flyable capture/escape spiral" is already listed under "Power-limited electric
-    thrust"). Bounded effort, good payoff for electric craft.
-  Any of these must preserve the engine's invariants: fixed absolute-time grid, exact
-  event splitting, deterministic body/event ordering, stable serialization, and a
-  documented golden hash if it ever moves (see `docs/error-budget.md` for the current
-  envelope and `docs/deliberate-omissions.md` for why these sit outside the default).
+  — **DONE (first cut):** the single biggest realism gap is closed as an opt-in,
+  preview-first capability that leaves the default game byte-identical (golden hash
+  unmoved). Three pieces shipped:
+  - **Fidelity is now a first-class, explicit choice.** Three named tiers:
+    **game/default** (today's deterministic patched-conic + secular-J2 model — the
+    absence of any flag) · **perturbed** (a ship FLOWN under central + selected
+    third-body + optional numerical J2, opt-in via `Ship.fidelity`) · **high-fidelity
+    planning** (the read-time perturbed *forecast*, a `Simulation.planningFidelity`
+    preview/analysis toggle that never touches `WorldState`).
+  - **Third-body / perturbed propagation** — a shared acceleration-term library
+    (`packages/engine/src/perturbations.ts`: `centralAccel` / `j2ZonalAccel` /
+    `thirdBodyAccel`, reused by the force overlay AND the integrators — "one gravity
+    law"), a deterministic fixed-/adaptive-step RK4 perturbed integrator
+    (`packages/engine/src/perturbed.ts`, cloned from `approach.ts` with a TIME-DEPENDENT
+    acceleration that reads each perturber from the analytic ephemeris at `t0+τ`, so it
+    stays re-derivable), a read-time `perturbedForecast` (`trajectory.ts`) with a
+    divergence-from-the-two-body-coast readout, and a FLOWN `PerturbedLeg` (`world.ts`,
+    the ApproachLeg read-time-leg pattern) the sim coasts as successive bounded chunks,
+    SOI-clamped and re-osculating at each finalize. Validated against textbook numbers:
+    GEO lunisolar inclination drift ≈ 0.85–0.95°/yr and the Sun–Earth L2 instability
+    (a craft at L2 now actually drifts off the kinematic point under Earth's pull —
+    closing the PR-#80 Lagrange gap, where L-points were kinematic-only). Opt-in ⇒
+    golden hash unmoved; preview is pure read-time; the flown leg is chunk-invariant.
+    Still to do: in-perturbed-arc surface-impact (today gated to high/bound orbits),
+    third-body terms inside a powered BURN, and an eased preview cadence.
+  - **Integrated (flown) low-thrust arcs** — STILL TO DO: reuse the existing RK4 powered
+    integrator for an in-sim electric spiral (the analytic Edelbaum leg lands first
+    today; "in-sim flyable capture/escape spiral" is already listed under "Power-limited
+    electric thrust"). Bounded effort, good payoff for electric craft.
+  The next framework payoffs (now cheap, additive *terms* / a *mode hook*): J3/J4 zonals
+  in `perturbations.ts`; the high-fidelity-planning ephemeris hook (the deferred Standish
+  long-period terms / optional sampled import). All preserve the engine's invariants
+  (fixed grid, exact event splitting, deterministic ordering, stable serialization,
+  documented golden hash — see `docs/error-budget.md` and `docs/deliberate-omissions.md`).
 - **Full B-plane targeting in the planner UI** — the analytic aim (`bPlaneAim`:
   free-bend hyperbola, impact parameter, B-vector) now exists, and the planner's
   single-flyby and chain readouts now show the impact parameter b alongside the

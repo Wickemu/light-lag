@@ -29,7 +29,7 @@ import {
   type WorldState, type Ship, type Station, type Maneuver,
   type MessageInFlight, type ShipBurn, type ShipTransfer, type ShipCommand, type BurnGoal,
   type InterstellarLeg, type SpiralLeg, type EntryLeg,
-  type LaunchLeg, type DescentLeg, type PoweredSample, type ApproachLeg,
+  type LaunchLeg, type DescentLeg, type PoweredSample, type ApproachLeg, type PerturbedLeg,
 } from "./world.ts";
 import { type Stage, type Booster } from "./propulsion.ts";
 import { type Vec3 } from "./math/vec3.ts";
@@ -149,6 +149,15 @@ function qApproachLeg(l: ApproachLeg) {
   };
 }
 
+function qPerturbedLeg(l: PerturbedLeg) {
+  return {
+    bodyId: l.bodyId, tStart: q(l.tStart), tEnd: q(l.tEnd), r0: qv(l.r0), v0: qv(l.v0),
+    samples: l.samples.map((s) => ({ t: q(s.t), r: qv(s.r), v: qv(s.v) })),
+    exitR: qv(l.exitR), exitV: qv(l.exitV),
+    perturbers: l.perturbers, // frozen id-list (strings); order preserved for replay
+  };
+}
+
 function qShip(s: Ship): Record<string, unknown> {
   // Build in a FIXED field order; omit absent optionals entirely so two ships in
   // the same logical state serialize identically.
@@ -170,6 +179,10 @@ function qShip(s: Ship): Record<string, unknown> {
   if (s.launchLeg) o.launchLeg = qPoweredLeg(s.launchLeg);
   if (s.descentLeg) o.descentLeg = qPoweredLeg(s.descentLeg);
   if (s.approachLeg) o.approachLeg = qApproachLeg(s.approachLeg);
+  // Perturbed-fidelity fields: present only on an opted-in ship, so a default (game-mode)
+  // ship — and the golden scenario — serialize identically (hash-neutral).
+  if (s.fidelity) o.fidelity = s.fidelity;
+  if (s.perturbedLeg) o.perturbedLeg = qPerturbedLeg(s.perturbedLeg);
   if (s.landed) o.landed = { bodyId: s.landed.bodyId, surfaceDir: qv(s.landed.surfaceDir) };
   if (s.status) o.status = s.status;
   o.stages = s.stages.map(qStage);
@@ -270,7 +283,7 @@ export function hashWorld(world: WorldState): string {
  *  field that happens to equal a token (e.g. a ship named "Inf") is left alone. */
 const STRING_KEYS = new Set([
   "id", "name", "primary", "mode", "targetId", "shipId", "label", "kind", "dir", "type", "controlNode", "status",
-  "goalPrimary", "point",
+  "goalPrimary", "point", "fidelity",
 ]);
 
 /** Inverse of q()'s non-finite tokens, applied during JSON.parse. */

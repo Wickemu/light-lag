@@ -36,14 +36,20 @@ name:
 ### Continuous third-body gravity during coast and burns
 - **Considered:** an always-on N-body force on every ship (Sun felt in Earth orbit,
   moons felt inside a planet's SOI, etc.).
-- **Decision:** omitted from the default model; captured only through patched-conic
-  SOI transitions and explicit flyby mechanics. An **opt-in perturbed propagation
-  mode** is on the roadmap, not the default.
+- **Decision:** omitted from the *default* model; captured there only through
+  patched-conic SOI transitions and explicit flyby mechanics. The predicted **opt-in
+  perturbed propagation mode is now implemented** (the explicit fidelity-mode framework
+  — `perturbations.ts` / `perturbed.ts` / `Ship.fidelity` / `Simulation.planningFidelity`;
+  see ROADMAP "Higher-fidelity propagation"), exactly as a gated, fixed-step,
+  preview-first tier — NOT the default.
 - **Why:** always-on N-body defeats *analytic-at-read-time* and *determinism* — it
-  forces numerical propagation for every ship at every warp. This is the single
-  biggest realism gap and is acknowledged as such; the right shape is a gated,
-  fixed-step, preview-first mode, not a rewrite of the coast kernel. (See ROADMAP
-  "Higher-fidelity propagation".)
+  forces numerical propagation for every ship at every warp, which is why it stays out
+  of the **default** path. The opt-in tier resolves the tension by integrating only the
+  *ship* (the perturbers remain the analytic ephemeris, a pure function of t), storing the
+  arc as a deterministic read-time leg, and gating it behind `Ship.fidelity` so a default
+  ship is byte-identical (golden hash unmoved). This was the single biggest realism gap;
+  the default model's omission is the deliberate cut, and the opt-in mode is the escape
+  hatch for when fidelity matters (e.g. honest L-point station-keeping).
 
 ### Higher-order gravity (J3/J4, tesserals, mascons) and short-period J2
 - **Considered:** numerical J2 acceleration on close arcs, then J3/J4 zonals and
