@@ -509,6 +509,86 @@ body {
   gap: 6px;
 }
 
+/* ── Lens / vanity popover (focal length, depth of field, clean capture) ─────── */
+.lens-popover .popover-content {
+  min-width: 190px;
+  gap: 8px;
+}
+/* A labelled range slider with its live value in the header. */
+.slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.slider-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.slider-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.slider-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+}
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--btn-bg);
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+/* The DOF checkbox reuses .help-toggle, minus that block's top divider/margin. */
+.lens-dof-toggle {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.lens-action {
+  width: 100%;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.lens-reset {
+  color: var(--text-dim);
+}
+.lens-hint {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  opacity: 0.85;
+}
+
+/* Clean-capture mode: hide every scrap of HUD chrome. The canvas is a sibling of
+   #ui-root, so it stays live — H or a double-tap on the scene brings this back. */
+#ui-root.chrome-hidden {
+  display: none;
+}
+
 /* ── Theme picker (light/dark mode + accent swatches) ───────────────────────── */
 .theme-popover .popover-content {
   gap: 8px;

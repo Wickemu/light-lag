@@ -16,6 +16,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { type Vec3, vec3 } from "@lightlag/engine/math/vec3";
 import { bodyPosition } from "@lightlag/engine/ephemeris";
@@ -104,6 +105,39 @@ const QUALITY = {
   performance: { pixelCap: 1.5, samples: 2, bloomScale: 0.5 },
 } as const;
 
+/** Lens / "vanity" camera. The focal length is expressed against a fixed
+ *  full-frame sensor height (24 mm), NOT the camera's aspect-dependent film
+ *  gauge, so a chosen focal length frames the same way regardless of window
+ *  shape — resizing never silently re-zooms the lens. A longer focal length is a
+ *  narrower vertical FOV: fov = 2·atan(sensor / 2f). The default is whatever
+ *  focal length reproduces the app's original 50° framing (~25.7 mm), so nothing
+ *  changes until the user reaches for the lens. */
+const LENS = {
+  sensorMm: 24,
+  minMm: 15, // ~77° — a wide establishing lens
+  maxMm: 300, // ~4.6° — a compressed telephoto
+  defaultFovDeg: 50,
+} as const;
+
+/** Depth-of-field ramp constant. The Bokeh aperture is set to `k / focus` each
+ *  frame (see `updateDof`), which makes the blur depend on the *ratio* of a
+ *  point's distance to the focus distance rather than its absolute distance — so
+ *  a given DOF "amount" behaves the same whether you're framing the Sun at 500
+ *  units or a moon at 0.02. With this k, an object at ~1.6× the focus distance is
+ *  fully out of focus at amount = 1. */
+const DOF_APERTURE_K = 0.033;
+/** Max blur radius (fraction of the frame) at DOF amount = 1 — the size the
+ *  farthest bokeh discs reach. Kept modest so a strong setting reads as a soft,
+ *  photographic fall-off rather than a smear. */
+const DOF_MAX_BLUR = 0.02;
+
+/** World "up" for the render frame (ecliptic north). Roll rotates the camera's
+ *  up hint around the view axis away from this; roll 0 restores it exactly. */
+const WORLD_UP = new THREE.Vector3(0, 0, 1);
+/** Reused scratch for the per-frame roll so it never allocates. */
+const _fwd = new THREE.Vector3();
+const _up = new THREE.Vector3();
+
 export class SceneManager {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
@@ -115,10 +149,27 @@ export class SceneManager {
    *  genuinely brighter than white and bloom the way a real camera responds. */
   private composer!: EffectComposer;
   private bloom!: UnrealBloomPass;
+  /** Depth-of-field (bokeh) pass, sitting between the scene render and bloom so
+   *  out-of-focus highlights bloom into soft discs. Always in the chain but
+   *  `enabled` only while the user turns DOF on (a disabled pass is skipped by the
+   *  composer, so it costs nothing off). */
+  private bokeh!: BokehPass;
   /** When false, the whole post chain is bypassed and the scene renders straight
    *  to the canvas (tone mapping still applied by the renderer) — much cheaper, a
-   *  user toggle for frame rate. */
+   *  user toggle for frame rate. Bypassed only when DOF is also off; DOF needs the
+   *  composer, so turning it on keeps the chain alive with bloom skipped. */
   private bloomOn = true;
+
+  /** Lens/vanity state. `focalMm` drives the camera FOV (see `setFocalLength`);
+   *  DOF is off by default with a mid aperture and focus locked on the subject.
+   *  `dofFocusBias` shifts the focal plane in front of / behind the subject as a
+   *  fraction of the subject distance (0 = on the subject, +0.5 = half again as
+   *  far, −0.5 = halfway in). `rollAngle` banks the camera about its view axis. */
+  private focalMm = SceneManager.fovToFocal(LENS.defaultFovDeg);
+  private dofOn = false;
+  private dofAmount = 0.5;
+  private dofFocusBias = 0;
+  private rollAngle = 0;
   /** Graphics-quality preset: false = quality (default), true = performance.
    *  Drives the device-pixel cap, MSAA sample count and bloom blur resolution. */
   private perfMode = false;
@@ -252,8 +303,18 @@ export class SceneManager {
     });
     this.composer = new EffectComposer(this.renderer, target);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
+    // Depth-of-field first, so the bloom that follows glows the already-defocused
+    // image (out-of-focus highlights spread into bokeh discs). It renders its own
+    // depth via MeshDepthMaterial, which packs the standard perspective NDC depth
+    // independent of our logarithmic depth buffer — so the focus reconstruction is
+    // correct despite the huge near/far span. `focus`/`aperture` are set per frame
+    // from the subject distance in `updateDof`; it's skipped while `enabled` is off.
+    this.bokeh = new BokehPass(this.scene, this.camera, { focus: 1, aperture: 0, maxblur: DOF_MAX_BLUR });
+    this.bokeh.enabled = this.dofOn;
+    this.composer.addPass(this.bokeh);
     const b = BLOOM[this._theme];
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), b.strength, b.radius, b.threshold);
+    this.bloom.enabled = this.bloomOn;
     this.composer.addPass(this.bloom);
     // OutputPass applies the renderer's tone mapping + sRGB encoding as the final
     // step, so bloom mixes in linear light before the curve is applied.
@@ -272,11 +333,13 @@ export class SceneManager {
   }
 
   /** Enable/disable bloom. Off bypasses the entire post chain (no HDR target, no
-   *  blur passes) for a large frame-rate win; the scene keeps ACES tone mapping,
-   *  the lit Sun, atmospheres, ring shadow and accurate stars — it just loses the
-   *  soft glow. */
+   *  blur passes) for a large frame-rate win — UNLESS DOF is on, which needs the
+   *  composer, in which case the chain stays live with the bloom pass skipped. The
+   *  scene always keeps ACES tone mapping, the lit Sun, atmospheres, ring shadow
+   *  and accurate stars — bloom off just loses the soft glow. */
   setBloomEnabled(on: boolean): void {
     this.bloomOn = on;
+    if (this.bloom) this.bloom.enabled = on;
   }
 
   get performanceMode(): boolean {
@@ -306,6 +369,7 @@ export class SceneManager {
   private rebuildComposer(): void {
     this.composer?.dispose();
     this.bloom?.dispose();
+    this.bokeh?.dispose();
     this.setupComposer();
   }
 
@@ -424,6 +488,7 @@ export class SceneManager {
    *  interstellar view this also drops any ship-follow back to Sol (clearing the HUD
    *  selection), so `R` always means "frame the whole neighbourhood". */
   resetView(): void {
+    this.resetRoll(); // level the horizon along with re-framing
     if (this.viewMode === "interstellar") this.setInterstellarFocus(null);
     else this.focusBody(this.focusId);
   }
@@ -727,8 +792,118 @@ export class SceneManager {
   }
 
   render(): void {
+    // Bank the camera about its view axis before OrbitControls issues its lookAt,
+    // which reads camera.up — so the roll is baked into the very next frame.
+    this.applyRoll();
     this.controls.update();
-    if (this.bloomOn) this.composer.render();
+    if (this.dofOn) this.updateDof();
+    // The composer is required for DOF; otherwise it's only worth its cost for
+    // bloom. With neither, draw straight to the canvas (tone mapping still applied).
+    if (this.bloomOn || this.dofOn) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
+  }
+
+  // ── Lens / vanity camera ──────────────────────────────────────────────────
+
+  /** Vertical FOV (deg) for a focal length (mm) against the fixed sensor. */
+  private static focalToFov(mm: number): number {
+    return (2 * Math.atan(LENS.sensorMm / (2 * mm)) * 180) / Math.PI;
+  }
+  /** The inverse — the focal length (mm) that yields a given vertical FOV (deg). */
+  private static fovToFocal(deg: number): number {
+    return LENS.sensorMm / (2 * Math.tan((deg * Math.PI) / 360));
+  }
+
+  /** The lens focal length in mm (drives the field of view). */
+  get focalLength(): number {
+    return this.focalMm;
+  }
+
+  /** Set the lens focal length in mm, clamped to the usable range. Longer = more
+   *  telephoto (narrower FOV, compressed depth); shorter = wider. Independent of
+   *  the dolly zoom (camera distance), so it's a true lens change, not a move. */
+  setFocalLength(mm: number): void {
+    this.focalMm = Math.max(LENS.minMm, Math.min(LENS.maxMm, mm));
+    this.camera.fov = SceneManager.focalToFov(this.focalMm);
+    this.camera.updateProjectionMatrix();
+  }
+
+  /** The lens range (mm) and the default, for building the control. */
+  get lensRange(): { min: number; max: number; def: number } {
+    return { min: LENS.minMm, max: LENS.maxMm, def: SceneManager.fovToFocal(LENS.defaultFovDeg) };
+  }
+
+  // ── Roll (camera bank) ────────────────────────────────────────────────────
+
+  /** Current roll angle in radians (0 = ecliptic-level horizon). */
+  get roll(): number {
+    return this.rollAngle;
+  }
+
+  /** Bank the camera by `delta` radians about its current view axis (Q/E). */
+  rollBy(delta: number): void {
+    this.rollAngle += delta;
+  }
+
+  /** Level the horizon again (roll → 0). */
+  resetRoll(): void {
+    this.rollAngle = 0;
+  }
+
+  /** Rotate the camera's up hint around the view direction by the roll angle, so
+   *  OrbitControls' lookAt tilts the horizon while the orbit frame stays
+   *  ecliptic-aligned (position/orbit are computed from the fixed z-up frame, only
+   *  the view banks). At roll 0 this restores up to exact ecliptic north, so it's a
+   *  harmless no-op then. Degenerate when the view looks straight up the z axis
+   *  (up ∥ forward); the rotation simply does nothing there. */
+  private applyRoll(): void {
+    _fwd.copy(this.controls.target).sub(this.camera.position);
+    if (_fwd.lengthSq() === 0) return;
+    _fwd.normalize();
+    _up.copy(WORLD_UP).applyAxisAngle(_fwd, this.rollAngle);
+    this.camera.up.copy(_up);
+  }
+
+  // ── Depth of field ────────────────────────────────────────────────────────
+
+  get dofEnabled(): boolean {
+    return this.dofOn;
+  }
+  /** DOF blur amount (0 = none/pinhole, 1 = shallowest depth of field). */
+  get dofBlur(): number {
+    return this.dofAmount;
+  }
+  /** Focus-plane bias: 0 sits on the subject, + pushes it back, − pulls it in. */
+  get dofFocus(): number {
+    return this.dofFocusBias;
+  }
+
+  setDofEnabled(on: boolean): void {
+    this.dofOn = on;
+    if (this.bokeh) this.bokeh.enabled = on;
+  }
+  setDofBlur(amount: number): void {
+    this.dofAmount = Math.max(0, Math.min(1, amount));
+  }
+  setDofFocus(bias: number): void {
+    this.dofFocusBias = Math.max(-0.9, Math.min(3, bias));
+  }
+
+  /** Drive the Bokeh uniforms from the live subject distance. The focus plane sits
+   *  on the focused body (the controls target, at the render origin) shifted by the
+   *  user bias; the aperture is scaled by 1/focus so a given blur "amount" defocuses
+   *  the background by the same *relative* depth at every scale (see DOF_APERTURE_K).
+   *  Called each frame only while DOF is enabled. */
+  private updateDof(): void {
+    const camDist = Math.max(this.camera.position.distanceTo(this.controls.target), 1e-6);
+    const focus = Math.max(camDist * (1 + this.dofFocusBias), 1e-6);
+    const u = this.bokeh.uniforms as {
+      focus: { value: number };
+      aperture: { value: number };
+      maxblur: { value: number };
+    };
+    u.focus.value = focus;
+    u.aperture.value = (this.dofAmount * DOF_APERTURE_K) / focus;
+    u.maxblur.value = this.dofAmount * DOF_MAX_BLUR;
   }
 }

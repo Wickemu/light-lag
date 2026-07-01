@@ -168,6 +168,7 @@ Controls:
 | Key(s) | Action |
 |---|---|
 | Drag / WASD / ↑↓←→ | Orbit camera |
+| `Q` / `E` | Roll camera (bank the horizon) |
 | Scroll / `+` `-` | Zoom |
 | Space | Pause / resume |
 | `,` / `.` | Slower / faster time-warp |
@@ -176,10 +177,23 @@ Controls:
 | `F` | Toggle ship designer & flight console |
 | `V` | Cycle camera view angle (isometric → top-down → edge-on) |
 | `M` | Toggle system ⇄ interstellar view |
-| `R` / Home | Reset camera distance for current focus |
+| `R` / Home | Reset camera distance (and level roll) for current focus |
+| `H` / double-tap scene | Hide / show all HUD chrome (clean capture) |
 | `?` | Toggle help overlay (keyboard reference) |
 | Escape | Close the open planner / help / ship panel (in that order) |
 | `◐` (button) | Toggle light / dark theme |
+| `Lens ▾` (button) | Focal length, depth of field & clean-capture controls |
+
+The **Lens ▾** popover in the top bar is a photographer's "vanity" mode: a
+**focal length** slider swings the view from a wide 15 mm establishing shot to a
+compressed 300 mm telephoto (a true lens change — the field of view narrows
+without dollying the camera in), a **depth of field** group adds a photographic
+focus fall-off (the focused body stays sharp while the fore/background melt into
+soft bokeh — a **Blur** slider sets its strength and a **Focus** slider nudges the
+focal plane in front of or behind the subject), and **Hide UI** clears every panel
+for a clean capture. The lens settings persist across reloads; press `H` (or
+double-tap the scene) any time to toggle the chrome, and `R` to level the roll and
+re-frame.
 
 Show / hide lives on each **FOCUS** group header, which collapses by default to a
 tidy stack of headers and carries four controls: a caret to expand/collapse the

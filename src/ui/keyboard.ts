@@ -10,11 +10,13 @@
  *   1–8          — focus Sun, Mercury, Venus, Earth, Moon, Mars, Jupiter, Saturn
  *   Tab / Shift+Tab — cycle focus forward / backward
  *   WASD / ↑↓←→  — orbit camera (held; smooth)
+ *   Q / E        — roll camera (held; smooth)
  *   + / - (=/_)  — zoom in / out (held; smooth)
  *   R / Home     — reset camera framing for the active view
  *   V            — cycle view presets (isometric → top-down → edge-on)
  *   M            — toggle in-system orrery ⇄ interstellar map
  *   F            — toggle ship / flight panel
+ *   H            — hide / show all HUD chrome (clean capture)
  *   ?            — toggle the help overlay
  *   Escape       — close planner / help (then ship panel if already closed)
  */
@@ -30,6 +32,7 @@ import type { InterstellarPanel } from "./interstellarPanel.ts";
 
 const ORBIT_SPEED = 1.5; // rad/s while key is held
 const ZOOM_SPEED  = 2.0; // distance-multiplier rate per second
+const ROLL_SPEED  = 1.1; // rad/s of camera bank while Q/E is held
 
 const BODY_KEYS: Record<string, string> = {
   "1": "sun",
@@ -122,6 +125,8 @@ export class KeyboardManager {
 
     if (k === "n" || k === "N") { this.hud.toggleNav(); return; }
 
+    if (k === "h" || k === "H") { this.hud.toggleUi(); return; }
+
     if (k === "?") { this.hud.toggleHelp(); return; }
 
     if (k === "Escape") {
@@ -161,6 +166,14 @@ export class KeyboardManager {
    */
   tick(dt: number): void {
     const h = this.held;
+
+    // Roll (camera bank) is independent of the orbit/zoom offset math below and is
+    // applied straight to the SceneManager, so handle it first and separately.
+    // Both keys down cancels out (no roll), like opposing orbit keys.
+    const rollCCW = h.has("q") || h.has("Q");
+    const rollCW  = h.has("e") || h.has("E");
+    if (rollCCW !== rollCW) this.sm.rollBy((rollCCW ? 1 : -1) * ROLL_SPEED * dt);
+
     const orbitLeft  = h.has("ArrowLeft")  || h.has("a") || h.has("A");
     const orbitRight = h.has("ArrowRight") || h.has("d") || h.has("D");
     const orbitUp    = h.has("ArrowUp")    || h.has("w") || h.has("W");

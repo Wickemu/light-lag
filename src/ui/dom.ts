@@ -108,6 +108,39 @@ export function numberField(
   return input;
 }
 
+/** A labelled range slider with a live value readout in its header, laid out in a
+ *  `.slider-row`. `format` renders the current value into the readout (e.g. a unit
+ *  suffix); `onInput` fires continuously as the user drags. Returns the `<input>`
+ *  so the caller can set its value programmatically (e.g. a Reset button). */
+export function slider(
+  parent: HTMLElement,
+  label: string,
+  opts: { min: number; max: number; step: number; value: number; format: (v: number) => string },
+  onInput: (v: number) => void,
+): HTMLInputElement {
+  const wrap = el("div", "slider-row");
+  const head = el("div", "slider-head");
+  const lbl = el("span", "slider-label", label);
+  const val = el("span", "slider-value", opts.format(opts.value));
+  head.append(lbl, val);
+  wrap.appendChild(head);
+  const input = document.createElement("input");
+  input.type = "range";
+  input.min = String(opts.min);
+  input.max = String(opts.max);
+  input.step = String(opts.step);
+  input.value = String(opts.value);
+  input.oninput = () => {
+    const v = parseFloat(input.value);
+    if (!Number.isFinite(v)) return;
+    val.textContent = opts.format(v);
+    onInput(v);
+  };
+  wrap.appendChild(input);
+  parent.appendChild(wrap);
+  return input;
+}
+
 /** A compact centred number input with its label underneath (stage editor rows). */
 export function compactField(
   parent: HTMLElement,
