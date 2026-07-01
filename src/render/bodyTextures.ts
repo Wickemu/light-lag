@@ -1151,7 +1151,12 @@ export function makeCoronaTexture(seed: number, maxAniso: number): THREE.Texture
         const lobes = 0.5 + 0.5 * Math.tanh(s * 0.6);            // 0..1 streamer gate
         const core = Math.exp(-r * 3.4);                         // tight bright inner glow
         const tail = Math.exp(-r * 1.15) * (0.30 + 0.70 * lobes); // ray-modulated halo
-        a = clamp01(core * 0.85 + tail);
+        // The exponential tail is still ~0.1–0.35 at the texture boundary; clipping
+        // it there left a hard-edged disk rim. Window the whole field smoothly to
+        // zero across the outer half so the halo dissolves into space instead.
+        const t = clamp01((r - 0.5) / 0.5);
+        const edge = 1 - t * t * (3 - 2 * t);                    // smoothstep, inverted (1→0)
+        a = clamp01((core * 0.85 + tail) * edge);
       }
       const i = (y * size + x) * 4;
       d.data[i] = 255; d.data[i + 1] = 255; d.data[i + 2] = 255;
