@@ -29,6 +29,7 @@ import {
   interstellarProperTime, spiralElements, buildEntryLeg, buildApproachLeg, buildPerturbedLeg, inertialDirToSurface, NOMINAL_ENTRY_VEHICLE,
 } from "./ships.ts";
 import { selectPerturbers, type Perturber } from "./perturbed.ts";
+import { fillFromISRU } from "./isru.ts";
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
 import { type KeplerElements, type State, stateToElements, elementsToState, propagate, meanMotion, wrapPi, wrapTwoPi } from "./math/kepler.ts";
@@ -804,6 +805,7 @@ export class Simulation {
       case "land-arrive": this.arriveLand(ship); break;
       case "aero-trim": this.trimAerocapture(ship); break;
       case "perturbed-finalize": this.finalizePerturbed(ship); break;
+      case "isru-complete": this.finalizeISRU(ship); break;
       default: break;
     }
   }
@@ -1971,6 +1973,22 @@ export class Simulation {
     ship.r = undefined;
     ship.v = undefined;
     ship.epoch = t;
+  }
+
+  /**
+   * Complete an ISRU mining process (the `isru-complete` finalize): fill the ship's
+   * tanks with the full pinned `target` of mined propellant (capacity-capped) and
+   * clear the process. The credit is the pinned target regardless of how the interval
+   * to this event was chunked, so the mass change is chunk-invariant. A ship that is
+   * no longer landed (launched before the event without going through the pre-emption
+   * path) simply aborts with no credit — pre-emption in commands.ts credits partials.
+   */
+  private finalizeISRU(ship: Ship): void {
+    const p = ship.isru;
+    if (!p) return; // already pre-empted (stop / launch / delete removed the descriptor)
+    if (!ship.landed) { ship.isru = undefined; return; }
+    fillFromISRU(ship, p.target);
+    ship.isru = undefined;
   }
 
   /**

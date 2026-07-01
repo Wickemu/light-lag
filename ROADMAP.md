@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is the `@lightlag/engine` workspace package
-(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 758 passing
+(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 978 passing
 physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
@@ -58,8 +58,13 @@ findings fixed. **The physics core is locked.**
   mass-conserving and capacity-capped. Still to do here: persistent depot *stations*
   (transfer is ship↔ship today), propellant boil-off, and a rendezvous-targeting planner
   (you fly craft co-orbital by hand; identical orbits dock exactly).
-- **ISRU**: mine volatiles (water ice from comets/moons/regolith) → propellant +
-  life support; everything traces back to energy.
+- **ISRU — DONE (first cut):** a landed ship mines a body's in-situ volatiles (water ice
+  from comets/moons/regolith) into propellant (`packages/engine/src/isru.ts`); the production
+  rate is plant power ÷ the body's `specificEnergyJPerKg` — everything traces back to energy.
+  Power from the ship's electric source (solar 1/r²-derated) or a default plant; pinned at
+  deploy ⇒ a single chunk-invariant `isru-complete` finalize; optional state ⇒ golden hash
+  unmoved. Still to do here: a finite per-body deposit (unbounded today), propellant boil-off,
+  ISRU for life support (propellant only today), and a time-varying (day/night) rate.
 - A **colony/base** with supply requirements that must be resupplied within a
   transfer window; missing the window has consequences.
 - v1 resource cap: propellant, structure, life-support mass (~3 resources).
@@ -79,7 +84,33 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-*(Most recent: **Eased interstellar follow — the camera now *glides* into focus instead of snapping.**
+*(Most recent: **ISRU propellant mining — the mass economy grows its first in-situ source.** Refuelling
+was ship-to-ship only (`refuel.ts`): you could move propellant between hulls but never *make* any. Now a
+**landed** ship can mine a body's in-situ volatiles (comet / icy-moon / regolith water ice) into
+propellant — the conceptual root of Phase 7, "everything traces back to energy." A volatile-bearing body
+carries a static `BodyDef.isru = { specificEnergyJPerKg }` (the energy to liberate + process 1 kg of
+propellant — loose cometary ice is cheap, bound lunar cold-trap regolith is dear; dry bodies omit it), so
+the production rate is simply plant power ÷ that specific energy. Power is drawn from the ship's own
+electric source (solar arrays 1/r²-derated via the existing `availablePowerW`, a reactor constant) or a
+modest `DEFAULT_ISRU_PLANT_W` fallback — the same "one power law" the electric drives use. The rate is
+**pinned at deploy**, so the whole fill is a single scheduled `isru-complete` finalize that tops the tanks
+up (capacity-capped, active→tip, reusing the `refuel.ts` fill loop) — chunk-invariant, exact at any
+time-warp, and impulsive like the maneuvers. A new pure `packages/engine/src/isru.ts` (`bodyHasISRU` /
+`isruPowerW` / `isruRate` / `fillFromISRU` / `isruProduced` / `isruStatusOf`) holds the physics; the sim
+gains the finalize + `isru-complete` event; `app/commands.ts` wraps it as `startISRU` / `stopISRU` /
+`isruStatus` / `canISRU`, and launching (or an explicit stop) **credits the partial produced so far**
+(`ratePerSec·elapsed`) before clearing. All new state is optional — the body descriptors are static module
+data and `Ship.isru?` is omitted from `qShip` when absent — so the **golden hash is unmoved
+(`11f2c9fc7a5876`); suite 978 green** (+18: `packages/engine/src/isru.test.ts` rate/power/fill/produced/
+status; `src/app/isru.test.ts` fill-to-target, chunk-invariance, serialize round-trip mid-process,
+golden-neutrality, stop/launch partial credit, guards). Five bodies are tagged (67P, Enceladus, Europa,
+Ceres, and the lunar poles). The flight console gains an **ISRU / MINE** section (Mine/Stop + live
+progress/ETA), verified manually as the DOCK/TRANSFER section is. Still to do (the rest of candidate #1):
+**persistent depot stations** (transfer is ship↔ship + this surface-mine today — the `Station` records are
+still inert orbit-holders), a **finite body deposit** (the deposit is unbounded, tank ≪ comet),
+**propellant boil-off** (the natural antagonist), and a **colony supplied within a transfer window**; plus a
+time-varying (day/night / orbital) rate — pinning at deploy is the deliberate chunk-invariance approximation.
+The round before: **Eased interstellar follow — the camera now *glides* into focus instead of snapping.**
 The interstellar camera could already follow a ship or a focused star, but it re-homed in a single
 frame (`SceneManager.followInterstellar` shifted the look-at + camera by the whole gap at once). It now
 eases in: a new `followInterstellarEased` runs a smoothstep glide (~0.6 s real wall-clock, so
@@ -122,10 +153,11 @@ craft at L2 now actually drifts off the kinematic point, closing the PR-#80 Lagr
 "Perturbed" overlay + a FIDELITY console toggle surface it. See the backlog entry and the "Done
 since last round" note. The round before, **click-to-focus extended to the in-system orrery** landed.)*
 
-1. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly are now
-   DONE (a first cut — `packages/engine/src/refuel.ts`); what remains is ISRU from moon/comet/regolith volatiles,
-   persistent depot stations, propellant boil-off, and a colony supplied within a transfer window.
-   *(see Phase 7.)*
+1. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly (`refuel.ts`)
+   and now **ISRU propellant mining** (`packages/engine/src/isru.ts` — a landed ship mines a body's in-situ
+   volatiles into propellant, power/energy-gated) are DONE (first cuts); what remains is **persistent depot
+   stations** (transfer is ship↔ship + surface-mine today), a **finite body deposit** (unbounded today),
+   **propellant boil-off**, and a **colony supplied within a transfer window**. *(see Phase 7.)*
 
 *(**Interstellar follow polish — eased transition + streak reconcile** — formerly candidate #2 — is now
 DONE; see the "Most recent" note above and the "Interstellar sky / camera" backlog entry.)*

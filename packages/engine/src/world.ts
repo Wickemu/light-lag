@@ -394,6 +394,15 @@ export interface Ship {
    *  speed). Drives the UI (offer Launch, not Land) and the "safe touchdown is
    *  implicit" semantics. Cleared on launch. */
   landed?: { bodyId: string; surfaceDir: Vec3 };
+  /** An in-progress ISRU propellant-mining process on a LANDED ship: it converts a
+   *  body's in-situ volatiles (comet / icy-moon / regolith water ice) into propellant
+   *  at a constant `ratePerSec` (kg/s) PINNED at deploy, so the fill is a single
+   *  chunk-invariant `isru-complete` finalize (the mass credit is a pure function of
+   *  `tStart`/`ratePerSec`/`target`, independent of time-chunking). `target` is the total
+   *  kg to add (= tank headroom at start). Cleared at the finalize or on pre-emption
+   *  (launch / stop / delete), which credits `ratePerSec·elapsed`. Opt-in; absent ⇒
+   *  omitted from serialization ⇒ golden hash unmoved. Runs only while `landed` is set. */
+  isru?: { bodyId: string; tStart: number; ratePerSec: number; target: number };
   /** Accumulated proper time (s). Equal to coordinate time in-system; kept so an
    *  eventual relativistic expansion stays consistent. */
   tau: number;
