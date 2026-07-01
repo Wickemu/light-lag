@@ -637,6 +637,8 @@ function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAn
   const desert: RGB = hexToRgb(0xbda478);
   const forest: RGB = hexToRgb(0x46663a);
   const tundra: RGB = hexToRgb(0x83836f);
+  const rock: RGB = hexToRgb(0x8a7c68);   // barren highland rock/scree
+  const snow: RGB = hexToRgb(0xeaeff4);   // alpine / polar snow on the peaks
   const ice: RGB = hexToRgb(0xdde7ee);
   const tmp: RGB = [0, 0, 0];
 
@@ -666,18 +668,32 @@ function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAn
         setPx(bump.data, i, 0.35, 0.35, 0.35);
         roughV = 0.34 + (1 - openness) * 0.12; // deep water glossiest → shelves a touch rougher
       } else {
-        // Land — biome by latitude, with a little noise breakup.
+        // Land — a real elevation field (broad continental undulation + ridged
+        // mountain belts + fine detail) drives BOTH the colour and a higher-contrast
+        // relief map, so the surface reads as textured terrain instead of a flat
+        // painted wash: lush green lowlands rise through barren highland rock to
+        // alpine/polar snow on the peaks, and the ridges cut sharp normals the lit
+        // globe shades like the cratered worlds.
+        const cont = fbm(u + 9.0, v + 2.0, 5, 10);        // broad continental relief
+        const rn = fbm(u + 50.0, v + 15.0, 5, 20);
+        const ridge = 1 - Math.abs(rn * 2 - 1);           // sharp mountain ridges
+        const detail = fbm(u + 70.0, v + 40.0, 4, 64);    // fine surface roughness
+        const elev = clamp01(cont * 0.5 + ridge * ridge * 0.4 + detail * 0.1);
+
         const warm = clamp01(1 - lat * 1.3);
         lerpRgb(tundra, forest, warm, tmp);
         lerpRgb(tmp, desert, clamp01((warm - 0.5) * 1.6), tmp);
-        const rn = fbm(u + 9.0, v + 2.0, 4, 24);
-        const k = 0.8 + rn * 0.22; // ≤ ~1.0, avoids clipping
+        lerpRgb(tmp, rock, clamp01((elev - 0.6) * 2.4), tmp);           // barren highlands
+        const snowLine = 0.82 - lat * 0.30;                             // lower toward the poles
+        if (elev > snowLine) lerpRgb(tmp, snow, clamp01((elev - snowLine) * 3.0), tmp);
+        const k = 0.82 + detail * 0.26; // fine mottle
         tmp[0] = clamp01(tmp[0] * k);
         tmp[1] = clamp01(tmp[1] * k);
         tmp[2] = clamp01(tmp[2] * k);
         setPx(painted.data, i, tmp[0], tmp[1], tmp[2]);
-        const relief = fbm(u + 9.0, v + 2.0, 5, 18);
-        const b = clamp01(0.5 + relief * 0.4);
+        // Relief centred on the datum: valleys below, ridges above, plus fine detail
+        // for sharper normals than the old low-amplitude single-octave field.
+        const b = clamp01(0.5 + (elev - 0.45) * 0.85 + (detail - 0.5) * 0.22);
         setPx(bump.data, i, b, b, b);
         roughV = 0.9; // matte land
       }
@@ -913,7 +929,9 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
   const set: BodyTextureSet = {
     surface,
     bump,
-    bumpScale: bump ? 0.02 : 0, // gas giants/star carry no bump map
+    // Earth's land carries finer, sharper relief than the cratered rocks, and its
+    // ocean bump is flat, so it can take a stronger bump scale without over-embossing.
+    bumpScale: bump ? (def.id === "earth" ? 0.03 : 0.02) : 0, // gas giants/star carry no bump map
     roughness,
     metalness,
     obliquityRad,
