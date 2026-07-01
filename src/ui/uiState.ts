@@ -80,3 +80,19 @@ export function setNumber(key: string, value: number): void {
   bag[key] = value;
   save(bag);
 }
+
+/** Whether a key is present at all — lets a one-time migration tell "explicitly
+ *  set" apart from "never set" (which the typed getters can't, both returning the
+ *  fallback). */
+export function hasKey(key: string): boolean {
+  return key in load();
+}
+
+/** Delete a persisted key, e.g. to retire a setting after folding it into another. */
+export function removeKey(key: string): void {
+  const bag = load();
+  if (key in bag) {
+    delete bag[key];
+    save(bag);
+  }
+}

@@ -26,6 +26,7 @@ export type LayerKey =
   | "route"
   | "perturbed"
   | "labels"
+  | "glow"
   | "ships"
   | "comms"
   | "doppler_tint"
@@ -36,13 +37,13 @@ export type LayerKey =
 
 /** All layer keys, for iterating (e.g. hydrating/persisting saved toggles). */
 export const LAYER_KEYS: LayerKey[] = [
-  "orbits", "trajectory", "route", "perturbed", "labels", "ships",
+  "orbits", "trajectory", "route", "perturbed", "labels", "glow", "ships",
   "comms", "doppler_tint", "stars", "starLabels", "constellations", "forces",
 ];
 
 export class Visibility {
   private layers: Record<LayerKey, boolean> = {
-    orbits: true, trajectory: true, route: false, perturbed: false, labels: true, ships: true,
+    orbits: true, trajectory: true, route: false, perturbed: false, labels: true, glow: true, ships: true,
     comms: true, doppler_tint: false, stars: true, starLabels: true,
     constellations: false, forces: false,
   };

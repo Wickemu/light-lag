@@ -477,12 +477,19 @@ export class BodyViews {
     }
     const tmp = new THREE.Vector3();
     const orbitsOn = this.vis.layer("orbits");
+    // The always-visible marker is the soft "glow" halo that keeps a body legible
+    // from a distance; turning the Glow layer off leaves only the raw sphere. A
+    // shown body still runs the position update below, which labels and
+    // click-picking read — so only the drawn sprite goes away, the body stays
+    // selectable. (Glow gates just the sprite; a hidden body is skipped entirely,
+    // exactly as before.)
+    const glowOn = this.vis.layer("glow");
     for (const vis of this.visuals) {
       const { def } = vis;
 
       // Honour show/hide: a hidden body drops its marker, sphere and orbit.
       const shown = this.vis.bodyVisible(def.id);
-      vis.marker.visible = shown;
+      vis.marker.visible = shown && glowOn;
       vis.node.visible = shown;
       if (vis.orbit) vis.orbit.visible = shown && orbitsOn;
       if (vis.baryOrbit) vis.baryOrbit.visible = shown && orbitsOn;
