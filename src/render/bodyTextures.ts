@@ -131,6 +131,41 @@ function makeFbm(rng: () => number): (x: number, y: number, octaves: number, bas
   };
 }
 
+// ── Tileable cellular (Worley) noise ─────────────────────────────────────────
+//
+// Solar granulation is a convection pattern: bright polygonal cells (granule tops)
+// separated by narrow dark lanes where cooled plasma sinks. A cellular/Worley field
+// captures exactly that, where value noise only gives a formless mottle. Feature
+// points sit on a jittered integer lattice whose x index wraps to `cellsX`, so the
+// field is seamless across the u=0/1 meridian; latitude never wraps (it ends at the
+// poles). F1 (nearest feature) measures depth into a granule, F2−F1 proximity to a
+// lane. Seeded off the shared PRNG so the Sun looks identical on every reload.
+
+function makeCellular(rng: () => number): (x: number, y: number, cellsX: number, cellsY: number) => { f1: number; f2: number } {
+  const perm = new Uint16Array(1024);
+  for (let i = 0; i < 1024; i++) perm[i] = (rng() * 65536) & 0xffff;
+  return (x, y, cellsX, cellsY) => {
+    // Cell counts differ per axis (cellsY ≈ cellsX/2 on the 2:1 map) so the cells
+    // stay round in pixels; distances are then Euclidean in cell-index space.
+    const gx = x * cellsX, gy = y * cellsY;
+    const xi = Math.floor(gx), yi = Math.floor(gy);
+    let f1 = 1e9, f2 = 1e9;
+    for (let oy = -1; oy <= 1; oy++) {
+      for (let ox = -1; ox <= 1; ox++) {
+        const cxi = xi + ox, cyi = yi + oy;
+        const wx = ((cxi % cellsX) + cellsX) % cellsX; // wrap the x lattice → seamless
+        const p = perm[(((wx * 73856093) ^ (cyi * 19349663)) >>> 0) & 1023]!;
+        const fx = cxi + (p & 255) / 255;             // jittered feature point, placed
+        const fy = cyi + ((p >> 8) & 255) / 255;      // adjacent to this pixel
+        const dx = fx - gx, dy = fy - gy;
+        const d = dx * dx + dy * dy;
+        if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) { f2 = d; }
+      }
+    }
+    return { f1: Math.sqrt(f1), f2: Math.sqrt(f2) };
+  };
+}
+
 // ── Canvas plumbing ──────────────────────────────────────────────────────────
 
 interface Painted {
@@ -252,29 +287,145 @@ const ATMO_GLOW: Record<string, AtmoGlow> = {
 
 // ── Painters ─────────────────────────────────────────────────────────────────
 
-/** The Sun: convective granulation + bright limb-darkened poles, all emissive
- *  (the material is unlit), so it reads as a light source, not a lit ball. */
-function paintStar(def: BodyDef, w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAniso: number): THREE.Texture {
+/**
+ * The Sun's photosphere. Convective granulation is painted as a cellular (Worley)
+ * field — bright polygonal granule interiors divided by the darker intergranular
+ * lanes — over a coarser mesogranular layer and a slow supergranular brightness
+ * mottle. Then real solar activity is stamped on top: sunspot groups (a very dark
+ * umbra inside a lighter, radially filamented penumbra) at the active mid-latitudes,
+ * ringed by bright faculae (the hot magnetic plage). All emissive (the material is
+ * unlit) so it reads as a light source, and pulled toward the body's warm colour so
+ * it stays solar rather than bleached.
+ */
+function paintStar(def: BodyDef, w: number, h: number, fbm: ReturnType<typeof makeFbm>, rng: () => number, maxAniso: number): THREE.Texture {
   const { painted } = makeCanvas(w, h);
+  const cell = makeCellular(rng);
   const base = hexToRgb(def.color);
-  const hot = shade(def.color, 0.22, -0.1); // brighter granule centres
-  const cool = shade(def.color, -0.12, 0.05); // intergranular lanes
+  const lane = shade(def.color, -0.20, 0.06); // cooler, redder intergranular lanes
+  const gran = shade(def.color, 0.08, -0.02); // granule body
+  const hot = shade(def.color, 0.30, -0.12);  // bright granule centres (toward white)
   const tmp: RGB = [0, 0, 0];
+
+  // Fine granules over a coarser mesogranular field; cell counts scale with the
+  // texture width and halve in latitude so the cells stay round on the 2:1 map.
+  const fineX = Math.max(48, Math.round(w / 8));
+  const fineY = Math.max(24, Math.round(fineX / 2));
+  const mesoX = Math.max(16, Math.round(fineX / 3));
+  const mesoY = Math.max(8, Math.round(mesoX / 2));
+
   for (let y = 0; y < h; y++) {
     const v = y / h;
+    const latAbs = Math.abs(v - 0.5) * 2; // 0 at the equator → 1 at a pole
+    // Equirectangular maps pinch all longitudes together at the poles, which smears
+    // the granulation into radial streaks there. Taper the high-frequency granule
+    // contrast toward the poles so the pinch reads as a smooth cap, not a swirl.
+    const polar = clamp01((latAbs - 0.80) / 0.20);
     for (let x = 0; x < w; x++) {
       const u = x / w;
-      // Two scales: fine granules over a slow brightness mottle.
-      const fine = fbm(u, v, 5, 24);
-      const slow = fbm(u + 3.1, v + 1.7, 3, 6);
-      const g = clamp01(fine * 0.7 + slow * 0.5);
-      lerpRgb(cool, hot, g, tmp);
-      // Pull the whole disc toward the base hue so it stays solar, not bleached.
-      lerpRgb(base, tmp, 0.7, tmp);
+      const f = cell(u, v, fineX, fineY);
+      const laneF = clamp01((f.f2 - f.f1) / 0.22); // 0 in a lane → 1 in the granule interior
+      const centF = clamp01(1 - f.f1 * 1.35);      // brightest toward the granule centre
+      const m = cell(u + 3.3, v + 1.7, mesoX, mesoY);
+      const laneM = clamp01((m.f2 - m.f1) / 0.24);
+      const superg = fbm(u + 5.2, v + 2.7, 3, 4);   // slow supergranular brightness
+      let g = 0.28 + 0.40 * laneF + 0.20 * centF + 0.14 * laneM;
+      g = clamp01(g * (0.82 + 0.34 * superg));
+      if (polar > 0) g = g + (0.5 + 0.22 * superg - g) * polar; // smooth the polar cap
+      if (g < 0.5) lerpRgb(lane, gran, g / 0.5, tmp);
+      else lerpRgb(gran, hot, (g - 0.5) / 0.5, tmp);
+      lerpRgb(base, tmp, 0.82, tmp); // keep it solar, not bleached
       setPx(painted.data, (y * w + x) * 4, tmp[0], tmp[1], tmp[2]);
     }
   }
-  return toTexture(painted, maxAniso, true);
+
+  // Sunspot groups + faculae, stamped on the canvas over the granulation.
+  paintSunspots(painted, w, h, def.color, rng);
+  return toTexture(painted, maxAniso, true, true);
+}
+
+/** Stamp a soft radial-gradient disc, wrapping across the u=0/1 seam when it
+ *  straddles (shared by the Sun's faculae). */
+function stampSoftDisc(ctx: CanvasRenderingContext2D, w: number, x: number, y: number, r: number, color: RGB, alpha: number): void {
+  const xs = (x < r || x > w - r) ? [x, x < r ? x + w : x - w] : [x];
+  for (const cx of xs) {
+    const g = ctx.createRadialGradient(cx, y, 0, cx, y, r);
+    g.addColorStop(0, rgbaStr(color, alpha));
+    g.addColorStop(1, rgbaStr(color, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+/**
+ * Stamp a handful of sunspot groups at the active mid-latitudes — the ±5–35° bands
+ * where the real Sun's magnetic flux erupts. Each group is a cluster of spots (a
+ * dark umbra inside a lighter, radially filamented penumbra) surrounded by bright
+ * faculae, the hot magnetic network that frames every active region. Deterministic
+ * from the seeded PRNG; an impression of solar activity, not a dated observation.
+ * Draws directly on the canvas and leaves the pixels there (build with onCanvas).
+ */
+function paintSunspots(surf: Painted, w: number, h: number, color: number, rng: () => number): void {
+  const ctx = surf.canvas.getContext("2d")!;
+  ctx.putImageData(surf.data, 0, 0);
+  const umbra = shade(color, -0.72, 0.06);
+  const penumbra = shade(color, -0.36, 0.02);
+  const filament = shade(color, -0.24, 0.0);
+  const facula = shade(color, 0.36, -0.10);
+  const degPx = DEG_TO_PX(w);
+
+  const groups = 5 + Math.floor(rng() * 4); // 5–8 active regions
+  for (let gi = 0; gi < groups; gi++) {
+    const sign = rng() < 0.5 ? -1 : 1;
+    const lat = sign * (6 + rng() * 28);      // active latitudes ±6–34°
+    const lon = rng() * 360 - 180;
+    const spots = 2 + Math.floor(rng() * 4);  // 2–5 spots per group
+    const spread = 6 + rng() * 12;            // angular size the group spans (deg)
+
+    // Faculae field first (under the spots): a bright stipple around the region.
+    for (let k = 0; k < 30; k++) {
+      const fl = lon + (rng() - 0.5) * spread * 2.4;
+      const fb = lat + (rng() - 0.5) * spread * 1.6;
+      const [fx, fy] = lonLatToPx(fl, fb, w, h);
+      stampSoftDisc(ctx, w, fx, fy, (0.4 + rng() * 1.1) * degPx, facula, 0.12 + rng() * 0.16);
+    }
+
+    for (let si = 0; si < spots; si++) {
+      const sl = lon + (rng() - 0.5) * spread;
+      const sb = lat + (rng() - 0.5) * spread * 0.7;
+      const [sx, sy] = lonLatToPx(sl, sb, w, h);
+      // The leading spot of a group is the largest; the rest are smaller followers.
+      const rp = (si === 0 ? 3.0 + rng() * 3.0 : 1.4 + rng() * 2.6) * degPx; // penumbra radius
+      const ru = rp * (0.42 + rng() * 0.20);    // umbra radius
+      const xs = (sx < rp || sx > w - rp) ? [sx, sx < rp ? sx + w : sx - w] : [sx];
+      for (const cx of xs) {
+        // Penumbra disc.
+        const pg = ctx.createRadialGradient(cx, sy, ru * 0.6, cx, sy, rp);
+        pg.addColorStop(0, rgbaStr(penumbra, 0.92));
+        pg.addColorStop(0.7, rgbaStr(penumbra, 0.78));
+        pg.addColorStop(1, rgbaStr(penumbra, 0));
+        ctx.fillStyle = pg;
+        ctx.beginPath(); ctx.arc(cx, sy, rp, 0, Math.PI * 2); ctx.fill();
+        // Radial penumbral filaments.
+        ctx.strokeStyle = rgbaStr(filament, 0.5);
+        ctx.lineWidth = Math.max(0.6, degPx * 0.4);
+        const fils = 16 + Math.floor(rng() * 12);
+        for (let fi = 0; fi < fils; fi++) {
+          const a = (fi / fils) * Math.PI * 2 + rng() * 0.3;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * ru * 0.9, sy + Math.sin(a) * ru * 0.9);
+          ctx.lineTo(cx + Math.cos(a) * rp * 0.98, sy + Math.sin(a) * rp * 0.98);
+          ctx.stroke();
+        }
+        // Dark umbra core.
+        const ug = ctx.createRadialGradient(cx, sy, 0, cx, sy, ru);
+        ug.addColorStop(0, rgbaStr(umbra, 0.96));
+        ug.addColorStop(0.75, rgbaStr(umbra, 0.9));
+        ug.addColorStop(1, rgbaStr(umbra, 0));
+        ctx.fillStyle = ug;
+        ctx.beginPath(); ctx.arc(cx, sy, ru, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
 }
 
 /** Gas/ice giants: real belt/zone structure, zonal turbulence, shear-line
@@ -882,7 +1033,7 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
 
   const isGiant = def.kind === "planet" && !def.hasSurface; // gas giants have no surface
   if (def.kind === "star") {
-    surface = paintStar(def, w, h, fbm, maxAniso);
+    surface = paintStar(def, w, h, fbm, rng, maxAniso);
     roughness = 1;
   } else if (isGiant) {
     surface = paintGasGiant(def, w, h, maxAniso).surface;
@@ -947,6 +1098,49 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
   }
 
   return set;
+}
+
+/**
+ * A structured corona sprite texture: a tight bright inner glow surrounded by a
+ * long faint halo that is modulated by angular helmet-streamer lobes (a sum of
+ * random harmonics), so the Sun's outer atmosphere radiates in uneven spokes rather
+ * than as a flat disc. Luminance is baked into the alpha with white RGB, so the
+ * sprite material multiplies in any HDR colour; the renderer layers two of these
+ * (counter-rotating and breathing) into a living corona. Seeded for determinism.
+ */
+export function makeCoronaTexture(seed: number, maxAniso: number): THREE.Texture {
+  const size = 512;
+  const { painted } = makeCanvas(size, size);
+  const rng = mulberry32(seed >>> 0);
+  const K = 6;
+  const amp: number[] = [], phase: number[] = [], freq: number[] = [];
+  for (let k = 0; k < K; k++) {
+    amp.push(0.4 + rng() * 0.8);
+    phase.push(rng() * Math.PI * 2);
+    freq.push(3 + Math.floor(rng() * 10));
+  }
+  const cx = size / 2, cy = size / 2, R = size / 2;
+  const d = painted.data;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - cx, dy = y - cy;
+      const r = Math.hypot(dx, dy) / R;
+      let a = 0;
+      if (r < 1) {
+        const ang = Math.atan2(dy, dx);
+        let s = 0;
+        for (let k = 0; k < K; k++) s += amp[k]! * Math.sin(freq[k]! * ang + phase[k]!);
+        const lobes = 0.5 + 0.5 * Math.tanh(s * 0.6);            // 0..1 streamer gate
+        const core = Math.exp(-r * 3.4);                         // tight bright inner glow
+        const tail = Math.exp(-r * 1.15) * (0.30 + 0.70 * lobes); // ray-modulated halo
+        a = clamp01(core * 0.85 + tail);
+      }
+      const i = (y * size + x) * 4;
+      d.data[i] = 255; d.data[i + 1] = 255; d.data[i + 2] = 255;
+      d.data[i + 3] = (a * 255) | 0;
+    }
+  }
+  return toTexture(painted, maxAniso, true);
 }
 
 /** Soft radial glow texture for the Sun's corona sprite. */
