@@ -561,12 +561,6 @@ input[type="range"]::-moz-range-thumb {
   background: var(--accent);
   cursor: pointer;
 }
-/* The DOF checkbox reuses .help-toggle, minus that block's top divider/margin. */
-.lens-dof-toggle {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: none;
-}
 .lens-action {
   width: 100%;
   font-size: 11px;

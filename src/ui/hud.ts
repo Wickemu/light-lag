@@ -26,7 +26,7 @@ import { el, button, kvAuto, slider } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
 import { popover, type Popover } from "./popover.ts";
 import { ACCENTS, applyAccent, currentAccent, type AccentName } from "./themes.ts";
-import { getFlag, setFlag, getString, setString, getNumber, setNumber } from "./uiState.ts";
+import { getFlag, setFlag, getString, setString, getNumber, setNumber, hasKey, removeKey } from "./uiState.ts";
 
 /** Focus-list groups, in display order. The Sun (star) gets no header — it sits
  *  alone at the top, directly under FOCUS. BODIES is ordered by heliocentric
@@ -308,6 +308,7 @@ const LAYER_CHIPS: { key: LayerKey; label: string }[] = [
   { key: "route", label: "Route" },
   { key: "perturbed", label: "Perturbed" },
   { key: "labels", label: "Labels" },
+  { key: "glow", label: "Glow" },
   { key: "stars", label: "Stars" },
   { key: "starLabels", label: "Star names" },
   { key: "constellations", label: "Constellations" },
@@ -906,9 +907,10 @@ export class Hud {
   }
 
   /** The Lens / "vanity" popover: a photographic focal-length control, a
-   *  depth-of-field group (toggle + blur + focus-plane bias), and a "hide UI"
-   *  button for clean captures. Every setting is applied to the SceneManager and
-   *  persisted, and restored here on load so the lens survives a reload. */
+   *  depth-of-field group (a single Blur slider that IS the on/off — 0 = off — plus
+   *  a focus-plane bias), and a "hide UI" button for clean captures. Every setting
+   *  is applied to the SceneManager and persisted, and restored here on load so the
+   *  lens survives a reload. */
   private buildLensPopover(): HTMLButtonElement {
     const pop = popover(this.root, "Lens ▾", { title: "Lens & depth of field", className: "lens-popover" });
 
@@ -925,24 +927,18 @@ export class Hud {
     );
 
     // ── Depth of field ──
+    // No separate on/off box: the Blur slider is the switch. Any blur above zero
+    // turns DOF on (and the SceneManager skips the whole pass at zero), so the
+    // control and its effect can never disagree.
     pop.content.appendChild(el("div", "section-label", "DEPTH OF FIELD"));
-    const dof0 = getFlag("lens.dof", false);
-    this.sm.setDofEnabled(dof0);
-    const dofRow = el("label", "help-toggle lens-dof-toggle");
-    const dofCb = document.createElement("input");
-    dofCb.type = "checkbox";
-    dofCb.checked = dof0;
-    dofCb.onchange = () => { this.sm.setDofEnabled(dofCb.checked); setFlag("lens.dof", dofCb.checked); };
-    dofRow.append(dofCb, el("span", "", "Depth of field (subject sharp)"));
-    pop.content.appendChild(dofRow);
-
-    const blur0 = getNumber("lens.dofBlur", 0.5);
+    const blur0 = this.migratedDofBlur();
     this.sm.setDofBlur(blur0);
+    this.sm.setDofEnabled(blur0 > 0);
     const blurInput = slider(
       pop.content,
       "Blur",
-      { min: 0, max: 100, step: 1, value: Math.round(blur0 * 100), format: (v) => `${v.toFixed(0)}%` },
-      (v) => { this.sm.setDofBlur(v / 100); setNumber("lens.dofBlur", v / 100); },
+      { min: 0, max: 100, step: 1, value: Math.round(blur0 * 100), format: (v) => (v === 0 ? "off" : `${v.toFixed(0)}%`) },
+      (v) => { this.sm.setDofBlur(v / 100); this.sm.setDofEnabled(v > 0); setNumber("lens.dofBlur", v / 100); },
     );
 
     // Focus bias: 0 sits on the focused body; − pulls the plane in front, + pushes
@@ -970,13 +966,11 @@ export class Hud {
     // ── Reset ──
     const resetBtn = button("Reset lens", () => {
       focalInput.value = String(def);
-      dofCb.checked = false;
-      blurInput.value = "50";
+      blurInput.value = "0";
       focusInput.value = "0";
       // Fire each control's own handler so the readout, SceneManager and storage
       // all update through the one path they already use.
       focalInput.dispatchEvent(new Event("input"));
-      dofCb.dispatchEvent(new Event("change"));
       blurInput.dispatchEvent(new Event("input"));
       focusInput.dispatchEvent(new Event("input"));
     });
@@ -984,6 +978,23 @@ export class Hud {
     pop.content.appendChild(resetBtn);
 
     return pop.trigger;
+  }
+
+  /** The starting DOF blur, folding in the retired `lens.dof` on/off flag exactly
+   *  once. The previous build had a separate checkbox (`lens.dof`) alongside the
+   *  `lens.dofBlur` value; the Blur slider is now the switch. Reconcile any
+   *  pre-upgrade storage, then drop the dead key so this never runs again:
+   *   - old DOF ON  → keep a stored blur, or fall back to 0.5 if none was ever set
+   *                   (the checkbox could enable DOF without the slider moving);
+   *   - old DOF OFF → force blur to 0 so DOF stays off despite a leftover value. */
+  private migratedDofBlur(): number {
+    let blur = getNumber("lens.dofBlur", 0);
+    if (hasKey("lens.dof")) {
+      blur = getFlag("lens.dof", false) ? (blur > 0 ? blur : 0.5) : 0;
+      setNumber("lens.dofBlur", blur);
+      removeKey("lens.dof");
+    }
+    return blur;
   }
 
   /** The theme picker: a popover holding the light/dark mode toggle and the five

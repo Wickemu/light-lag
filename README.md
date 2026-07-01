@@ -189,9 +189,9 @@ The **Lens ▾** popover in the top bar is a photographer's "vanity" mode: a
 compressed 300 mm telephoto (a true lens change — the field of view narrows
 without dollying the camera in), a **depth of field** group adds a photographic
 focus fall-off (the focused body stays sharp while the fore/background melt into
-soft bokeh — a **Blur** slider sets its strength and a **Focus** slider nudges the
-focal plane in front of or behind the subject), and **Hide UI** clears every panel
-for a clean capture. The lens settings persist across reloads; press `H` (or
+soft bokeh — a single **Blur** slider is the switch, off at zero, and a **Focus**
+slider nudges the focal plane in front of or behind the subject), and **Hide UI**
+clears every panel for a clean capture. The lens settings persist across reloads; press `H` (or
 double-tap the scene) any time to toggle the chrome, and `R` to level the roll and
 re-frame.
 
@@ -203,8 +203,9 @@ earlier rule), the group name (click it to zoom the camera out just far enough t
 frame the whole group within their orbits, centred on the body they orbit), and a
 hover-revealed **show only** button that isolates the group and restores the prior
 view when pressed again. Each body row keeps its own eye, and a chip row toggles
-the cross-cutting layers — orbit lines, labels, the nearby-star sky, ships, and
-in-flight comms.
+the cross-cutting layers — orbit lines, labels, the **Glow** halo that keeps
+bodies visible from a distance (off leaves just the raw sphere shapes), the
+nearby-star sky, ships, and in-flight comms.
 
 The **FOCUS** panel orders its body list two ways (the choice persists), with a
 realtime search box above it (type to filter — which also expands the matching
