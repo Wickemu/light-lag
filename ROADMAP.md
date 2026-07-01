@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is the `@lightlag/engine` workspace package
-(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 995 passing
+(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 1023 passing
 physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
@@ -55,9 +55,12 @@ findings fixed. **The physics core is locked.**
 - Wealth is **mass, energy, Δv, heat** — never abstract money.
 - **Propellant depots + refueling — DONE (first cut):** rendezvous-gated ship-to-ship
   propellant transfer + in-orbit assembly (`packages/engine/src/refuel.ts`); docking raises m₀ → Δv,
-  mass-conserving and capacity-capped. Still to do here: persistent depot *stations*
-  (transfer is ship↔ship today) and a rendezvous-targeting planner
-  (you fly craft co-orbital by hand; identical orbits dock exactly).
+  mass-conserving and capacity-capped. **Persistent depot *stations* — DONE (first cut):** the inert
+  `Station` records are now functional propellant depots (`Station.depot` tank + `packages/engine/src/depot.ts`)
+  — deploy a depot on a ship's orbit (seeded from its tanks), then dock other craft to load/unload,
+  rendezvous-gated and capacity-capped both ways; a depot propagates along its orbit (Kepler + secular
+  J2, station-kept) so a docked ship stays docked, and carries an amber orrery marker. Still to do here:
+  a rendezvous-targeting planner (you fly craft co-orbital by hand; identical orbits dock exactly).
 - **Propellant boil-off — DONE (first cut):** a cryogenic stage tags `Stage.boiloff` (fraction/day
   at 1 AU) and bleeds propellant while stored, scaled by solar flux `(AU/r)²` so cryo storage is easier
   far from the Sun (`packages/engine/src/boiloff.ts`). Applied at a recurring, deterministic
@@ -91,7 +94,37 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-*(Most recent: **Propellant boil-off — cryogens aren't a free infinite tank.** The mass economy gained
+*(Most recent: **Persistent depot stations — the inert `Station` records become propellant depots.** The
+mass economy could move propellant ship↔ship (`refuel.ts`) and mine it from a landed body (`isru.ts`), but
+a `Station` was a dead `{id,name,primary,elements}` orbit-holder — the golden scenario even spawns two
+that do nothing. Now a station can carry an optional `Station.depot` tank and a ship docks to **load**
+(drain itself into the depot) or **unload** (draw the depot down to top up), so a tanker can bank
+propellant on-orbit for later craft — the SpaceX-depot loop, standing infrastructure instead of only
+hull-to-hull. A new pure `packages/engine/src/depot.ts` (`stationWorldState` / `stationDockState` /
+`depotAvailable` / `depotHeadroom` / `loadDepot` / `unloadDepot`) holds the physics, reusing the refuel
+rendezvous gate (`DOCK_DISTANCE`/`DOCK_REL_SPEED`) and the capacity-capped fill/drain loops — `refuel.ts`
+grew a shared `drainShip` helper (a behaviour-preserving extraction from `transferProp`) and the depot→ship
+fill reuses `isru.ts`'s `fillFromISRU`, so the three mass-economy modules share one drain and one fill and
+can never disagree on conservation. A depot is **station-kept infrastructure**: it propagates along its
+orbit under the SAME Kepler + secular-J2 model a ship coasts under (the shared `coastConic` core factored
+out of `coastElements`, anchored at a new optional `Station.epoch`, no drag decay), so a ship parked beside
+its depot *stays* docked instead of drifting off as the two propagate under different models. `app/commands.ts`
+wraps it as `deployDepot` (anchor a depot on the ship's live conic, seeded from — and draining — its tanks),
+`depotTransfer` (load/unload, gated on `isDockable` + shared primary + docked), `depotCandidates`, and
+`stationDepotStatus`; the flight console gains a **DEPOT** section (nearby-depot list, Load/Unload, fill
+readout, Deploy) mirroring DOCK/TRANSFER, and a new `render/stationViews.ts` paints each station as a warm
+amber orrery marker (stations were previously unrendered). Every transfer/deploy is an **instantaneous
+local-SOI impulsive mutation** — no new `SimEventKind`, so it's chunk-invariant for free, like refuel/land.
+All new state is optional — `Station.epoch`/`Station.depot` are omitted from `qStation` when absent, and the
+golden scenario's two gateways carry neither — so the **golden hash is unmoved (`11f2c9fc7a5876`); the
+`coastConic` extraction is byte-behaviour-preserving (refuel + all integration invariants green); suite 1023
+green** (+28: `packages/engine/src/depot.test.ts` stationWorldState/dock-gate/load-unload conservation+caps/
+round-trip; `src/app/depot.test.ts` deploy seeds+drains, load/unload via command, gating, chunk-invariance,
+serialize round-trip with a depot, golden-neutrality). The DEPOT console section and the amber station marker
+need a DOM/WebGL context, so they're verified manually, as the DOCK/TRANSFER section and the rest of the
+render layer are. Still to do: a rendezvous-targeting planner (fly craft co-orbital by hand today), a finite
+per-body ISRU deposit, and a colony supplied within a transfer window — the rest of candidate #1.
+The round before: **Propellant boil-off — cryogens aren't a free infinite tank.** The mass economy gained
 its natural antagonist to refuelling/ISRU: a cryogenic stage (LH₂/LOX, LCH₄/LOX) slowly boils off while
 stored, so a cryo upper stage parked for weeks quietly bleeds Δv ("use it or lose it"). A core stage tags
 its propellant with `Stage.boiloff` (fraction lost per day at 1 AU — storable / solid / electric stages
@@ -188,10 +221,11 @@ since last round" note. The round before, **click-to-focus extended to the in-sy
 
 1. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly (`refuel.ts`),
    **ISRU propellant mining** (`isru.ts` — a landed ship mines a body's in-situ volatiles, power/energy-
-   gated), and now **cryogenic boil-off** (`boiloff.ts` — cryo stages bleed propellant, solar-flux-scaled)
-   are DONE (first cuts); what remains is **persistent depot stations** (transfer is ship↔ship + surface-
-   mine today), a **finite body deposit** (unbounded today), and a **colony supplied within a transfer
-   window**. *(see Phase 7.)*
+   gated), **cryogenic boil-off** (`boiloff.ts` — cryo stages bleed propellant, solar-flux-scaled), and now
+   **persistent depot stations** (`depot.ts` — deploy a depot on-orbit, dock to load/unload) are DONE
+   (first cuts); what remains is a **finite body deposit** (ISRU deposit is unbounded today), a
+   **rendezvous-targeting planner** (fly craft co-orbital by hand today), and a **colony supplied within a
+   transfer window**. *(see Phase 7.)*
 
 *(**Interstellar follow polish — eased transition + streak reconcile** — formerly candidate #2 — is now
 DONE; see the "Most recent" note above and the "Interstellar sky / camera" backlog entry.)*

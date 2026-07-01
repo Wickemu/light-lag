@@ -173,8 +173,21 @@ export function landedRelativeState(ship: Ship, t: number): State {
 export function coastElements(ship: Ship, t: number): KeplerElements {
   const mu = primaryMu(ship);
   const dt = t - (ship.epoch ?? 0);
-  const el = propagate(ship.elements!, mu, dt);
-  const body = BODY_BY_ID.get(ship.primary);
+  return coastConic(ship.elements!, mu, dt, BODY_BY_ID.get(ship.primary), ship.drag, ship.stationKept);
+}
+
+/**
+ * Pure Kepler + secular-J2 (+ optional secular drag) propagation of a conic by `dt`
+ * seconds about a primary of gravitational parameter `mu`. The shared core of
+ * `coastElements`, factored out so a depot STATION (`depot.ts`) can propagate along its
+ * orbit with the identical model — a station-kept depot (no drag) tracks a co-orbital,
+ * drag-free ship exactly, so a docked ship stays docked.
+ */
+export function coastConic(
+  elements: KeplerElements, mu: number, dt: number,
+  body: BodyDef | undefined, drag?: { nDot: number }, stationKept?: boolean,
+): KeplerElements {
+  const el = propagate(elements, mu, dt);
   // Secular precession applies to BOUND orbits only — a hyperbolic mean anomaly is
   // not mod-2π, so it must never be wrapped (and a brief flyby barely precesses).
   if (body?.J2 && el.e < 1) {
@@ -188,8 +201,8 @@ export function coastElements(ship: Ship, t: number): KeplerElements {
   // gives a = a0·(n0/n)^⅔. Bound orbits only (an unbound flyby is not drag-modelled).
   // SUPPRESSED for a station-kept orbit: its altitude is held against drag, so it
   // coasts on Kepler+J2 instead of spiralling in / ballooning out far past epoch.
-  if (ship.drag && !ship.stationKept && el.e < 1) {
-    const { nDot } = ship.drag;
+  if (drag && !stationKept && el.e < 1) {
+    const { nDot } = drag;
     el.M = wrapPi(el.M + 0.5 * nDot * dt * dt);
     const n0 = meanMotion(el.a, mu);
     const n = n0 + nDot * dt;

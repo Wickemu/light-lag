@@ -82,6 +82,24 @@ export function shipPropHeadroom(ship: Ship): number {
 }
 
 /**
+ * Drain up to `amount` kg of propellant from a ship's core stages (active → up),
+ * mutating their `propMass`. The removed mass is the minimum of `amount` and what the
+ * ship has available; returns the kg actually drained. Shared by ship↔ship transfer
+ * and ship→depot loading (`depot.ts`) so both use exactly the same drain order.
+ */
+export function drainShip(ship: Ship, amount: number): number {
+  const drained = Math.min(amount, shipPropAvailable(ship));
+  let toDrain = drained;
+  for (let i = ship.activeStage; i < ship.stages.length && toDrain > 1e-9; i++) {
+    const s = ship.stages[i]!;
+    const take = Math.min(s.propMass, toDrain);
+    s.propMass -= take;
+    toDrain -= take;
+  }
+  return drained;
+}
+
+/**
  * Move up to `amount` kg of propellant from `donor` to `receiver`, draining the
  * donor's core stages (active → up) and filling the receiver's core stages (active
  * → up, each capped at `stageCapacity`). The moved mass is the minimum of what's
@@ -93,13 +111,7 @@ export function transferProp(donor: Ship, receiver: Ship, amount: number): numbe
   const moved = Math.min(amount, shipPropAvailable(donor), shipPropHeadroom(receiver));
   if (moved <= 0) return 0;
 
-  let toDrain = moved;
-  for (let i = donor.activeStage; i < donor.stages.length && toDrain > 1e-9; i++) {
-    const s = donor.stages[i]!;
-    const take = Math.min(s.propMass, toDrain);
-    s.propMass -= take;
-    toDrain -= take;
-  }
+  drainShip(donor, moved);
 
   let toFill = moved;
   for (let i = receiver.activeStage; i < receiver.stages.length && toFill > 1e-9; i++) {

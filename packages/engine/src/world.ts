@@ -417,6 +417,16 @@ export interface Station {
   name: string;
   primary: string;
   elements: KeplerElements;
+  /** Epoch (s since J2000) the `elements` are anchored at, so a depot PROPAGATES along
+   *  its orbit (Kepler + secular J2, station-kept ⇒ no drag decay) exactly like a
+   *  co-orbital ship — a docked ship stays docked. Absent ⇒ anchored at t=0 (the inert
+   *  golden gateways, never positioned); omitted from serialization when absent. */
+  epoch?: number;
+  /** An optional propellant DEPOT: a single scalar tank (a depot doesn't burn, so no
+   *  stages). Ships dock and load/unload propellant against it, mass-conserving and
+   *  capacity-capped (see `depot.ts`). Absent ⇒ an inert station (the golden scenario's
+   *  two gateways), omitted from serialization ⇒ golden hash unmoved. */
+  depot?: { propMass: number; propCapacity: number };
 }
 
 export interface Maneuver {
