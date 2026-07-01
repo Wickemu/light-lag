@@ -39,6 +39,26 @@ export type ViewMode = "system" | "interstellar";
  *  Only bites when the gap dwarfs the framing distances — short hops just dolly. */
 const FLY_ARC_FRACTION = 0.3;
 
+/** Camera-motion style for an in-system fly-to. This is the reversible switch for
+ *  the "make the system-map fly-to feel like the interstellar map" experiment:
+ *   - "glide": the interstellar method. Hold the user's current zoom/orbit offset
+ *     and glide the look-at across to centre the new target — no reframing to a
+ *     per-body inspection distance, no mid-flight arc. It is the gentle slide the
+ *     interstellar follow (`followInterstellarEased`) uses, applied to bodies.
+ *     Trade-off: a hop between wildly different scales (a moon close-up → the whole
+ *     Sun) keeps the OLD zoom, so the target can land much larger/smaller than the
+ *     arc mode would have framed it. That's the "not sure it'll translate" risk.
+ *   - "arc": the original in-system motion — ease the seat distance to a sensible
+ *     framing for the target and bow the camera out mid-flight (see FLY_ARC_FRACTION).
+ *  Flip this one value to "arc" to restore the previous behaviour verbatim. */
+type FlyToMotion = "glide" | "arc";
+const FLY_TO_MOTION: FlyToMotion = "glide";
+
+/** Duration (real seconds) of a "glide" fly-to. Matches the interstellar follow
+ *  ease (INTERSTELLAR_FOLLOW_EASE_S) so the two maps read as the same move. Only
+ *  consulted when FLY_TO_MOTION === "glide"; "arc" paces itself by zoom travel. */
+const FLY_GLIDE_DURATION_S = 0.6;
+
 /** Camera framing distance for a "zoom to group" as a multiple of the group's
  *  outermost member apoapsis. The vertical FOV is 50°, so an orbit of radius R is
  *  edge-to-edge at ~2.14·R; ~2.6 leaves a comfortable margin so the farthest,
@@ -139,7 +159,7 @@ export class SceneManager {
     dir: THREE.Vector3; // unit target→camera offset direction, held constant
     startTarget: THREE.Vector3; // camera target at lift-off (old-origin render space)
     startDist: number; // camera distance from target at lift-off, in render units
-    midDist: number; // camera distance at the apex of the arc (render units), fixed at lift-off
+    midDist: number; // arc apex distance (render units), fixed at lift-off; == startDist in glide mode (no arc)
     elapsed: number; // seconds since lift-off
     duration: number; // total flight time, seconds
   };
@@ -534,20 +554,31 @@ export class SceneManager {
     const dir = offset.normalize();
     this.focusId = id; // light up the selection immediately
 
-    // The apex distance of the arc, fixed now so the zoom curve is stable even if
-    // the target drifts mid-flight (the look-at still tracks it live). For a short
-    // hop this is just the natural mid-dolly (geometric mean) and the arc is flat;
-    // for a long hop it lifts to ~FLY_ARC_FRACTION of the gap — enough to read the
-    // travel, far short of framing the whole span.
-    const sep = this.toRender(fn(this.lastT)).distanceTo(this.controls.target);
-    const geomMid = Math.sqrt(startDist * dist);
-    const midDist = Math.max(geomMid, sep * FLY_ARC_FRACTION);
+    let midDist: number;
+    let duration: number;
+    if (FLY_TO_MOTION === "glide") {
+      // Interstellar-style glide: the seat distance never changes, so there is no
+      // arc to bow through and no zoom travel to pace by. Hold the current framing
+      // (midDist = startDist ⇒ zero bow in advanceFlight) and pan the look-at across
+      // for a fixed, deliberate beat matching the interstellar follow ease.
+      midDist = startDist;
+      duration = FLY_GLIDE_DURATION_S;
+    } else {
+      // The apex distance of the arc, fixed now so the zoom curve is stable even if
+      // the target drifts mid-flight (the look-at still tracks it live). For a short
+      // hop this is just the natural mid-dolly (geometric mean) and the arc is flat;
+      // for a long hop it lifts to ~FLY_ARC_FRACTION of the gap — enough to read the
+      // travel, far short of framing the whole span.
+      const sep = this.toRender(fn(this.lastT)).distanceTo(this.controls.target);
+      const geomMid = Math.sqrt(startDist * dist);
+      midDist = Math.max(geomMid, sep * FLY_ARC_FRACTION);
 
-    // Duration scales with the actual zoom travelled — out to the apex, then in to
-    // the destination, in octaves — so a moon hop stays snappy while a cross-system
-    // leg gets enough time to glide instead of being whipped across.
-    const travel = Math.abs(Math.log2(midDist / startDist)) + Math.abs(Math.log2(dist / midDist));
-    const duration = Math.min(2.0, Math.max(0.5, 0.45 + 0.085 * travel));
+      // Duration scales with the actual zoom travelled — out to the apex, then in to
+      // the destination, in octaves — so a moon hop stays snappy while a cross-system
+      // leg gets enough time to glide instead of being whipped across.
+      const travel = Math.abs(Math.log2(midDist / startDist)) + Math.abs(Math.log2(dist / midDist));
+      duration = Math.min(2.0, Math.max(0.5, 0.45 + 0.085 * travel));
+    }
 
     this.flight = {
       fn,
@@ -599,24 +630,37 @@ export class SceneManager {
     const endTarget = this.toRender(f.fn(t));
     this.controls.target.copy(f.startTarget).lerp(endTarget, e);
 
-    // Geometric (log-space) interpolation of the seat distance: the old body
-    // recedes and the new one swells at a *perceptually* even rate, since apparent
-    // size goes as 1/distance. A linear dolly would shrink the body you left to a
-    // dot within the first frames and rush the new one in only at the very end.
-    const base = f.startDist * Math.pow(f.dist / f.startDist, e);
-    // Bow the camera out to the apex distance mid-flight, then back in — a gentle
-    // rise-and-settle that lets a long hop read as travel. sin() is zero at both
-    // ends, so lift-off and arrival are untouched; the bow is the extra height of
-    // the apex above the natural mid-dolly, and is ~0 when no pull-back is needed.
-    const bow = Math.max(0, f.midDist - Math.sqrt(f.startDist * f.dist));
-    const dist = base + bow * Math.sin(Math.PI * e);
+    // Seat distance. In the interstellar-style glide it is held at the lift-off
+    // value: the user's zoom/orbit offset is preserved and ONLY the look-at glides
+    // across (camera and target shift by the same delta each frame — the exact trick
+    // followInterstellarEased uses). The arc mode instead eases the distance to the
+    // target's framing and bows out to the apex mid-flight.
+    let dist: number;
+    if (FLY_TO_MOTION === "glide") {
+      dist = f.startDist;
+    } else {
+      // Geometric (log-space) interpolation of the seat distance: the old body
+      // recedes and the new one swells at a *perceptually* even rate, since apparent
+      // size goes as 1/distance. A linear dolly would shrink the body you left to a
+      // dot within the first frames and rush the new one in only at the very end.
+      const base = f.startDist * Math.pow(f.dist / f.startDist, e);
+      // Bow the camera out to the apex distance mid-flight, then back in — a gentle
+      // rise-and-settle that lets a long hop read as travel. sin() is zero at both
+      // ends, so lift-off and arrival are untouched; the bow is the extra height of
+      // the apex above the natural mid-dolly, and is ~0 when no pull-back is needed.
+      const bow = Math.max(0, f.midDist - Math.sqrt(f.startDist * f.dist));
+      dist = base + bow * Math.sin(Math.PI * e);
+    }
     this.camera.position.copy(this.controls.target).addScaledVector(f.dir, dist);
 
     if (p >= 1) {
       this.focusFn = f.fn;
       this.focusPos = f.fn(t);
       this.controls.target.set(0, 0, 0);
-      this.camera.position.copy(f.dir).multiplyScalar(f.dist);
+      // Settle at the framing the motion aimed for: the preserved lift-off zoom for a
+      // glide, the target's computed inspection distance for an arc.
+      const settleDist = FLY_TO_MOTION === "glide" ? f.startDist : f.dist;
+      this.camera.position.copy(f.dir).multiplyScalar(settleDist);
       this.flight = undefined;
       this.flightLastMs = undefined;
     }
