@@ -21,7 +21,7 @@ import { type Vec3 } from "@lightlag/engine/math/vec3";
 import { metersToUnits, SCENE_SCALE } from "./scale.ts";
 import { type SceneManager } from "./SceneManager.ts";
 import { type Visibility } from "./visibility.ts";
-import { createBodyTextures, makeGlowTexture, type AtmoGlow, type BodyTextureSet } from "./bodyTextures.ts";
+import { createBodyTextures, makeGlowTexture, makeCoronaTexture, type AtmoGlow, type BodyTextureSet } from "./bodyTextures.ts";
 
 // Sampled in eccentric anomaly and phased to the body (see kepler.orbitPath), so
 // the loop already passes dead through the marker; the segment budget only sets
@@ -30,6 +30,11 @@ const ORBIT_SEGMENTS = 384;
 
 /** Local +Y is a sphere's texture pole; the node rotates it onto the spin axis. */
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+/** Clamp to the unit interval (corona distance-fade, etc.). */
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
 
 /** A body's spin axis as a unit vector in the ecliptic/render frame. Uses the real
  *  IAU pole (poleToEcliptic) when the body carries one — so the globe, rings and
@@ -71,44 +76,117 @@ const SPHERE_SEGMENTS: Record<BodyKind, [number, number]> = {
   satellite: [16, 12], // sub-pixel anyway — the marker carries it
 };
 
+/** Cheap hash-based 3D value noise, shared by the photosphere and chromosphere
+ *  shaders to drive their live convective shimmer. Defined once as a GLSL snippet
+ *  spliced into each patched material. */
+const SUN_NOISE_GLSL = `
+float sunHash(vec3 p){ p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419)); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float sunNoise(vec3 x){
+  vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(sunHash(i + vec3(0,0,0)), sunHash(i + vec3(1,0,0)), f.x),
+                 mix(sunHash(i + vec3(0,1,0)), sunHash(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(sunHash(i + vec3(0,0,1)), sunHash(i + vec3(1,0,1)), f.x),
+                 mix(sunHash(i + vec3(0,1,1)), sunHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}`;
+
+/** The animated uniforms the Sun's materials share: an HDR gain and a wall-clock
+ *  time the renderer advances each frame so the surface visibly convects. */
+interface SunUniforms {
+  uSunGain: { value: number };
+  uTime: { value: number };
+}
+
 /**
  * The Sun's photosphere material. Starts from MeshBasicMaterial (unlit — the Sun
- * emits, it isn't lit) and patches the shader to add two real solar effects:
+ * emits, it isn't lit) and patches the shader to add four real solar effects:
  *
+ *  - **Live convection**: a slow-evolving 3D noise field sampled at the surface
+ *    direction boils the granulation brightness over time, so the disk shimmers the
+ *    way real granules churn instead of sitting as a frozen texture.
  *  - **Limb darkening**: the disk is brightest at centre and dims toward the edge
  *    because near the limb we see higher, cooler layers of the photosphere. The
  *    classic visible-band law is I(μ)/I(0) ≈ 0.3 + 0.93μ − 0.23μ² (μ = cos of the
  *    angle between the line of sight and the local normal); we use a close fit.
  *  - **Limb reddening**: those cooler edge layers are also redder, so the rim
- *    shifts warm.
+ *    shifts warm, deepening to a faint red chromospheric edge right at the limb.
  *
- * Finally an HDR gain lifts the disk well above 1.0 so it reads as a genuine
- * light source and blooms through the post chain. onBeforeCompile means the
- * material keeps the logarithmic depth buffer and all other engine plumbing.
+ * An HDR gain lifts the disk well above 1.0 so it reads as a genuine light source
+ * and blooms through the post chain. onBeforeCompile keeps the logarithmic depth
+ * buffer and all other engine plumbing. Returns the shared uniforms so the render
+ * loop can advance uTime.
  */
-function makeSunMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
+function makeSunMaterial(map: THREE.Texture): { material: THREE.MeshBasicMaterial; uniforms: SunUniforms } {
+  const uniforms: SunUniforms = { uSunGain: { value: 3.5 }, uTime: { value: 0 } };
   const mat = new THREE.MeshBasicMaterial({ map });
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uSunGain = { value: 3.6 };
+    shader.uniforms.uSunGain = uniforms.uSunGain;
+    shader.uniforms.uTime = uniforms.uTime;
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vSunN;\nvarying vec3 vSunV;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vSunN;\nvarying vec3 vSunV;\nvarying vec3 vSunP;")
       .replace(
         "#include <project_vertex>",
-        "#include <project_vertex>\n  vSunN = normalize(normalMatrix * normal);\n  vSunV = -mvPosition.xyz;",
+        "#include <project_vertex>\n  vSunN = normalize(normalMatrix * normal);\n  vSunV = -mvPosition.xyz;\n  vSunP = normalize(position);",
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
         "#include <common>",
-        "#include <common>\nuniform float uSunGain;\nvarying vec3 vSunN;\nvarying vec3 vSunV;",
+        `#include <common>\nuniform float uSunGain;\nuniform float uTime;\nvarying vec3 vSunN;\nvarying vec3 vSunV;\nvarying vec3 vSunP;${SUN_NOISE_GLSL}`,
       )
       .replace(
         "#include <map_fragment>",
         `#include <map_fragment>
+        // Live convection: a slow field boils the granulation, a finer one flickers it.
+        float boil = sunNoise(vSunP * 7.0 + vec3(0.0, 0.0, uTime * 0.05));
+        float fine = sunNoise(vSunP * 19.0 - vec3(uTime * 0.08, 0.0, 0.0));
+        diffuseColor.rgb *= 0.84 + 0.22 * boil + 0.10 * fine;
+        // Limb darkening + reddening, deepening to a red chromospheric edge.
         float mu = clamp(dot(normalize(vSunN), normalize(vSunV)), 0.0, 1.0);
-        float limb = 0.32 + 0.93 * mu - 0.25 * mu * mu;
+        float limb = 0.34 + 0.95 * mu - 0.28 * mu * mu;
         diffuseColor.rgb *= clamp(limb, 0.0, 1.2);
-        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.12, 0.92, 0.70), (1.0 - mu) * 0.6);
+        float edge = 1.0 - mu;
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.16, 0.86, 0.60), edge * 0.6);
+        diffuseColor.rgb += vec3(0.42, 0.11, 0.03) * pow(edge, 4.0);
         diffuseColor.rgb *= uSunGain;`,
+      );
+  };
+  return { material: mat, uniforms };
+}
+
+/**
+ * The Sun's chromosphere: a thin additive shell just above the photosphere that
+ * lights only at the limb (a Fresnel `(1 − N·V)^p` rim), glowing the deep red-orange
+ * of Hα emission. A noise term textures the rim into flickering spicules — the
+ * jets of plasma that fringe the real solar edge. HDR-tinted so it blooms. Shares
+ * the photosphere's uTime so the two animate on one clock.
+ */
+function makeChromosphereMaterial(uTime: { value: number }): THREE.MeshBasicMaterial {
+  const mat = new THREE.MeshBasicMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.FrontSide,
+  });
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = uTime;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vChN;\nvarying vec3 vChW;\nvarying vec3 vChP;")
+      .replace(
+        "#include <project_vertex>",
+        "#include <project_vertex>\n  vChN = normalize(mat3(modelMatrix) * normal);\n  vChW = (modelMatrix * vec4(transformed, 1.0)).xyz;\n  vChP = normalize(position);",
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>\nuniform float uTime;\nvarying vec3 vChN;\nvarying vec3 vChW;\nvarying vec3 vChP;${SUN_NOISE_GLSL}`,
+      )
+      .replace(
+        "#include <map_fragment>",
+        `#include <map_fragment>
+        vec3 chN = normalize(vChN);
+        vec3 chV = normalize(cameraPosition - vChW);
+        float rim = pow(1.0 - clamp(dot(chN, chV), 0.0, 1.0), 2.4);
+        float spic = 0.55 + 0.7 * sunNoise(vChP * 26.0 + vec3(uTime * 0.15, 0.0, uTime * 0.05));
+        diffuseColor = vec4(vec3(1.7, 0.52, 0.24) * spic, rim);`,
       );
   };
   return mat;
@@ -187,6 +265,27 @@ function makeDotTexture(): THREE.Texture {
 /** How much larger/brighter a body's marker gets while it is the focus. */
 const FOCUS_MARKER_GAIN = 1.6;
 
+/** One additive corona sprite and how the render loop animates it: a slow screen
+ *  rotation (streamers turning) and a gentle breathing scale, so the layered corona
+ *  never sits still, plus its base opacity (the distance fade multiplies it). */
+interface CoronaLayer {
+  sprite: THREE.Sprite;
+  baseScale: number;
+  baseOpacity: number;
+  spin: number;    // screen-space rotation rate (rad/s)
+  breathe: number; // fractional scale-oscillation amplitude
+  phase: number;
+}
+
+/** The Sun's animation state: the photosphere/chromosphere uniforms (uTime), the
+ *  corona layers, and the body radius (render units) the distance fade keys off.
+ *  Advanced together each frame by a wall clock. */
+interface SunAnim {
+  uniforms: SunUniforms;
+  corona: CoronaLayer[];
+  radius: number;
+}
+
 interface BodyVisual {
   def: BodyDef;
   marker: THREE.Sprite;
@@ -194,6 +293,8 @@ interface BodyVisual {
   node: THREE.Object3D;
   sphere: THREE.Mesh;
   clouds?: THREE.Mesh;
+  /** Set only for the Sun: photosphere/chromosphere uniforms + animated corona. */
+  sunAnim?: SunAnim;
   /** Atmospheric limb-glow shell sun-direction uniform value: set per frame so the
    *  glowing arc tracks the terminator. */
   atmoSunDir?: THREE.Vector3;
@@ -261,8 +362,11 @@ export class BodyViews {
     const [segW, segH] = SPHERE_SEGMENTS[def.kind];
     const sphereGeo = new THREE.SphereGeometry(radius, segW, segH);
     let sphereMat: THREE.Material;
+    let sunUniforms: SunUniforms | undefined;
     if (def.kind === "star") {
-      sphereMat = makeSunMaterial(tex.surface);
+      const sun = makeSunMaterial(tex.surface);
+      sphereMat = sun.material;
+      sunUniforms = sun.uniforms;
     } else {
       const params: THREE.MeshStandardMaterialParameters = {
         map: tex.surface,
@@ -314,38 +418,78 @@ export class BodyViews {
     const ringRadius = metersToUnits(def.equatorialRadius ?? def.radius);
     const ringSunDir = tex.ring ? this.addRing(node, ringRadius, tex) : undefined;
 
-    // The Sun is a light source, not a lit ball — wrap the limb-darkened disk in
-    // a layered corona: a tight, hot inner glow over a wide, faint outer halo.
-    // Both size-attenuate (they grow as you approach) and carry HDR colour
-    // (components > 1) so they bloom convincingly through the post chain.
-    if (def.kind === "star") {
+    // The Sun is a light source, not a lit ball. A thin chromosphere shell fringes
+    // the disk in Hα red, then a layered corona wraps it: a tight hot core glow over
+    // two wide, streamer-textured halos. The halos carry HDR colour (components > 1)
+    // so they bloom, and are animated in update() — breathing and slowly counter-
+    // rotating for a living corona. Crucially the whole corona FADES with camera
+    // distance (see update): from afar the Sun is a bloomed star wrapped in its
+    // corona; up close the corona pulls back so the granulation, sunspots and red
+    // chromospheric limb are the show — instead of the wide additive sprites
+    // engulfing the camera and washing the frame white.
+    let sunAnim: SunAnim | undefined;
+    if (def.kind === "star" && sunUniforms) {
+      const chromo = new THREE.Mesh(
+        new THREE.SphereGeometry(radius * 1.02, segW, segH),
+        makeChromosphereMaterial(sunUniforms.uTime),
+      );
+      node.add(chromo);
+
+      // Seed the streamer texture from the id so a future second star differs.
+      let seed = 0x9e3779b9;
+      for (let i = 0; i < def.id.length; i++) seed = (Math.imul(seed ^ def.id.charCodeAt(i), 0x01000193)) >>> 0;
+      const coronaTex = makeCoronaTexture(seed, this.sm.renderer.capabilities.getMaxAnisotropy());
+      const corona: CoronaLayer[] = [];
+
       const inner = new THREE.Sprite(new THREE.SpriteMaterial({
         map: this.glow,
-        color: new THREE.Color().setRGB(2.2, 1.85, 1.35), // HDR warm-white core
+        color: new THREE.Color().setRGB(2.5, 2.0, 1.45), // HDR warm-white core
         transparent: true,
+        opacity: 1,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       }));
-      inner.scale.setScalar(radius * 6);
+      inner.scale.setScalar(radius * 3.2);
       node.add(inner);
+      corona.push({ sprite: inner, baseScale: radius * 3.2, baseOpacity: 1, spin: 0, breathe: 0.02, phase: 1.7 });
+
+      const mid = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: coronaTex,
+        color: new THREE.Color().setRGB(1.8, 1.3, 0.8),
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }));
+      mid.scale.setScalar(radius * 8);
+      node.add(mid);
+      corona.push({ sprite: mid, baseScale: radius * 8, baseOpacity: 1, spin: 0.012, breathe: 0.05, phase: 0 });
 
       const outer = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: this.glow,
-        color: new THREE.Color().setRGB(1.0, 0.72, 0.42), // cooler extended corona
+        map: coronaTex,
+        color: new THREE.Color().setRGB(1.05, 0.66, 0.36), // cooler extended corona
         transparent: true,
-        opacity: 0.5,
+        opacity: 0.9,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       }));
       outer.scale.setScalar(radius * 18);
+      (outer.material as THREE.SpriteMaterial).rotation = Math.PI * 0.4; // offset so the spokes don't overlap
       node.add(outer);
+      corona.push({ sprite: outer, baseScale: radius * 18, baseOpacity: 0.9, spin: -0.007, breathe: 0.035, phase: Math.PI * 0.4 });
+
+      sunAnim = { uniforms: sunUniforms, corona, radius };
     }
 
     const baseColor = color.clone();
     const focusColor = color.clone().lerp(new THREE.Color(0xffffff), 0.5);
-    const spinRate = def.rotationPeriod ? (2 * Math.PI) / def.rotationPeriod : 0;
+    // The Sun carries no rotationPeriod in the body data; give it the ~25.38-day
+    // Carrington sidereal rotation so its granulation and spots visibly turn under
+    // time-warp (the noise field is locked to the surface, so it co-rotates).
+    const spinRate = def.rotationPeriod ? (2 * Math.PI) / def.rotationPeriod
+      : def.kind === "star" ? (2 * Math.PI) / (25.38 * 86400) : 0;
     const visual: BodyVisual = {
-      def, marker, node, sphere, clouds, atmoSunDir, ringSunDir,
+      def, marker, node, sphere, clouds, atmoSunDir, ringSunDir, sunAnim,
       spinRate,
       cloudSpinRate: spinRate * 0.92, // a touch of cloud drift relative to the surface
       lock: tidalLock(def) ?? undefined,
@@ -515,6 +659,34 @@ export class BodyViews {
       } else if (vis.spinRate !== 0) {
         vis.sphere.rotation.y = t * vis.spinRate;
         if (vis.clouds) vis.clouds.rotation.y = t * vis.cloudSpinRate;
+      }
+
+      // The Sun lives on a wall clock (not sim time), so its surface convects and
+      // its corona breathes/turns smoothly regardless of time-warp or pause. The
+      // corona also fades with camera distance: engulfing additive halos would wash
+      // the frame white up close, so within a few solar radii they retreat and the
+      // textured photosphere + red chromospheric limb take over; from afar they
+      // return in full and bloom the Sun into a proper star.
+      if (vis.sunAnim) {
+        const wall = (typeof performance !== "undefined" ? performance.now() : 0) * 0.001;
+        vis.sunAnim.uniforms.uTime.value = wall;
+        const R = vis.sunAnim.radius;
+        const camDist = this.sm.camera.position.distanceTo(tmp);
+        // 0 within ~4R (surface inspection) → 1 beyond ~26R (full corona).
+        const fade = clamp01((camDist - 4 * R) / (22 * R));
+        // Exposure like a real camera: up close, drop the HDR gain to just under the
+        // bloom threshold so the granulation, sunspots and red limb read with contrast
+        // (as in real solar imagery) instead of the disk blooming into flat white; from
+        // afar restore the high gain that blooms it into a star.
+        vis.sunAnim.uniforms.uSunGain.value = 1.0 + (3.6 - 1.0) * fade;
+        const breath = Math.sin(wall * 0.3);
+        for (const layer of vis.sunAnim.corona) {
+          const m = layer.sprite.material as THREE.SpriteMaterial;
+          m.rotation = layer.phase + wall * layer.spin;
+          m.opacity = layer.baseOpacity * fade;
+          layer.sprite.visible = fade > 0.001;
+          layer.sprite.scale.setScalar(layer.baseScale * (1 + layer.breathe * breath));
+        }
       }
 
       // Emphasise the focused body: a larger, brighter marker draws the eye.
