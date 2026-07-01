@@ -178,22 +178,27 @@ Controls:
 | `V` | Cycle camera view angle (isometric → top-down → edge-on) |
 | `M` | Toggle system ⇄ interstellar view |
 | `R` / Home | Reset camera distance (and level roll) for current focus |
+| `L` | Toggle the lens dock (focal length, depth of field, rack focus) |
 | `H` / double-tap scene | Hide / show all HUD chrome (clean capture) |
 | `?` | Toggle help overlay (keyboard reference) |
-| Escape | Close the open planner / help / ship panel (in that order) |
+| Escape | Close the open planner / help / ship / lens panel (in that order) |
 | `◐` (button) | Toggle light / dark theme |
-| `Lens ▾` (button) | Focal length, depth of field & clean-capture controls |
+| `Lens ▾` (button) | Open the lens dock |
 
-The **Lens ▾** popover in the top bar is a photographer's "vanity" mode: a
-**focal length** slider swings the view from a wide 15 mm establishing shot to a
-compressed 300 mm telephoto (a true lens change — the field of view narrows
-without dollying the camera in), a **depth of field** group adds a photographic
-focus fall-off (the focused body stays sharp while the fore/background melt into
-soft bokeh — a single **Blur** slider is the switch, off at zero, and a **Focus**
-slider nudges the focal plane in front of or behind the subject), and **Hide UI**
-clears every panel for a clean capture. The lens settings persist across reloads; press `H` (or
-double-tap the scene) any time to toggle the chrome, and `R` to level the roll and
-re-frame.
+The **Lens** dock (the `Lens ▾` button or `L`, a bar along the bottom) is a
+photographer's "vanity" mode: a **focal length** slider swings the view from a
+wide 15 mm establishing shot to a compressed 300 mm telephoto (a true lens change
+— the field of view narrows without dollying the camera in), a **depth of field**
+group adds a photographic focus fall-off (the subject stays sharp while the
+fore/background melt into soft bokeh — a single **Blur** slider is the switch, off
+at zero, and a **Focus plane** slider nudges the plane in front of or behind the
+subject), and **Hide UI** clears every panel for a clean capture. While the dock
+is open with Blur up, **clicking a body racks focus onto it without moving the
+camera** — so you can frame Earth on a long lens with the Moon looming behind it,
+then click the Moon to pull focus to it while the shot stays put (the header
+readout shows what's in focus). The lens settings persist across reloads; press
+`H` (or double-tap the scene) any time to toggle the chrome, and `R` to level the
+roll and re-frame.
 
 Show / hide lives on each **FOCUS** group header, which collapses by default to a
 tidy stack of headers and carries four controls: a caret to expand/collapse the

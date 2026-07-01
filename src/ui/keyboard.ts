@@ -16,6 +16,7 @@
  *   V            — cycle view presets (isometric → top-down → edge-on)
  *   M            — toggle in-system orrery ⇄ interstellar map
  *   F            — toggle ship / flight panel
+ *   L            — toggle the lens dock (focal length, DOF, rack focus)
  *   H            — hide / show all HUD chrome (clean capture)
  *   ?            — toggle the help overlay
  *   Escape       — close planner / help (then ship panel if already closed)
@@ -125,13 +126,16 @@ export class KeyboardManager {
 
     if (k === "n" || k === "N") { this.hud.toggleNav(); return; }
 
+    if (k === "l" || k === "L") { this.hud.toggleLens(); return; }
+
     if (k === "h" || k === "H") { this.hud.toggleUi(); return; }
 
     if (k === "?") { this.hud.toggleHelp(); return; }
 
     if (k === "Escape") {
       // Close, in order: the Shipyard (full-viewport), interstellar planner,
-      // transfer planner, help overlay, then the ship panel.
+      // transfer planner, help overlay, the ship panel, the lens dock, then the
+      // Navigation dock.
       if (this.shipyard.isOpen()) {
         this.shipyard.close();
       } else if (this.interstellarPanel.isOpen()) {
@@ -142,6 +146,8 @@ export class KeyboardManager {
         this.hud.closeHelp();
       } else if (this.shipPanel.isOpen()) {
         this.shipPanel.toggle();
+      } else if (this.hud.isLensOpen()) {
+        this.hud.closeLens();
       } else if (this.hud.isNavOpen()) {
         this.hud.toggleNav();
       }

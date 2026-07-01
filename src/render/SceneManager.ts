@@ -137,6 +137,8 @@ const WORLD_UP = new THREE.Vector3(0, 0, 1);
 /** Reused scratch for the per-frame roll so it never allocates. */
 const _fwd = new THREE.Vector3();
 const _up = new THREE.Vector3();
+/** Reused scratch for the per-frame DOF rack-focus point. */
+const _dofPt = new THREE.Vector3();
 
 export class SceneManager {
   readonly scene = new THREE.Scene();
@@ -169,6 +171,11 @@ export class SceneManager {
   private dofOn = false;
   private dofAmount = 0.5;
   private dofFocusBias = 0;
+  /** A "rack focus" subject: a body id the DOF focal plane is pinned to, chosen by
+   *  clicking a body while the lens panel is open — INDEPENDENT of the orbit target,
+   *  so the camera never moves. `null` means focus on the orbit target (the focused
+   *  body at the render origin), the default. Cleared on any real focus change. */
+  private dofFocusId: string | null = null;
   private rollAngle = 0;
   /** Graphics-quality preset: false = quality (default), true = performance.
    *  Drives the device-pixel cap, MSAA sample count and bloom blur resolution. */
@@ -391,6 +398,10 @@ export class SceneManager {
    *  re-homed instantly — the right behaviour for a continuous follow or the
    *  interstellar map, which frames itself. */
   setFocusTarget(id: string, fn: (t: number) => Vec3, frameDistanceUnits?: number): void {
+    // A real focus change makes this body the subject, so any earlier rack-focus
+    // (a DOF plane pinned to some other body) is stale — drop it so DOF tracks the
+    // new focus again.
+    this.dofFocusId = null;
     // A non-finite framing distance (e.g. a degenerate osculating apoapsis, a→∞) would seat the
     // camera at a NaN/Infinity position and black out the entire view — and, because the bad
     // value is sticky, no later focus/zoom would recover it. Never let one through: re-home the
@@ -889,13 +900,36 @@ export class SceneManager {
     this.dofFocusBias = Math.max(-0.9, Math.min(3, bias));
   }
 
+  /** The rack-focus subject id, or `null` when DOF focuses the orbit target. */
+  get dofFocusTargetId(): string | null {
+    return this.dofFocusId;
+  }
+
+  /** Pin the DOF focal plane to a body ("rack focus") without moving the camera —
+   *  clicking a body in the lens panel racks focus onto it while the framing stays
+   *  put. `null` restores focus to the orbit target. */
+  setDofFocusTarget(id: string | null): void {
+    this.dofFocusId = id;
+  }
+
+  /** Distance (render units) from the camera to whatever the DOF should focus on:
+   *  a rack-focused body's live render position when one is pinned (in the system
+   *  view), else the orbit target at the render origin. */
+  private dofSubjectDistance(): number {
+    if (this.viewMode === "system" && this.dofFocusId && BODY_BY_ID.has(this.dofFocusId)) {
+      this.toRender(bodyPosition(this.dofFocusId, this.lastT), _dofPt);
+      return this.camera.position.distanceTo(_dofPt);
+    }
+    return this.camera.position.distanceTo(this.controls.target);
+  }
+
   /** Drive the Bokeh uniforms from the live subject distance. The focus plane sits
-   *  on the focused body (the controls target, at the render origin) shifted by the
-   *  user bias; the aperture is scaled by 1/focus so a given blur "amount" defocuses
-   *  the background by the same *relative* depth at every scale (see DOF_APERTURE_K).
-   *  Called each frame only while DOF is enabled. */
+   *  on the DOF subject — the orbit target by default, or a rack-focused body — and
+   *  is shifted by the user bias; the aperture is scaled by 1/focus so a given blur
+   *  "amount" defocuses the background by the same *relative* depth at every scale
+   *  (see DOF_APERTURE_K). Called each frame only while DOF is enabled. */
   private updateDof(): void {
-    const camDist = Math.max(this.camera.position.distanceTo(this.controls.target), 1e-6);
+    const camDist = Math.max(this.dofSubjectDistance(), 1e-6);
     const focus = Math.max(camDist * (1 + this.dofFocusBias), 1e-6);
     const u = this.bokeh.uniforms as {
       focus: { value: number };

@@ -509,10 +509,51 @@ body {
   gap: 6px;
 }
 
-/* ── Lens / vanity popover (focal length, depth of field, clean capture) ─────── */
-.lens-popover .popover-content {
-  min-width: 190px;
+/* ── Lens / vanity dock (bottom-centre): focal length, DOF, rack focus ───────── */
+.lens-panel {
+  position: absolute;
+  bottom: 84px; /* clears the telemetry rail (46px) and scale bar (18px) */
+  left: 50%;
+  transform: translateX(-50%);
+  flex-direction: column;
   gap: 8px;
+  z-index: 20;
+  /* Stay in the gap between the left/right docks on any width. */
+  max-width: min(720px, calc(100vw - 360px));
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+.lens-panel-head {
+  align-items: center;
+  gap: 10px;
+}
+.lens-focus-readout {
+  flex: 1 1 auto;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lens-controls {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.lens-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 150px;
+  min-width: 140px;
+}
+.lens-actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex: 0 0 auto;
 }
 /* A labelled range slider with its live value in the header. */
 .slider-row {
@@ -562,10 +603,10 @@ input[type="range"]::-moz-range-thumb {
   cursor: pointer;
 }
 .lens-action {
-  width: 100%;
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 .lens-reset {
   color: var(--text-dim);
