@@ -396,6 +396,14 @@ export class Hud {
   /** Whether all HUD chrome is hidden for a clean capture (H or a double-tap on
    *  the scene). Session-only — a reload always comes back with the UI showing. */
   private uiHidden = false;
+  // Lens: a persistent bottom dock (not a popover — it must survive scene clicks so
+  // rack-focus works). `lensOpen` gates the click-to-rack-focus behaviour; the
+  // readout shows the current DOF subject.
+  private lensPanelEl!: HTMLElement;
+  private lensToggleBtn!: HTMLButtonElement;
+  private lensFocusReadout!: HTMLElement;
+  private lensOpen = false;
+  private lastLensReadout = "";
 
   constructor(
     private root: HTMLElement,
@@ -435,7 +443,11 @@ export class Hud {
     if (!down || e.button !== 0 || this.sm.viewMode !== "system") return;
     if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > DRAG_PX) return;
     const hit = this.pickBody(e.clientX, e.clientY);
-    if (hit) this.focus(hit.id);
+    if (!hit) return;
+    // Lens/photo mode with DOF up: rack focus onto the body (move only the focal
+    // plane, not the camera). Otherwise the tap focuses it the usual way — fly-to.
+    if (this.lensOpen && this.sm.dofEnabled) this.rackFocus(hit.id);
+    else this.focus(hit.id);
   }
 
   /** Project every on-screen, visible body to screen pixels (the `updateLabels`
@@ -579,6 +591,9 @@ export class Hud {
     // the FPS toggle, opened from the cluster's ? button or the ? key.
     this.helpEl = this.buildHelpOverlay();
     this.root.appendChild(this.helpEl);
+
+    // Lens dock (bottom-centre): the lens/vanity controls, built once and toggled.
+    this.buildLensPanel();
 
     // Label layer.
     this.labelLayer = el("div", "label-layer");
@@ -894,8 +909,9 @@ export class Hud {
     this.layersPopover.content.appendChild(this.buildLayerChips());
     cluster.appendChild(this.layersPopover.trigger);
 
-    // Lens / vanity camera: focal length, depth of field, and a clean-shot UI hide.
-    cluster.appendChild(this.buildLensPopover());
+    // Lens / vanity camera: a toggle for the bottom lens dock (focal length, depth
+    // of field, rack-focus, clean-shot UI hide).
+    cluster.appendChild(this.buildLensToggle());
 
     // Theme picker (light/dark + accent palette) + help icon.
     const helpBtn = button("?", () => this.toggleHelp());
@@ -906,65 +922,90 @@ export class Hud {
     return cluster;
   }
 
-  /** The Lens / "vanity" popover: a photographic focal-length control, a
-   *  depth-of-field group (a single Blur slider that IS the on/off — 0 = off — plus
-   *  a focus-plane bias), and a "hide UI" button for clean captures. Every setting
-   *  is applied to the SceneManager and persisted, and restored here on load so the
-   *  lens survives a reload. */
-  private buildLensPopover(): HTMLButtonElement {
-    const pop = popover(this.root, "Lens ▾", { title: "Lens & depth of field", className: "lens-popover" });
+  /** The top-cluster toggle for the bottom lens dock. A plain toggle (not a
+   *  popover): the lens panel has to stay open while you click the scene to rack
+   *  focus, which an outside-click-dismissing popover could never do. */
+  private buildLensToggle(): HTMLButtonElement {
+    const b = button("Lens ▾", () => this.toggleLens());
+    b.className = "popover-trigger";
+    b.title = "Lens, depth of field & rack focus (L)";
+    this.lensToggleBtn = b;
+    return b;
+  }
 
-    // ── Focal length (field of view) ──
-    pop.content.appendChild(el("div", "section-label", "FOCAL LENGTH"));
+  /** The lens / "vanity" dock (bottom-centre): a photographic focal-length control,
+   *  a depth-of-field group (a single Blur slider that IS the on/off — 0 = off —
+   *  plus a focus-plane bias), a live focus-subject readout, and a clean-capture
+   *  hide. While it's open with Blur up, clicking a body racks focus onto it without
+   *  moving the camera (see `onSystemPointerUp` → `rackFocus`). Every setting is
+   *  applied to the SceneManager and persisted, restored here on load. */
+  private buildLensPanel(): void {
+    const panel = el("div", "panel lens-panel");
+    panel.style.display = "none";
+    this.lensPanelEl = panel;
+
+    // Head: title, live DOF-subject readout, close.
+    const head = el("div", "panel-head lens-panel-head");
+    head.appendChild(el("div", "panel-title", "LENS"));
+    this.lensFocusReadout = el("div", "lens-focus-readout");
+    head.appendChild(this.lensFocusReadout);
+    const close = button("✕", () => this.closeLens());
+    close.className = "panel-close";
+    close.title = "Close the lens (L or Esc)";
+    head.appendChild(close);
+    panel.appendChild(head);
+
+    const controls = el("div", "lens-controls");
     const { min, max, def } = this.sm.lensRange;
+
+    // Focal length (field of view).
+    const focalGroup = el("div", "lens-group");
+    focalGroup.appendChild(el("div", "section-label", "FOCAL LENGTH"));
     const focal0 = getNumber("lens.focalMm", def);
     this.sm.setFocalLength(focal0);
     const focalInput = slider(
-      pop.content,
-      "Lens",
+      focalGroup, "Lens",
       { min, max, step: 1, value: focal0, format: (v) => `${v.toFixed(0)} mm` },
       (v) => { this.sm.setFocalLength(v); setNumber("lens.focalMm", v); },
     );
+    controls.appendChild(focalGroup);
 
-    // ── Depth of field ──
-    // No separate on/off box: the Blur slider is the switch. Any blur above zero
-    // turns DOF on (and the SceneManager skips the whole pass at zero), so the
-    // control and its effect can never disagree.
-    pop.content.appendChild(el("div", "section-label", "DEPTH OF FIELD"));
+    // Depth of field — the Blur slider is the switch (0 = off), no separate box.
+    const dofGroup = el("div", "lens-group");
+    dofGroup.appendChild(el("div", "section-label", "DEPTH OF FIELD"));
     const blur0 = this.migratedDofBlur();
     this.sm.setDofBlur(blur0);
     this.sm.setDofEnabled(blur0 > 0);
     const blurInput = slider(
-      pop.content,
-      "Blur",
+      dofGroup, "Blur",
       { min: 0, max: 100, step: 1, value: Math.round(blur0 * 100), format: (v) => (v === 0 ? "off" : `${v.toFixed(0)}%`) },
-      (v) => { this.sm.setDofBlur(v / 100); this.sm.setDofEnabled(v > 0); setNumber("lens.dofBlur", v / 100); },
+      (v) => { this.sm.setDofBlur(v / 100); this.sm.setDofEnabled(v > 0); setNumber("lens.dofBlur", v / 100); this.updateLensReadout(); },
     );
+    controls.appendChild(dofGroup);
 
-    // Focus bias: 0 sits on the focused body; − pulls the plane in front, + pushes
+    // Focus-plane bias: 0 sits on the subject; − pulls the plane in front, + pushes
     // it behind. Persisted as the raw bias, shown as a signed percentage.
+    const focusGroup = el("div", "lens-group");
+    focusGroup.appendChild(el("div", "section-label", "FOCUS PLANE"));
     const focusBias0 = getNumber("lens.dofFocus", 0);
     this.sm.setDofFocus(focusBias0);
     const focusInput = slider(
-      pop.content,
-      "Focus",
+      focusGroup, "Plane",
       {
         min: -50, max: 100, step: 5, value: Math.round(focusBias0 * 100),
         format: (v) => (v === 0 ? "subject" : `${v > 0 ? "+" : ""}${v.toFixed(0)}%`),
       },
       (v) => { this.sm.setDofFocus(v / 100); setNumber("lens.dofFocus", v / 100); },
     );
+    controls.appendChild(focusGroup);
 
-    // ── Clean capture ──
-    pop.content.appendChild(el("div", "section-label", "CAPTURE"));
-    const hideBtn = button("Hide UI", () => { this.setUiHidden(true); pop.close(); });
+    // Actions: clean capture + reset.
+    const actions = el("div", "lens-actions");
+    const hideBtn = button("Hide UI", () => this.setUiHidden(true));
     hideBtn.className = "lens-action";
     hideBtn.title = "Hide all chrome for a clean shot — press H or double-tap the scene to bring it back";
-    pop.content.appendChild(hideBtn);
-    pop.content.appendChild(el("div", "lens-hint", "Restore with H or a double-tap on the scene."));
-
-    // ── Reset ──
-    const resetBtn = button("Reset lens", () => {
+    const resetBtn = button("Reset", () => {
+      this.sm.setDofFocusTarget(null); // clear any rack focus back to the subject
       focalInput.value = String(def);
       blurInput.value = "0";
       focusInput.value = "0";
@@ -973,11 +1014,56 @@ export class Hud {
       focalInput.dispatchEvent(new Event("input"));
       blurInput.dispatchEvent(new Event("input"));
       focusInput.dispatchEvent(new Event("input"));
+      this.updateLensReadout();
     });
     resetBtn.className = "lens-action lens-reset";
-    pop.content.appendChild(resetBtn);
+    actions.append(hideBtn, resetBtn);
+    controls.appendChild(actions);
 
-    return pop.trigger;
+    panel.appendChild(controls);
+    panel.appendChild(
+      el("div", "lens-hint", "With Blur up, click a body to rack focus onto it — the camera stays put."),
+    );
+
+    this.root.appendChild(panel);
+    this.updateLensReadout();
+  }
+
+  /** Toggle / open / close the bottom lens dock (top-cluster button, L, or Esc). */
+  toggleLens(): void { this.setLensOpen(!this.lensOpen); }
+  isLensOpen(): boolean { return this.lensOpen; }
+  closeLens(): void { this.setLensOpen(false); }
+  private setLensOpen(open: boolean): void {
+    this.lensOpen = open;
+    this.lensPanelEl.style.display = open ? "flex" : "none";
+    this.lensToggleBtn.classList.toggle("active", open);
+    if (open) this.updateLensReadout();
+  }
+
+  /** Rack focus: pin the DOF focal plane to a body without moving the camera. The
+   *  scene-click path routes here (instead of `focus`) while the lens is open and
+   *  DOF is on, so composing a shot never teleports you to the thing you clicked. */
+  private rackFocus(id: string): void {
+    this.sm.setDofFocusTarget(id);
+    this.updateLensReadout();
+  }
+
+  /** Repaint the lens dock's focus-subject readout from the live DOF state. */
+  private updateLensReadout(): void {
+    if (!this.lensOpen) return;
+    let text: string;
+    if (!this.sm.dofEnabled) {
+      text = "DOF off · raise Blur";
+    } else {
+      const id = this.sm.dofFocusTargetId ?? this.sm.focusId;
+      const name = BODY_BY_ID.get(id)?.name ?? id;
+      const racked = this.sm.dofFocusTargetId !== null && this.sm.dofFocusTargetId !== this.sm.focusId;
+      text = `Focus · ${name}${racked ? " (racked)" : ""}`;
+    }
+    if (text !== this.lastLensReadout) {
+      this.lensFocusReadout.textContent = text;
+      this.lastLensReadout = text;
+    }
   }
 
   /** The starting DOF blur, folding in the retired `lens.dof` on/off flag exactly
@@ -1071,6 +1157,7 @@ export class Hud {
       ["N", "Navigation dock"],
       ["V", "cycle view angle"],
       ["R", "reset camera framing"],
+      ["L", "lens / depth of field"],
       ["H / dbl-tap", "hide / show UI"],
       ["?", "this help"],
       ["esc", "close panel / overlay"],
@@ -1324,6 +1411,9 @@ export class Hud {
     // The interstellar FOLLOW list tracks ships dispatched/arrived/deleted over time,
     // and reflects an auto-recenter the view may have triggered (a deleted follow).
     this.refreshFollow();
+    // Keep the lens focus-subject readout live (focus can change via the keyboard
+    // while the dock is open); cheap and self-skips when the dock is closed.
+    this.updateLensReadout();
   }
 
   private updateFocusReadout(t: number): void {
