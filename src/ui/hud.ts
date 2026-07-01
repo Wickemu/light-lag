@@ -22,11 +22,11 @@ import { formatDate } from "@lightlag/engine/time";
 import { STAR_BY_ID, starPosition, LIGHT_YEAR, type StarDef } from "@lightlag/engine/stars";
 import { pickNearest } from "../render/overlayUtil.ts";
 import { interstellarFleet, interstellarStarList } from "../app/commands.ts";
-import { el, button, kvAuto } from "./dom.ts";
+import { el, button, kvAuto, slider } from "./dom.ts";
 import { markTerm } from "./tooltip.ts";
 import { popover, type Popover } from "./popover.ts";
 import { ACCENTS, applyAccent, currentAccent, type AccentName } from "./themes.ts";
-import { getFlag, setFlag, getString, setString } from "./uiState.ts";
+import { getFlag, setFlag, getString, setString, getNumber, setNumber } from "./uiState.ts";
 
 /** Focus-list groups, in display order. The Sun (star) gets no header — it sits
  *  alone at the top, directly under FOCUS. BODIES is ordered by heliocentric
@@ -392,6 +392,9 @@ export class Hud {
   // the tap-vs-drag pointer origin.
   private bodyViews?: BodyViews;
   private bodyPointerDown: { x: number; y: number } | null = null;
+  /** Whether all HUD chrome is hidden for a clean capture (H or a double-tap on
+   *  the scene). Session-only — a reload always comes back with the UI showing. */
+  private uiHidden = false;
 
   constructor(
     private root: HTMLElement,
@@ -416,6 +419,9 @@ export class Hud {
       this.bodyPointerDown = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
     });
     canvas.addEventListener("pointerup", (e) => this.onSystemPointerUp(e));
+    // Double-tap the scene to hide/show all chrome — the pointer twin of the H key,
+    // so a clean shot is one gesture away and just as easily undone.
+    canvas.addEventListener("dblclick", () => this.toggleUi());
   }
 
   /** A left-button tap in the orrery focuses the nearest body, reusing `focus(id)`
@@ -887,6 +893,9 @@ export class Hud {
     this.layersPopover.content.appendChild(this.buildLayerChips());
     cluster.appendChild(this.layersPopover.trigger);
 
+    // Lens / vanity camera: focal length, depth of field, and a clean-shot UI hide.
+    cluster.appendChild(this.buildLensPopover());
+
     // Theme picker (light/dark + accent palette) + help icon.
     const helpBtn = button("?", () => this.toggleHelp());
     helpBtn.className = "icon-btn";
@@ -894,6 +903,87 @@ export class Hud {
     cluster.append(this.buildThemePicker(), helpBtn);
 
     return cluster;
+  }
+
+  /** The Lens / "vanity" popover: a photographic focal-length control, a
+   *  depth-of-field group (toggle + blur + focus-plane bias), and a "hide UI"
+   *  button for clean captures. Every setting is applied to the SceneManager and
+   *  persisted, and restored here on load so the lens survives a reload. */
+  private buildLensPopover(): HTMLButtonElement {
+    const pop = popover(this.root, "Lens ▾", { title: "Lens & depth of field", className: "lens-popover" });
+
+    // ── Focal length (field of view) ──
+    pop.content.appendChild(el("div", "section-label", "FOCAL LENGTH"));
+    const { min, max, def } = this.sm.lensRange;
+    const focal0 = getNumber("lens.focalMm", def);
+    this.sm.setFocalLength(focal0);
+    const focalInput = slider(
+      pop.content,
+      "Lens",
+      { min, max, step: 1, value: focal0, format: (v) => `${v.toFixed(0)} mm` },
+      (v) => { this.sm.setFocalLength(v); setNumber("lens.focalMm", v); },
+    );
+
+    // ── Depth of field ──
+    pop.content.appendChild(el("div", "section-label", "DEPTH OF FIELD"));
+    const dof0 = getFlag("lens.dof", false);
+    this.sm.setDofEnabled(dof0);
+    const dofRow = el("label", "help-toggle lens-dof-toggle");
+    const dofCb = document.createElement("input");
+    dofCb.type = "checkbox";
+    dofCb.checked = dof0;
+    dofCb.onchange = () => { this.sm.setDofEnabled(dofCb.checked); setFlag("lens.dof", dofCb.checked); };
+    dofRow.append(dofCb, el("span", "", "Depth of field (subject sharp)"));
+    pop.content.appendChild(dofRow);
+
+    const blur0 = getNumber("lens.dofBlur", 0.5);
+    this.sm.setDofBlur(blur0);
+    const blurInput = slider(
+      pop.content,
+      "Blur",
+      { min: 0, max: 100, step: 1, value: Math.round(blur0 * 100), format: (v) => `${v.toFixed(0)}%` },
+      (v) => { this.sm.setDofBlur(v / 100); setNumber("lens.dofBlur", v / 100); },
+    );
+
+    // Focus bias: 0 sits on the focused body; − pulls the plane in front, + pushes
+    // it behind. Persisted as the raw bias, shown as a signed percentage.
+    const focusBias0 = getNumber("lens.dofFocus", 0);
+    this.sm.setDofFocus(focusBias0);
+    const focusInput = slider(
+      pop.content,
+      "Focus",
+      {
+        min: -50, max: 100, step: 5, value: Math.round(focusBias0 * 100),
+        format: (v) => (v === 0 ? "subject" : `${v > 0 ? "+" : ""}${v.toFixed(0)}%`),
+      },
+      (v) => { this.sm.setDofFocus(v / 100); setNumber("lens.dofFocus", v / 100); },
+    );
+
+    // ── Clean capture ──
+    pop.content.appendChild(el("div", "section-label", "CAPTURE"));
+    const hideBtn = button("Hide UI", () => { this.setUiHidden(true); pop.close(); });
+    hideBtn.className = "lens-action";
+    hideBtn.title = "Hide all chrome for a clean shot — press H or double-tap the scene to bring it back";
+    pop.content.appendChild(hideBtn);
+    pop.content.appendChild(el("div", "lens-hint", "Restore with H or a double-tap on the scene."));
+
+    // ── Reset ──
+    const resetBtn = button("Reset lens", () => {
+      focalInput.value = String(def);
+      dofCb.checked = false;
+      blurInput.value = "50";
+      focusInput.value = "0";
+      // Fire each control's own handler so the readout, SceneManager and storage
+      // all update through the one path they already use.
+      focalInput.dispatchEvent(new Event("input"));
+      dofCb.dispatchEvent(new Event("change"));
+      blurInput.dispatchEvent(new Event("input"));
+      focusInput.dispatchEvent(new Event("input"));
+    });
+    resetBtn.className = "lens-action lens-reset";
+    pop.content.appendChild(resetBtn);
+
+    return pop.trigger;
   }
 
   /** The theme picker: a popover holding the light/dark mode toggle and the five
@@ -958,6 +1048,7 @@ export class Hud {
 
     const shortcuts: [string, string][] = [
       ["drag / WASD", "orbit camera"],
+      ["Q / E", "roll camera"],
       ["scroll / + −", "zoom"],
       ["space", "pause / resume"],
       [", .", "slower / faster warp"],
@@ -969,6 +1060,7 @@ export class Hud {
       ["N", "Navigation dock"],
       ["V", "cycle view angle"],
       ["R", "reset camera framing"],
+      ["H / dbl-tap", "hide / show UI"],
       ["?", "this help"],
       ["esc", "close panel / overlay"],
     ];
@@ -1025,6 +1117,16 @@ export class Hud {
   }
   closeHelp(): void {
     this.helpEl.style.display = "none";
+  }
+
+  /** Hide/show ALL HUD chrome (keyboard H, the Lens panel's Hide UI, or a
+   *  double-tap on the scene) for an unobstructed capture. The canvas stays live,
+   *  so the same double-tap or key brings the interface straight back. */
+  toggleUi(): void { this.setUiHidden(!this.uiHidden); }
+  isUiHidden(): boolean { return this.uiHidden; }
+  setUiHidden(hidden: boolean): void {
+    this.uiHidden = hidden;
+    this.root.classList.toggle("chrome-hidden", hidden);
   }
 
   /** Toggle the right Navigation dock (keyboard N, its ✕, or the re-open tab). */

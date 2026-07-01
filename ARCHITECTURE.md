@@ -148,7 +148,7 @@ engine for objects that genuinely decay (debris); see ROADMAP for the rung-2 upg
 
 | Module | Provides |
 |---|---|
-| `SceneManager.ts` | Three.js scene, camera, WebGL renderer, OrbitControls, floating origin (re-centred every frame on the focused body), theme (dark/light). |
+| `SceneManager.ts` | Three.js scene, camera, WebGL renderer, OrbitControls, floating origin (re-centred every frame on the focused body), theme (dark/light), HDR post chain (bloom + depth-of-field), and the "vanity" lens (focal length / FOV, DOF, camera roll). |
 | `bodyViews.ts` | Body sphere meshes, ecliptic orbit lines (eccentric-anomaly sampled and phased so the loop passes through the marker), label anchor NDC coordinates. |
 | `bodyTextures.ts` | Procedural, seeded (deterministic, zero image assets) surface textures generated at startup — granulation, bands, oceans, craters, atmosphere shells, rings (`createBodyTextures`). |
 | `bodyFeatures.ts` | Real IAU-gazetteer surface-feature tables (maria, canyons, mountains, polar caps) drawn over the procedural base (`BODY_FEATURES`). |

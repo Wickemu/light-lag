@@ -16,8 +16,9 @@
 const STORAGE_KEY = "lightlag.ui";
 
 // The bag holds mostly booleans (toggles), plus a few small string preferences
-// (e.g. the FOCUS list ordering mode). Both share the one namespaced store.
-type Bag = Record<string, boolean | string>;
+// (e.g. the FOCUS list ordering mode) and numbers (e.g. the lens focal length).
+// All share the one namespaced store.
+type Bag = Record<string, boolean | string | number>;
 
 let cache: Bag | null = null;
 
@@ -62,6 +63,19 @@ export function getString(key: string, fallback: string): string {
 
 /** Write a persisted string preference. */
 export function setString(key: string, value: string): void {
+  const bag = load();
+  bag[key] = value;
+  save(bag);
+}
+
+/** Read a persisted number preference, or `fallback` if unset (or non-finite). */
+export function getNumber(key: string, fallback: number): number {
+  const v = load()[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+/** Write a persisted number preference. */
+export function setNumber(key: string, value: number): void {
   const bag = load();
   bag[key] = value;
   save(bag);
