@@ -17,6 +17,7 @@ import { computePorkchopTo, type Porkchop, type PorkGrid } from "@lightlag/engin
 import { lagrangeState, lagrangeStateRelative, lagrangeEligible, lagrangeCentral } from "@lightlag/engine/maneuver/lagrange";
 import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, inertialDirToSurface, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "@lightlag/engine/ships";
 import { dockState, isDockable, transferProp, mergeStacks, shipPropAvailable, shipPropHeadroom } from "@lightlag/engine/refuel";
+import { bodyHasISRU, isruRate, isruProduced, fillFromISRU, isruStatusOf, type ISRUStatus } from "@lightlag/engine/isru";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "@lightlag/engine/maneuver/entry";
 import { aimMoonArrival } from "@lightlag/engine/maneuver/arrival";
 export { searchMoonWindow, type MoonWindow } from "@lightlag/engine/maneuver/moon";
@@ -217,6 +218,8 @@ export function deleteShip(sim: Simulation, shipId: string): boolean {
   sim.world.ships.delete(shipId);
   sim.world.messages = sim.world.messages.filter((m) => m.targetId !== shipId);
   for (const [id, m] of sim.world.maneuvers) if (m.shipId === shipId) sim.world.maneuvers.delete(id);
+  // Purges every scheduled event for this ship (departures, captures, a pending
+  // `isru-complete`, …); a scrapped ship's partially-mined propellant goes with it.
   sim.events.removeByEntity(shipId);
   return true;
 }
@@ -308,6 +311,78 @@ export function shipPropStatus(sim: Simulation, shipId: string): { available: nu
   const ship = sim.world.ships.get(shipId);
   if (!ship) return null;
   return { available: shipPropAvailable(ship), headroom: shipPropHeadroom(ship) };
+}
+
+// ── ISRU: mining in-situ volatiles into propellant ───────────────────────────
+
+/** Whether `shipId` can start ISRU right now: a live, landed ship sitting on a
+ *  volatile-bearing body with tank headroom to fill and no mining already running.
+ *  Drives the UI's ISRU/MINE section visibility. */
+export function canISRU(sim: Simulation, shipId: string): boolean {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || ship.status === "lost" || !ship.landed || ship.isru) return false;
+  const body = BODY_BY_ID.get(ship.landed.bodyId);
+  return !!body && bodyHasISRU(body) && shipPropHeadroom(ship) > 0;
+}
+
+export interface ISRUStart {
+  ratePerSec: number; // kg/s (pinned at deploy)
+  target: number; // kg to mine to fill the tanks
+  etaS: number; // seconds to a full fill
+}
+
+/**
+ * Begin mining the body a ship is landed on: convert in-situ volatiles into propellant
+ * at a constant rate (pinned now) until the tanks are full, at which point a scheduled
+ * `isru-complete` event deposits the propellant. Gated on a live, landed ship, a
+ * volatile-bearing body, tank headroom, and a positive rate. Returns the rate / target /
+ * ETA, or null if it can't start. The propellant is added at the finalize (or credited
+ * partially if the process is stopped or the ship launches first).
+ */
+export function startISRU(sim: Simulation, shipId: string): ISRUStart | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || ship.status === "lost" || !ship.landed || ship.isru) return null;
+  const body = BODY_BY_ID.get(ship.landed.bodyId);
+  if (!body || !bodyHasISRU(body)) return null;
+  const t = sim.world.t;
+  const ratePerSec = isruRate(ship, body, t);
+  const target = shipPropHeadroom(ship);
+  if (ratePerSec <= 0 || target <= 0) return null;
+  ship.isru = { bodyId: body.id, tStart: t, ratePerSec, target };
+  sim.events.push({ t: t + target / ratePerSec, kind: "isru-complete", entityId: shipId });
+  return { ratePerSec, target, etaS: target / ratePerSec };
+}
+
+/**
+ * Stop an in-progress mining process early, crediting the propellant produced so far
+ * (`ratePerSec · elapsed`, capacity-capped) and cancelling the pending finalize.
+ * Returns the kg actually added, or null if the ship wasn't mining.
+ */
+export function stopISRU(sim: Simulation, shipId: string): { producedKg: number } | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || !ship.isru) return null;
+  const producedKg = fillFromISRU(ship, isruProduced(ship.isru, sim.world.t));
+  ship.isru = undefined;
+  sim.events.removeByEntityKind(shipId, "isru-complete");
+  return { producedKg };
+}
+
+/** Read-only live status of a ship's mining (rate, produced-so-far, ETA), or null when
+ *  it is not mining. Pure — safe to call every render frame for the UI progress readout. */
+export function isruStatus(sim: Simulation, shipId: string): ISRUStatus | null {
+  const ship = sim.world.ships.get(shipId);
+  return ship ? isruStatusOf(ship, sim.world.t) : null;
+}
+
+/** Credit and clear an in-progress mining process before a state change that ends the
+ *  landed hold (a launch). Deposits the partial production so far and cancels the pending
+ *  finalize, so no stray `isru-complete` fires against a no-longer-landed ship. No-op if
+ *  the ship isn't mining. */
+function preemptISRU(sim: Simulation, ship: Ship): void {
+  if (!ship.isru) return;
+  fillFromISRU(ship, isruProduced(ship.isru, sim.world.t));
+  ship.isru = undefined;
+  sim.events.removeByEntityKind(ship.id, "isru-complete");
 }
 
 /**
@@ -1235,6 +1310,10 @@ export function launchShip(
     return { dv: asc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: false };
   }
   const t = sim.world.t;
+  // Launching ends the landed hold, so credit any in-progress ISRU mining (the partial
+  // produced so far) and cancel its pending finalize before the ship leaves the surface.
+  // Done only on this committed path (Δv already charged) so a failed launch never mutates.
+  preemptISRU(sim, ship);
   const ret = { dv: asc.dvTotal, propellant: cost.propellant, burnTime: cost.burnTime, feasible: true };
   // The launch-site latitude is the minimum inclination reachable from there.
   const incl = Math.asin(Math.max(-1, Math.min(1, ship.landed.surfaceDir.z)));

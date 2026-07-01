@@ -170,6 +170,10 @@ function qStationKeep(s: StationKeep): Record<string, unknown> {
   return o;
 }
 
+function qISRU(p: NonNullable<Ship["isru"]>): Record<string, unknown> {
+  return { bodyId: p.bodyId, tStart: q(p.tStart), ratePerSec: q(p.ratePerSec), target: q(p.target) };
+}
+
 function qShip(s: Ship): Record<string, unknown> {
   // Build in a FIXED field order; omit absent optionals entirely so two ships in
   // the same logical state serialize identically.
@@ -197,6 +201,9 @@ function qShip(s: Ship): Record<string, unknown> {
   if (s.perturbedLeg) o.perturbedLeg = qPerturbedLeg(s.perturbedLeg);
   if (s.stationKeep) o.stationKeep = qStationKeep(s.stationKeep);
   if (s.landed) o.landed = { bodyId: s.landed.bodyId, surfaceDir: qv(s.landed.surfaceDir) };
+  // ISRU mining process: present only on a landed, actively-mining ship, so a default
+  // ship — and the golden scenario — serialize identically (hash-neutral).
+  if (s.isru) o.isru = qISRU(s.isru);
   if (s.status) o.status = s.status;
   o.stages = s.stages.map(qStage);
   return o;
@@ -296,7 +303,7 @@ export function hashWorld(world: WorldState): string {
  *  field that happens to equal a token (e.g. a ship named "Inf") is left alone. */
 const STRING_KEYS = new Set([
   "id", "name", "primary", "mode", "targetId", "shipId", "label", "kind", "dir", "type", "controlNode", "status",
-  "goalPrimary", "point", "fidelity", "secondaryId", "central",
+  "goalPrimary", "point", "fidelity", "secondaryId", "central", "bodyId",
 ]);
 
 /** Inverse of q()'s non-finite tokens, applied during JSON.parse. */

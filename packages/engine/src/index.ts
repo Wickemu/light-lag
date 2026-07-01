@@ -36,6 +36,7 @@ export * as perturbed from "./perturbed.ts";
 export * as propulsion from "./propulsion.ts";
 export * as ships from "./ships.ts";
 export * as refuel from "./refuel.ts";
+export * as isru from "./isru.ts";
 export * as surface from "./surface.ts";
 export * as forces from "./forces.ts";
 export * as trajectory from "./trajectory.ts";

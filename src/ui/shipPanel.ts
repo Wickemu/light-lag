@@ -28,6 +28,10 @@ import {
   transferPropellant,
   assembleShips,
   shipPropStatus,
+  canISRU,
+  startISRU,
+  stopISRU,
+  isruStatus,
 } from "../app/commands.ts";
 import {
   ascentBudget,
@@ -175,6 +179,10 @@ export class ShipPanel {
   private assembleBtn!: HTMLButtonElement;
   private dockPartnerId: string | null = null;
   private lastDockSig = "";
+  private isruEl!: HTMLElement;
+  private isruReadout!: HTMLElement;
+  private isruMineBtn!: HTMLButtonElement;
+  private isruStopBtn!: HTMLButtonElement;
 
   // Fleet rows, kept persistent so per-frame status pills mutate cheaply.
   private fleetSection!: Collapsible;
@@ -501,6 +509,20 @@ export class ShipPanel {
     this.assembleBtn.title = "Dock-merge the selected ship into this one — its stages and payload join this vehicle and it is consumed. In-orbit construction; cannot be undone.";
     this.dockEl.appendChild(this.assembleBtn);
     host.appendChild(this.dockEl);
+
+    this.isruEl = el("div", "surface-ops");
+    this.isruEl.appendChild(sectionLabel("ISRU / MINE"));
+    this.isruReadout = el("div", "surface-readout");
+    this.isruEl.appendChild(this.isruReadout);
+    this.isruMineBtn = button("Mine propellant", () => this.doMine());
+    this.isruMineBtn.className = "wide-btn";
+    this.isruMineBtn.title = "Mine this body's in-situ volatiles (water ice) into propellant while landed. Rate = plant power ÷ the body's extraction energy; the tanks fill over time and top out at capacity. Launching or stopping credits what was mined so far.";
+    this.isruEl.appendChild(this.isruMineBtn);
+    this.isruStopBtn = button("Stop mining", () => this.doStopMine());
+    this.isruStopBtn.className = "wide-btn";
+    this.isruStopBtn.title = "Stop mining now and bank the propellant produced so far.";
+    this.isruEl.appendChild(this.isruStopBtn);
+    host.appendChild(this.isruEl);
   }
 
   /** A stat table filling a tab pane; rows predeclared in order. */
@@ -801,8 +823,9 @@ export class ShipPanel {
     setDisabled(this.spiralBtn, !canSpiral, "Available only with an electric drive while coasting in orbit around a body.");
     this.updateSurfaceOps(ship);
     this.updateDocking(ship);
+    this.updateISRU(ship);
     this.updateFidelity(ship, t);
-    const opsVisible = [this.surfaceEl, this.electricEl, this.fidelityEl, this.dockEl].some((e) => e.style.display !== "none");
+    const opsVisible = [this.surfaceEl, this.electricEl, this.fidelityEl, this.dockEl, this.isruEl].some((e) => e.style.display !== "none");
     this.detailTabs.setVisible("ops", opsVisible);
     // Settle the tab bar: hide empty tabs, keep an active visible one.
     this.detailTabs.refresh();
@@ -981,6 +1004,38 @@ export class ShipPanel {
       kvAuto(partner.name, `prop ${(them.available / 1000).toFixed(1)} t · room ${(them.headroom / 1000).toFixed(1)} t`);
     setDisabled(this.receiveBtn, !(them.available > 1 && me.headroom > 1), "Partner has no propellant to give, or this ship's tanks are full.");
     setDisabled(this.sendBtn, !(me.available > 1 && them.headroom > 1), "This ship has no propellant to give, or the partner's tanks are full.");
+  }
+
+  /** ISRU mining controls, shown when landed on a volatile-bearing body or already mining. */
+  private updateISRU(ship: Ship): void {
+    const status = isruStatus(this.sim, ship.id);
+    const startable = canISRU(this.sim, ship.id);
+    if (!status && !startable) {
+      this.isruEl.style.display = "none";
+      return;
+    }
+    this.isruEl.style.display = "block";
+    const bodyName = ship.landed ? (BODY_BY_ID.get(ship.landed.bodyId)?.name ?? ship.landed.bodyId) : "";
+    if (status) {
+      this.isruReadout.innerHTML =
+        kvAuto("Mining", `${bodyName} · ${(status.ratePerSec * 3600).toFixed(1)} kg/hr`) +
+        kvAuto("Progress", `${(status.fraction * 100).toFixed(0)}% · +${(status.producedKg / 1000).toFixed(2)} t · ETA ${formatDur(status.etaS)}`);
+    } else {
+      const room = shipPropStatus(this.sim, ship.id)!.headroom;
+      this.isruReadout.innerHTML =
+        kvAuto("Landed on", `${bodyName} — volatiles minable`) +
+        kvAuto("Tank room", `${(room / 1000).toFixed(1)} t to fill`);
+    }
+    this.isruMineBtn.style.display = status ? "none" : "block";
+    this.isruStopBtn.style.display = status ? "block" : "none";
+  }
+
+  private doMine(): void {
+    if (this.selectedId) startISRU(this.sim, this.selectedId);
+  }
+
+  private doStopMine(): void {
+    if (this.selectedId) stopISRU(this.sim, this.selectedId);
   }
 
   private doTransfer(dir: "send" | "receive"): void {

@@ -206,6 +206,14 @@ export interface BodyDef {
    *  the orbit stays centred on the point Pluto and Charon visibly circle. Requires
    *  the parent to carry a barycenterChild. */
   orbitsBarycenter?: boolean;
+  /** In-situ volatile resource for ISRU propellant mining (Phase-7 mass economy). Present
+   *  ONLY on volatile-bearing bodies a landed ship can mine (comet / icy-moon / regolith
+   *  water ice); absent ⇒ dry, no ISRU. `specificEnergyJPerKg` is the energy to liberate +
+   *  process 1 kg of usable propellant (J/kg): loose cometary ice is cheap, bound lunar
+   *  cold-trap regolith is dear. Production rate = effectivePowerW / specificEnergyJPerKg
+   *  (isru.ts). Static module data (never in WorldState) ⇒ golden-hash-neutral by
+   *  construction. Only meaningful with hasSurface:true. */
+  isru?: { specificEnergyJPerKg: number };
 }
 
 // JPL Standish elements, valid 1800 AD – 2050 AD (no extra correction terms).
@@ -252,6 +260,7 @@ export const BODIES: BodyDef[] = [
   {
     id: "moon", name: "Moon", parent: "earth", mu: 4.9028e12, radius: 1.7374e6,
     kind: "moon", color: 0x9a9a9a,
+    isru: { specificEnergyJPerKg: 1.2e7 }, // polar cold-trap regolith ice: low concentration, excavation + processing — the dearest volatiles modeled
     rotationPeriod: 2360591.5, hasSurface: true, J2: 2.034e-4, equatorialRadius: 1738100, // synchronous, 27.321661 d
     // Mean precessing elements; a physically valid two-body Moon (perturbations
     // neglected — it will drift over years but is correct in character).
@@ -318,6 +327,7 @@ export const BODIES: BodyDef[] = [
     kind: "dwarf", region: "main_belt", color: 0x9a8f80,
     rotationPeriod: 32667.0, hasSurface: true,
     helio: { a: 2.7664960200, e: 0.0783756264716304, i: 10.58336045805628, node: 80.49435747295276, peri: 73.92286274285223, M0: 6.176654513180486 },
+    isru: { specificEnergyJPerKg: 5e6 }, // hydrated clays + subsurface ice: liberating bound water costs more than clean ice
   },
   {
     id: "pallas", name: "Pallas", parent: "sun", mu: 1.363e10, radius: 2.565e5,
@@ -436,6 +446,7 @@ export const BODIES: BodyDef[] = [
     kind: "moon", color: 0xcdb89a,
     rotationPeriod: 306997.0, hasSurface: true,
     moon: { a: 6.712485e8, e: 0.009812823575576082, i: 1.790971209716447, node: 332.6287323572119, nodeDot: 0, peri: 254.6471423731226, periDot: 0, M0: 345.411036769848, MDot: 101.31694862 },
+    isru: { specificEnergyJPerKg: 3.3e6 }, // surface ice crust: melt-from-solid + processing overhead
   },
   {
     id: "ganymede", name: "Ganymede", parent: "jupiter", mu: 9.887833e12, radius: 2.6312e6,
@@ -460,6 +471,7 @@ export const BODIES: BodyDef[] = [
     kind: "moon", color: 0xf0f4f8,
     rotationPeriod: 118766.9, hasSurface: true,
     moon: { a: 2.384199e8, e: 0.006351597350212341, i: 28.05202310549093, node: 169.5065956328603, nodeDot: 0, peri: 135.4830251984964, periDot: 0, M0: 6.953398474767734, MDot: 261.89123630 },
+    isru: { specificEnergyJPerKg: 3.3e6 }, // clean surface ice: melt-from-solid + electrolysis/processing overhead
   },
   {
     id: "tethys", name: "Tethys", parent: "saturn", mu: 4.121e10, radius: 5.311e5,
@@ -1007,6 +1019,7 @@ export const BODIES: BodyDef[] = [
     id: "churyumov", name: "67P/Churyumov–Gerasimenko", parent: "sun", mu: 6.622e+2, radius: 1.700000e+3,
     kind: "comet", color: 0xcfd8e0, hasSurface: true,
     helio: { a: 3.51099974617797, e: 0.6314091826603773, i: 7.122338008973926, node: 50.99112348870829, peri: 11.3501620274385, M0: 216.2283918701555 },
+    isru: { specificEnergyJPerKg: 2.8e6 }, // loose cometary ice ≈ water sublimation enthalpy (~2.5 MJ/kg) + processing margin — the cheapest volatiles to mine
   },
   {
     id: "giacobini", name: "21P/Giacobini–Zinner", parent: "sun", mu: 1.397862e+2, radius: 1.000000e+3,
