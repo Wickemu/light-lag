@@ -4,7 +4,7 @@
 tightening + Horizons cross-check, integration-invariant suite, golden-state
 determinism, and an adversarial cross-subsystem audit with its confirmed findings
 fixed). The reusable physics engine is the `@lightlag/engine` workspace package
-(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 978 passing
+(`packages/engine/`; see [ARCHITECTURE.md](ARCHITECTURE.md)); 995 passing
 physics/sim tests — including a
 JPL Horizons ephemeris cross-check, cross-subsystem conservation/SOI-continuity
 (entry **and** egress) invariants, off-nominal flyby + abort handling, and a
@@ -56,14 +56,21 @@ findings fixed. **The physics core is locked.**
 - **Propellant depots + refueling — DONE (first cut):** rendezvous-gated ship-to-ship
   propellant transfer + in-orbit assembly (`packages/engine/src/refuel.ts`); docking raises m₀ → Δv,
   mass-conserving and capacity-capped. Still to do here: persistent depot *stations*
-  (transfer is ship↔ship today), propellant boil-off, and a rendezvous-targeting planner
+  (transfer is ship↔ship today) and a rendezvous-targeting planner
   (you fly craft co-orbital by hand; identical orbits dock exactly).
+- **Propellant boil-off — DONE (first cut):** a cryogenic stage tags `Stage.boiloff` (fraction/day
+  at 1 AU) and bleeds propellant while stored, scaled by solar flux `(AU/r)²` so cryo storage is easier
+  far from the Sun (`packages/engine/src/boiloff.ts`). Applied at a recurring, deterministic
+  `boiloff-tick` (one-day window, `exp(−λ·dt)`) ⇒ chunk-invariant; optional state + event-not-in-hash ⇒
+  golden hash unmoved. Eight catalog cryo stages tagged. Still to do here: a physical thermal-model rate
+  (heat leak / MLI / tank-area m^⅔ / latent heat), eclipse-fraction in LEO, active cryocoolers, and
+  stop-ticking-when-empty + re-arm-on-refuel.
 - **ISRU — DONE (first cut):** a landed ship mines a body's in-situ volatiles (water ice
   from comets/moons/regolith) into propellant (`packages/engine/src/isru.ts`); the production
   rate is plant power ÷ the body's `specificEnergyJPerKg` — everything traces back to energy.
   Power from the ship's electric source (solar 1/r²-derated) or a default plant; pinned at
   deploy ⇒ a single chunk-invariant `isru-complete` finalize; optional state ⇒ golden hash
-  unmoved. Still to do here: a finite per-body deposit (unbounded today), propellant boil-off,
+  unmoved. Still to do here: a finite per-body deposit (unbounded today),
   ISRU for life support (propellant only today), and a time-varying (day/night) rate.
 - A **colony/base** with supply requirements that must be resupplied within a
   transfer window; missing the window has consequences.
@@ -84,7 +91,32 @@ next, after five expansion rounds (Solar System + landing → assists + toolkit 
 electric propulsion → parallel staging). Each round stays additive: pure SI, deterministic,
 read-time analytic, suite green, golden hash documented if it moves.
 
-*(Most recent: **ISRU propellant mining — the mass economy grows its first in-situ source.** Refuelling
+*(Most recent: **Propellant boil-off — cryogens aren't a free infinite tank.** The mass economy gained
+its natural antagonist to refuelling/ISRU: a cryogenic stage (LH₂/LOX, LCH₄/LOX) slowly boils off while
+stored, so a cryo upper stage parked for weeks quietly bleeds Δv ("use it or lose it"). A core stage tags
+its propellant with `Stage.boiloff` (fraction lost per day at 1 AU — storable / solid / electric stages
+omit it, so nothing else boils off); the live rate scales with solar flux `(AU/r)²` at the ship's
+heliocentric distance (the same 1/r² law the electric drives use), so cryo storage is far easier in the
+outer system and harsh near the Sun. Because `Stage.propMass` is read raw everywhere (budget, refuel,
+ISRU, and the RK4 burn integrator), boil-off is NOT a read-time overlay but the engine's established
+discrete-event pattern: a recurring **`boiloff-tick`** (one sim-day window) multiplies each cryo stage's
+propMass by `exp(−λ(r)·window)`, then re-arms — **chunk-invariant** because ticks fire at deterministic
+times and each tick's loss is a pure function of the ship's state then. A new pure
+`packages/engine/src/boiloff.ts` (`stageBoiloffRate` / `shipHasBoiloff` / `applyBoiloff` /
+`shipBoiloffStatus`) holds the physics; `sim.tickBoiloff` applies + re-arms (skipped while thrusting or a
+powered leg owns the state; a lost wreck stops ticking); `app/commands.ts armBoiloff` arms the tick on
+every spawn/assembly path and `boiloffStatus` feeds the flight-console PROPULSION **Boil-off** row.
+Eight catalog cryo stages are tagged (Centaur, Saturn V S-II/S-IVB, Ariane 5 EPC/ESC-A as LH₂/LOX
+≈2 %/day; Starship/Super Heavy as methalox ≈0.8 %/day). All new state is optional — `Stage.boiloff` is
+omitted from `qStage` when absent, and the boil-off tick is a `SimEvent` (never part of `WorldState`, so
+never hashed) — and the golden scenario uses only storable designs, so the **golden hash is unmoved
+(`11f2c9fc7a5876`); suite 995 green** (+17: `packages/engine/src/boiloff.test.ts` rate/1-r²-scaling/
+apply/status; `src/app/boiloff.test.ts` park-and-bleed, chunk-invariance, serialize round-trip,
+far-vs-near, lost-ship-stops, golden-neutrality). The PROPULSION Boil-off readout needs a DOM context, so
+it's verified manually. Still to do: a physical thermal-model rate (heat leak = solar + planetary IR +
+albedo, MLI insulation, tank-area m^⅔, per-propellant latent heat), eclipse/shadow fraction in LEO,
+active cryocoolers (zero-boil-off), and stop-ticking-when-empty + re-arm-on-refuel.
+The round before: **ISRU propellant mining — the mass economy grows its first in-situ source.** Refuelling
 was ship-to-ship only (`refuel.ts`): you could move propellant between hulls but never *make* any. Now a
 **landed** ship can mine a body's in-situ volatiles (comet / icy-moon / regolith water ice) into
 propellant — the conceptual root of Phase 7, "everything traces back to energy." A volatile-bearing body
@@ -107,9 +139,10 @@ golden-neutrality, stop/launch partial credit, guards). Five bodies are tagged (
 Ceres, and the lunar poles). The flight console gains an **ISRU / MINE** section (Mine/Stop + live
 progress/ETA), verified manually as the DOCK/TRANSFER section is. Still to do (the rest of candidate #1):
 **persistent depot stations** (transfer is ship↔ship + this surface-mine today — the `Station` records are
-still inert orbit-holders), a **finite body deposit** (the deposit is unbounded, tank ≪ comet),
-**propellant boil-off** (the natural antagonist), and a **colony supplied within a transfer window**; plus a
-time-varying (day/night / orbital) rate — pinning at deploy is the deliberate chunk-invariance approximation.
+still inert orbit-holders), a **finite body deposit** (the deposit is unbounded, tank ≪ comet), and a
+**colony supplied within a transfer window**; plus a time-varying (day/night / orbital) rate — pinning at
+deploy is the deliberate chunk-invariance approximation. *(Propellant boil-off — the natural antagonist —
+landed the following round; see the "Most recent" note above.)*
 The round before: **Eased interstellar follow — the camera now *glides* into focus instead of snapping.**
 The interstellar camera could already follow a ship or a focused star, but it re-homed in a single
 frame (`SceneManager.followInterstellar` shifted the look-at + camera by the whole gap at once). It now
@@ -153,11 +186,12 @@ craft at L2 now actually drifts off the kinematic point, closing the PR-#80 Lagr
 "Perturbed" overlay + a FIDELITY console toggle surface it. See the backlog entry and the "Done
 since last round" note. The round before, **click-to-focus extended to the in-system orrery** landed.)*
 
-1. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly (`refuel.ts`)
-   and now **ISRU propellant mining** (`packages/engine/src/isru.ts` — a landed ship mines a body's in-situ
-   volatiles into propellant, power/energy-gated) are DONE (first cuts); what remains is **persistent depot
-   stations** (transfer is ship↔ship + surface-mine today), a **finite body deposit** (unbounded today),
-   **propellant boil-off**, and a **colony supplied within a transfer window**. *(see Phase 7.)*
+1. **ISRU / depots (Phase 7)** — mass economy. Propellant transfer + in-orbit assembly (`refuel.ts`),
+   **ISRU propellant mining** (`isru.ts` — a landed ship mines a body's in-situ volatiles, power/energy-
+   gated), and now **cryogenic boil-off** (`boiloff.ts` — cryo stages bleed propellant, solar-flux-scaled)
+   are DONE (first cuts); what remains is **persistent depot stations** (transfer is ship↔ship + surface-
+   mine today), a **finite body deposit** (unbounded today), and a **colony supplied within a transfer
+   window**. *(see Phase 7.)*
 
 *(**Interstellar follow polish — eased transition + streak reconcile** — formerly candidate #2 — is now
 DONE; see the "Most recent" note above and the "Interstellar sky / camera" backlog entry.)*

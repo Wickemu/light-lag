@@ -18,6 +18,7 @@ import { lagrangeState, lagrangeStateRelative, lagrangeEligible, lagrangeCentral
 import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, inertialDirToSurface, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "@lightlag/engine/ships";
 import { dockState, isDockable, transferProp, mergeStacks, shipPropAvailable, shipPropHeadroom } from "@lightlag/engine/refuel";
 import { bodyHasISRU, isruRate, isruProduced, fillFromISRU, isruStatusOf, type ISRUStatus } from "@lightlag/engine/isru";
+import { shipHasBoiloff, shipBoiloffStatus, BOILOFF_WINDOW, type BoiloffStatus } from "@lightlag/engine/boiloff";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "@lightlag/engine/maneuver/entry";
 import { aimMoonArrival } from "@lightlag/engine/maneuver/arrival";
 export { searchMoonWindow, type MoonWindow } from "@lightlag/engine/maneuver/moon";
@@ -100,6 +101,7 @@ export function spawnShip(sim: Simulation, design: ShipDesign): string {
   const ship = buildShipRecord(id, design, sim.world.t);
   ship.elements = circularOrbit(radius, design.inclinationDeg * DEG, 0, 0);
   sim.world.ships.set(id, ship);
+  armBoiloff(sim, id);
   return id;
 }
 
@@ -148,6 +150,7 @@ export function spawnOnPad(sim: Simulation, design: ShipDesign): string {
   const ship = buildShipRecord(id, design, sim.world.t);
   ship.landed = { bodyId: "earth", surfaceDir: launchSiteDir(design.inclinationDeg) };
   sim.world.ships.set(id, ship);
+  armBoiloff(sim, id);
   return id;
 }
 
@@ -302,7 +305,29 @@ export function assembleShips(sim: Simulation, baseId: string, addId: string): A
   if (!dockState(base, add, sim.world.t).docked) return null;
   mergeStacks(base, add);
   deleteShip(sim, addId);
+  armBoiloff(sim, baseId); // the merged stack may now carry a cryo stage it lacked before
   return { dvAfter: dvRemaining(base), wetMass: totalMass(base) };
+}
+
+// ── Cryogenic propellant boil-off ────────────────────────────────────────────
+
+/** Arm (idempotently) a ship's recurring boil-off tick when it carries a cryogenic
+ *  stage. Called from every spawn/assembly path; a no-op for a storable/solid/electric
+ *  ship. Remove-then-add guarantees exactly one pending tick. */
+export function armBoiloff(sim: Simulation, shipId: string): void {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || ship.status === "lost" || !shipHasBoiloff(ship)) return;
+  sim.events.removeByEntityKind(shipId, "boiloff-tick");
+  sim.events.push({ t: sim.world.t + BOILOFF_WINDOW, kind: "boiloff-tick", entityId: shipId });
+}
+
+/** Read-only live boil-off status of a ship (loss rate + cryo propellant aboard) at its
+ *  current heliocentric distance, or null if it has no cryogenic propellant. Pure. */
+export function boiloffStatus(sim: Simulation, shipId: string): BoiloffStatus | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship) return null;
+  const r = length(shipWorldState(ship, sim.world.t).r);
+  return shipBoiloffStatus(ship, r);
 }
 
 /** Read-only: a ship's propellant available to give and the headroom it can accept,

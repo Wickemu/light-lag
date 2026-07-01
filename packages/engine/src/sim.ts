@@ -30,6 +30,7 @@ import {
 } from "./ships.ts";
 import { selectPerturbers, type Perturber } from "./perturbed.ts";
 import { fillFromISRU } from "./isru.ts";
+import { applyBoiloff, shipHasBoiloff, BOILOFF_WINDOW } from "./boiloff.ts";
 import { exhaustVelocity, thrustAt, lorentzFactor, boosterCount, type Stage, type Booster } from "./propulsion.ts";
 import { properToCoordinateAccel } from "./math/relativity.ts";
 import { type KeplerElements, type State, stateToElements, elementsToState, propagate, meanMotion, wrapPi, wrapTwoPi } from "./math/kepler.ts";
@@ -806,6 +807,7 @@ export class Simulation {
       case "aero-trim": this.trimAerocapture(ship); break;
       case "perturbed-finalize": this.finalizePerturbed(ship); break;
       case "isru-complete": this.finalizeISRU(ship); break;
+      case "boiloff-tick": this.tickBoiloff(ship); break;
       default: break;
     }
   }
@@ -1989,6 +1991,25 @@ export class Simulation {
     if (!ship.landed) { ship.isru = undefined; return; }
     fillFromISRU(ship, p.target);
     ship.isru = undefined;
+  }
+
+  /**
+   * A recurring cryogenic BOIL-OFF tick (see boiloff.ts): bleed one window's worth of
+   * propellant from the ship's cryo stages, then re-arm the next tick. The loss over
+   * the fixed window is a pure function of the ship's state at the tick (heliocentric
+   * distance ⇒ solar flux ⇒ rate), so it is chunk-invariant. Skipped (but still re-armed)
+   * while the ship is thrusting or a powered leg owns its state — the RK4 integrator
+   * carries propMass there, and a burn spanning a whole day is negligible anyway. A lost
+   * ship (a wreck) stops ticking entirely.
+   */
+  private tickBoiloff(ship: Ship): void {
+    if (ship.status === "lost" || !shipHasBoiloff(ship)) return; // stop re-arming
+    const mid = ship.mode === "thrust" || ship.launchLeg || ship.descentLeg;
+    if (!mid) {
+      const r = length(shipWorldState(ship, this.world.t).r);
+      applyBoiloff(ship, r, BOILOFF_WINDOW);
+    }
+    this.events.push({ t: this.world.t + BOILOFF_WINDOW, kind: "boiloff-tick", entityId: ship.id });
   }
 
   /**

@@ -68,6 +68,13 @@ export interface Stage {
    *  capacity is taken as the current propMass (it cannot be over-filled). Burns and
    *  staging only ever lower propMass; capacity is fixed once set. */
   propCapacity?: number;
+  /** Cryogenic-propellant BOIL-OFF rate: the fraction of this stage's propellant lost
+   *  per DAY at 1 AU (see boiloff.ts). Set only on cryogenic stages (LH₂/LOX, LCH₄/LOX);
+   *  storable, solid, and electric stages omit it entirely (⇒ no boil-off). The actual
+   *  rate scales with solar flux — (AU/r)² at the ship's heliocentric distance — so cryo
+   *  storage is far easier in the outer system. Absent ⇒ the stage never boils off, so a
+   *  storable design (and the golden scenario) serialize identically to before the model. */
+  boiloff?: number;
 }
 
 /** Effective exhaust velocity vₑ = Isp · g₀ (g₀ defines Isp; it is not gravity). */

@@ -55,14 +55,24 @@ export interface ShipPreset {
 }
 
 // ── construction helpers (SI: kg, s, N) ──────────────────────────────────────
-/** A stage from SI primitives. dry/prop in kg, isp in s, thrust in N. */
-const S = (name: string, dryMass: number, propMass: number, isp: number, thrust: number): Stage => ({
+/** A stage from SI primitives. dry/prop in kg, isp in s, thrust in N. Optional
+ *  `boiloff` (fraction of propellant lost per day at 1 AU) tags a CRYOGENIC stage
+ *  (LH₂/LOX, LCH₄/LOX) that bleeds propellant while stored (see boiloff.ts); omit it
+ *  for storable, solid, and electric propellants. */
+const S = (name: string, dryMass: number, propMass: number, isp: number, thrust: number, boiloff?: number): Stage => ({
   name,
   dryMass,
   propMass,
   isp,
   thrust,
+  ...(boiloff !== undefined ? { boiloff } : {}),
 });
+
+/** Representative boil-off rates (fraction of propellant lost per DAY at 1 AU). LH₂ is
+ *  the leaky cryogen (20 K, low density, big tanks); methane stores far better (denser,
+ *  111 K, close to LOX). First-cut calibrated figures for passively-insulated stages. */
+const BOILOFF_LH2 = 0.02; // LH₂/LOX
+const BOILOFF_METHALOX = 0.008; // LCH₄/LOX
 
 /** A strap-on BOOSTER (parallel stage): an independent engine+tank that ignites
  *  WITH its core stage and burns concurrently, dropping when its own propellant is
@@ -132,8 +142,8 @@ export const SHIP_PRESETS: ShipPreset[] = [
       inclinationDeg: 32.5,
       stages: [
         S("S-IC", 137_000, 2_149_500, 290, 35_100e3), // 5× F-1, trajectory-avg Isp (SL 263 / vac 304)
-        S("S-II", 40_100, 451_800, 421, 5_141e3), // 5× J-2, vac
-        S("S-IVB", 13_500, 107_100, 421, 1_033e3), // 1× J-2, vac — ascent finish + trans-lunar injection
+        S("S-II", 40_100, 451_800, 421, 5_141e3, BOILOFF_LH2), // 5× J-2, LH₂/LOX, vac
+        S("S-IVB", 13_500, 107_100, 421, 1_033e3, BOILOFF_LH2), // 1× J-2, LH₂/LOX, vac — ascent finish + trans-lunar injection
         S("CSM SPS", 6_110, 18_410, 314, 91_200), // Service Module engine — lunar-orbit insertion (+ trans-Earth return)
       ],
     }),
@@ -154,7 +164,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
       altitudeKm: 185,
       stages: [
         S("S-IB", 41_600, 407_100, 283, 7_582e3), // 8× H-1, trajectory-avg Isp (SL 263 / vac 289)
-        S("S-IVB", 12_900, 104_300, 421, 1_000e3), // 1× J-2, vac
+        S("S-IVB", 12_900, 104_300, 421, 1_000e3, BOILOFF_LH2), // 1× J-2, LH₂/LOX, vac
       ],
     }),
   },
@@ -279,7 +289,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
       payloadMass: 20_480, // Command Module (5.56 t) + Lunar Module (~14.85 t) — inert cargo on the CSM
       altitudeKm: 185,
       stages: [
-        S("S-IVB", 13_500, 107_100, 421, 1_033e3), // J-2 restart — trans-lunar injection
+        S("S-IVB", 13_500, 107_100, 421, 1_033e3, BOILOFF_LH2), // J-2 restart, LH₂/LOX — trans-lunar injection
         S("CSM SPS", 6_110, 18_410, 314, 91_200), // Service Module engine — lunar-orbit insertion (+ trans-Earth return)
       ],
     }),
@@ -307,7 +317,7 @@ export const SHIP_PRESETS: ShipPreset[] = [
       "The first LH₂/LOX stage and still the high-energy workhorse. Isp 450 s makes it a Δv powerhouse — ~6.5 km/s to a 4 t probe. Carried Surveyor, Viking, Voyager, Cassini, New Horizons on their way.",
     design: design("Centaur (RL10)", {
       payloadMass: 4_000,
-      stages: [S("Centaur III", 2_247, 20_830, 450.5, 101_800)],
+      stages: [S("Centaur III", 2_247, 20_830, 450.5, 101_800, BOILOFF_LH2)],
     }),
   },
   {
@@ -395,10 +405,10 @@ export const SHIP_PRESETS: ShipPreset[] = [
       inclinationDeg: 6,
       stages: [
         {
-          ...S("EPC core", 14_700, 175_000, 432, 1_340e3), // Vulcain 2 (vac-weighted)
+          ...S("EPC core", 14_700, 175_000, 432, 1_340e3, BOILOFF_LH2), // Vulcain 2, LH₂/LOX (vac-weighted)
           boosters: [B("EAP", 33_000, 240_000, 275, 6_470e3, 2)],
         },
-        S("ESC-A", 4_540, 14_900, 446, 67e3), // HM7B cryogenic upper
+        S("ESC-A", 4_540, 14_900, 446, 67e3, BOILOFF_LH2), // HM7B LH₂/LOX cryogenic upper
       ],
     }),
   },
@@ -453,8 +463,8 @@ export const SHIP_PRESETS: ShipPreset[] = [
     design: design("Starship + Super Heavy", {
       payloadMass: 100_000,
       stages: [
-        S("Super Heavy", 200_000, 3_400_000, 330, 74_400e3), // 33× Raptor, SL
-        S("Starship", 120_000, 1_200_000, 363, 12_200e3), // 6× Raptor, vac
+        S("Super Heavy", 200_000, 3_400_000, 330, 74_400e3, BOILOFF_METHALOX), // 33× Raptor, LCH₄/LOX, SL
+        S("Starship", 120_000, 1_200_000, 363, 12_200e3, BOILOFF_METHALOX), // 6× Raptor, LCH₄/LOX, vac
       ],
     }),
   },
