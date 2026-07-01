@@ -65,6 +65,9 @@ function qStage(s: Stage): Record<string, unknown> {
   // Tank capacity (refuelling ceiling) only when tracked, so an untracked stage
   // serializes identically to one before the refuelling model existed.
   if (s.propCapacity !== undefined) o.propCapacity = q(s.propCapacity);
+  // Cryogenic boil-off rate only when set, so a storable/solid/electric stage (and the
+  // golden scenario) serialize identically to before the boil-off model existed.
+  if (s.boiloff !== undefined) o.boiloff = q(s.boiloff);
   return o;
 }
 

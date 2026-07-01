@@ -55,7 +55,8 @@ export type SimEventKind =
   | "land-arrive"
   | "aero-trim"
   | "perturbed-finalize"
-  | "isru-complete";
+  | "isru-complete"
+  | "boiloff-tick";
 
 export interface SimEvent {
   t: number; // absolute sim time the event fires (s since J2000)

@@ -32,6 +32,7 @@ import {
   startISRU,
   stopISRU,
   isruStatus,
+  boiloffStatus,
 } from "../app/commands.ts";
 import {
   ascentBudget,
@@ -289,7 +290,7 @@ export class ShipPanel {
     this.drivePowerMeter = meter("Drive power", { term: false });
     drivePane.appendChild(this.drivePowerMeter.root);
     this.propTable = this.makeTable(drivePane,
-      ["Mass", "Active stage", "Drive thrust", "Spiraling"]);
+      ["Mass", "Active stage", "Boil-off", "Drive thrust", "Spiraling"]);
 
     const heatPane = this.detailTabs.add("heat", "Heat");
     const heatGauges = el("div", "tab-gauges");
@@ -857,6 +858,16 @@ export class ShipPanel {
       { key: "Mass", value: `${(totalMass(ship) / 1000).toFixed(2)} t` },
       { key: "Active stage", value: `${ship.activeStage + 1} / ${ship.stages.length}` },
     ];
+    const boil = boiloffStatus(this.sim, ship.id);
+    if (boil && boil.cryoPropKg > 0) {
+      // Fraction of the cryo propellant lost per day, and a warn once it's non-trivial.
+      const fracPerDay = boil.ratePerDay / boil.cryoPropKg;
+      rows.push({
+        key: "Boil-off",
+        value: `${boil.ratePerDay.toFixed(1)} kg/day · ${(fracPerDay * 100).toFixed(2)} %/day`,
+        state: fracPerDay > 0.01 ? "warn" : "info",
+      });
+    }
     if (stage?.electric) {
       const rHelio = length(shipWorldState(ship, tKnown).r);
       const power = availablePowerW(stage.electric, rHelio);
