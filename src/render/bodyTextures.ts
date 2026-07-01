@@ -25,6 +25,7 @@ import { type BodyDef, type BodyKind } from "@lightlag/engine/constants";
 import { LAND_POLYS } from "./earthLand.ts";
 import { BODY_FEATURES } from "./bodyFeatures.ts";
 import { paintGiant, paintGiantRing } from "./gasGiant.ts";
+import { paintRockySurface } from "./rockyBody.ts";
 
 // ── Determinism ──────────────────────────────────────────────────────────────
 
@@ -75,6 +76,11 @@ function shade(hex: number, dl: number, ds = 0, dh = 0): RGB {
 
 function clamp01(x: number): number {
   return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+function smoothstep(a: number, b: number, x: number): number {
+  const t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
 }
 
 // ── Tileable fractal value noise ─────────────────────────────────────────────
@@ -197,6 +203,9 @@ export interface BodyTextureSet {
   bumpScale: number;
   roughness: number;
   metalness: number;
+  /** Optional per-pixel roughness (Earth: glossy oceans for a sun-glint, matte land).
+   *  Multiplies the scalar `roughness`, so set that to 1 when a map is supplied. */
+  roughnessMap?: THREE.Texture;
   /** Optional semi-transparent atmosphere/cloud shell. */
   clouds?: THREE.Texture;
   cloudOpacity?: number;
@@ -498,7 +507,8 @@ function applyHemisphere(img: ImageData, w: number, h: number, f: SurfaceFeature
  *  canyons sink. Subtle — the relief should read, not cartoon. */
 function stampFeatureBump(bctx: CanvasRenderingContext2D, w: number, h: number, f: SurfaceFeature): void {
   const raise = f.kind === "mountain";
-  const sink = f.kind === "mare" || f.kind === "basin" || f.kind === "linea" || f.kind === "patera";
+  const sink = f.kind === "mare" || f.kind === "basin" || f.kind === "linea" || f.kind === "patera"
+    || f.kind === "crater" || f.kind === "groove";
   if (!raise && !sink) return;
   const tone: RGB = raise ? [0.85, 0.85, 0.85] : [0.4, 0.4, 0.4];
   if (f.shape === "ellipse") stampEllipse(bctx, w, h, { ...f, alpha: 0.5, softness: 0.7 }, tone);
@@ -568,6 +578,36 @@ function buildLandMask(w: number, h: number): Float32Array {
   return mask;
 }
 
+/** Coast-proximity field: a separable box-blur of the land mask (wraps in longitude,
+ *  clamps in latitude). An ocean pixel's value is the fraction of land within `radius`
+ *  — high just off a coast, ~0 in the open ocean — which the Earth painter turns into
+ *  a continental-shelf → abyssal-plain depth ramp. O(w·h), runs once at startup. */
+function coastProximity(land: Float32Array, w: number, h: number, radius: number): Float32Array {
+  const tmp = new Float32Array(w * h);
+  const out = new Float32Array(w * h);
+  const norm = 1 / (2 * radius + 1);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let sum = 0;
+    for (let k = -radius; k <= radius; k++) sum += land[row + (((k % w) + w) % w)]!;
+    for (let x = 0; x < w; x++) {
+      tmp[row + x] = sum * norm;
+      const xout = ((x - radius) % w + w) % w, xin = ((x + radius + 1) % w + w) % w;
+      sum += land[row + xin]! - land[row + xout]!;
+    }
+  }
+  const cy = (k: number): number => (k < 0 ? 0 : k >= h ? h - 1 : k);
+  for (let x = 0; x < w; x++) {
+    let sum = 0;
+    for (let k = -radius; k <= radius; k++) sum += tmp[cy(k) * w + x]!;
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = sum * norm;
+      sum += tmp[cy(y + radius + 1) * w + x]! - tmp[cy(y - radius) * w + x]!;
+    }
+  }
+  return out;
+}
+
 /** Sample the land-coverage field, wrapping in longitude and clamping in latitude. */
 function sampleMask(mask: Float32Array, w: number, h: number, u: number, v: number): number {
   let xi = Math.floor((((u % 1) + 1) % 1) * w);
@@ -578,16 +618,22 @@ function sampleMask(mask: Float32Array, w: number, h: number, u: number, v: numb
 }
 
 /** Earth: a recognisable blue marble — real coastlines (earthLand.ts) rasterised
- *  into a land/sea mask, oceans shaded by depth, land tinted by latitude biome and
- *  by real desert/forest/ice regions, and polar ice. Returns a bump map too (land
- *  stands proud of the sea). */
-function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAniso: number): { surface: THREE.Texture; bump: THREE.Texture } {
+ *  into a land/sea mask, oceans graded by real bathymetry (turquoise shelves →
+ *  abyssal navy from the coast-proximity field), land tinted by latitude biome and
+ *  by real desert/forest/ice regions, and polar ice. Returns a bump map (land stands
+ *  proud of the sea) and a roughness map (glossy oceans for a sun-glint, matte land). */
+function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAniso: number): { surface: THREE.Texture; bump: THREE.Texture; roughness: THREE.Texture } {
   const { painted } = makeCanvas(w, h);
   const { painted: bump } = makeCanvas(w, h);
+  const { painted: rough } = makeCanvas(w, h);
   const land = buildLandMask(w, h);
+  // Continental shelves span a few percent of the map; blur the mask by that to get
+  // each ocean pixel's distance-from-coast, which drives the depth ramp.
+  const prox = coastProximity(land, w, h, Math.max(2, Math.round(w * 0.045)));
 
-  const ocean: RGB = hexToRgb(0x16335f);
-  const oceanShallow: RGB = hexToRgb(0x2e6b8f);
+  const shelf: RGB = hexToRgb(0x2b7ba0);  // shallow continental-shelf turquoise
+  const basin: RGB = hexToRgb(0x18466f);  // mid-ocean
+  const abyss: RGB = hexToRgb(0x0b2748);  // deep abyssal navy
   const desert: RGB = hexToRgb(0xbda478);
   const forest: RGB = hexToRgb(0x46663a);
   const tundra: RGB = hexToRgb(0x83836f);
@@ -607,19 +653,25 @@ function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAn
       const wv = clamp01(v + (fbm(u + 30.0, v + 10.0, 4, 6) - 0.5) * COAST_WARP * 0.5);
       const cov = sampleMask(land, w, h, wu, wv);
       const i = (y * w + x) * 4;
+      let roughV: number;
       if (cov < 0.5) {
-        // Sea — shallow where the coverage rises toward the waterline.
-        const shallow = clamp01(cov * 2);
-        lerpRgb(ocean, oceanShallow, shallow * shallow, tmp);
+        // Sea — depth from the coast-proximity field: shelf turquoise near land,
+        // through the mid-ocean tone, to abyssal navy in the open ocean. A faint
+        // tropical-bank brightening warms shallow water near the equator.
+        const openness = clamp01(1 - prox[y * w + x]! * 2.2);
+        if (openness < 0.5) lerpRgb(shelf, basin, openness * 2, tmp);
+        else lerpRgb(basin, abyss, (openness - 0.5) * 2, tmp);
+        if (lat < 0.35 && openness < 0.4) lerpRgb(tmp, hexToRgb(0x37a7bf), (0.4 - openness) * 0.6, tmp);
         setPx(painted.data, i, tmp[0], tmp[1], tmp[2]);
         setPx(bump.data, i, 0.35, 0.35, 0.35);
+        roughV = 0.34 + (1 - openness) * 0.12; // deep water glossiest → shelves a touch rougher
       } else {
         // Land — biome by latitude, with a little noise breakup.
         const warm = clamp01(1 - lat * 1.3);
         lerpRgb(tundra, forest, warm, tmp);
         lerpRgb(tmp, desert, clamp01((warm - 0.5) * 1.6), tmp);
-        const rough = fbm(u + 9.0, v + 2.0, 4, 24);
-        const k = 0.8 + rough * 0.22; // ≤ ~1.0, avoids clipping
+        const rn = fbm(u + 9.0, v + 2.0, 4, 24);
+        const k = 0.8 + rn * 0.22; // ≤ ~1.0, avoids clipping
         tmp[0] = clamp01(tmp[0] * k);
         tmp[1] = clamp01(tmp[1] * k);
         tmp[2] = clamp01(tmp[2] * k);
@@ -627,6 +679,7 @@ function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAn
         const relief = fbm(u + 9.0, v + 2.0, 5, 18);
         const b = clamp01(0.5 + relief * 0.4);
         setPx(bump.data, i, b, b, b);
+        roughV = 0.9; // matte land
       }
       // Polar ice caps blended over everything near the poles.
       if (lat > 0.82) {
@@ -637,140 +690,71 @@ function paintEarth(w: number, h: number, fbm: ReturnType<typeof makeFbm>, maxAn
         const cb = bump.data.data[i]! / 255;
         const nb = cb + (0.7 - cb) * t;
         setPx(bump.data, i, nb, nb, nb);
+        roughV = roughV + (0.6 - roughV) * t; // ice: matte-ish, between glossy sea and dry land
       }
+      setPx(rough.data, i, roughV, roughV, roughV);
     }
   }
 
   // Real large-scale regions (deserts/forests/ice sheets/ranges) over the land.
   const features = BODY_FEATURES.earth;
-  if (features?.length) {
+  const onCanvas = !!features?.length;
+  if (onCanvas) {
     painted.canvas.getContext("2d")!.putImageData(painted.data, 0, 0);
     bump.canvas.getContext("2d")!.putImageData(bump.data, 0, 0);
-    paintFeatures(painted, bump, w, h, features, hexToRgb(0x5b6b48));
-    return {
-      surface: toTexture(painted, maxAniso, true, true),
-      bump: toTexture(bump, maxAniso, false, true),
-    };
+    paintFeatures(painted, bump, w, h, features!, hexToRgb(0x5b6b48));
   }
   return {
-    surface: toTexture(painted, maxAniso, true),
-    bump: toTexture(bump, maxAniso, false),
+    surface: toTexture(painted, maxAniso, true, onCanvas),
+    bump: toTexture(bump, maxAniso, false, onCanvas),
+    roughness: toTexture(rough, maxAniso, false),
   };
 }
 
-/** Rocky / icy / small bodies: a noisy regolith tinted by the body colour, with
- *  optional impact craters and a matching bump map. Mars gets albedo maria and
- *  polar caps layered on top of the same base. */
-function paintRocky(def: BodyDef, w: number, h: number, rng: () => number, fbm: ReturnType<typeof makeFbm>, maxAniso: number): { surface: THREE.Texture; bump?: THREE.Texture } {
+/** Rocky / icy / small bodies: a regolith with a real impact population and a
+ *  matching relief map, synthesised by the pure rockyBody module (multi-octave
+ *  terrain + power-law craters with rims/floors/peaks/ejecta/rays), then the real
+ *  named features (maria, albedo regions, lineae, polar caps) stamped over it. Mars
+ *  gets its dusky mare field from the same pure base; the layered polar caps and
+ *  volcanoes ride on top from the feature table. */
+function paintRocky(def: BodyDef, w: number, h: number, rng: () => number, maxAniso: number): { surface: THREE.Texture; bump?: THREE.Texture } {
   const { painted } = makeCanvas(w, h);
   // Tiny bodies (asteroids/comets) never fill enough screen for a bump map's
-  // relief to read — skip it to save a canvas and a GPU texture.
+  // relief to read — skip the extra canvas and GPU texture.
   const wantsBump = def.kind !== "asteroid" && def.kind !== "comet";
   const bump: Painted | null = wantsBump ? makeCanvas(w, h).painted : null;
 
-  const base = hexToRgb(def.color);
-  const light = shade(def.color, 0.10);
-  const dark = shade(def.color, -0.14);
-  const tmp: RGB = [0, 0, 0];
+  // Crater count trimmed for young resurfaced worlds (Io/Europa's volcanism & ice
+  // erase impacts; Triton and Pluto's nitrogen plains are young too) and cloud-hidden
+  // ones (Venus/Titan — the surface never shows, so spend almost nothing on it).
+  // Everything else — Mercury, the Moon, Mars, the asteroids and outer moons — wears
+  // its class default.
+  let craterScale = 1;
+  if (def.id === "io" || def.id === "europa") craterScale = 0.05;
+  else if (def.id === "triton") craterScale = 0.3;
+  else if (def.id === "pluto") craterScale = 0.15;
+  else if (def.id === "venus" || def.id === "titan") craterScale = 0.12;
 
-  const isMars = def.id === "mars";
-  const mare = isMars ? hexToRgb(0x7a2f1a) : dark;
-
-  for (let y = 0; y < h; y++) {
-    const v = y / h;
-    const lat = Math.abs(v - 0.5) * 2;
-    for (let x = 0; x < w; x++) {
-      const u = x / w;
-      const n = fbm(u, v, 5, isMars ? 6 : 8);
-      lerpRgb(dark, light, n, tmp);
-      lerpRgb(base, tmp, 0.6, tmp);
-      if (isMars) {
-        // Dark basaltic regions where a second low-frequency field is low.
-        const region = fbm(u + 4.0, v + 4.0, 3, 4);
-        lerpRgb(tmp, mare, clamp01((0.45 - region) * 1.8), tmp);
-      }
-      const i = (y * w + x) * 4;
-      // Mars polar caps.
-      if (isMars && lat > 0.86) {
-        const t = clamp01((lat - 0.86) / 0.14);
-        lerpRgb(tmp, hexToRgb(0xeef2f5), t, tmp);
-      }
-      setPx(painted.data, i, tmp[0], tmp[1], tmp[2]);
-      if (bump) {
-        const b = clamp01(0.5 + (n - 0.5) * 0.9);
-        setPx(bump.data, i, b, b, b);
-      }
-    }
+  const rocky = paintRockySurface({ id: def.id, color: def.color, kind: def.kind, w, h, craterScale });
+  painted.data.data.set(rocky.surface);
+  painted.canvas.getContext("2d")!.putImageData(painted.data, 0, 0);
+  if (bump) {
+    bump.data.data.set(rocky.bump);
+    bump.canvas.getContext("2d")!.putImageData(bump.data, 0, 0);
   }
 
-  // Impact craters: airless bodies are heavily cratered; bodies with thick air
-  // (Venus, Titan) are not — but those are hidden by their cloud shell anyway.
-  const craterDensity: Record<BodyKind, number> = {
-    star: 0, planet: 18, dwarf: 40, moon: 55, asteroid: 70, comet: 30, satellite: 0,
-  };
-  let nCraters = craterDensity[def.kind];
-  if (def.atmosphere) nCraters = Math.round(nCraters * 0.2);
-  if (def.id === "earth") nCraters = 0;
-  // Young, resurfaced worlds wear far fewer impact scars than their class default:
-  // Io's volcanism and Europa's ice erase them almost entirely; Triton is young too.
-  if (def.id === "io" || def.id === "europa") nCraters = Math.round(nCraters * 0.06);
-  else if (def.id === "triton") nCraters = Math.round(nCraters * 0.3);
-  paintCraters(painted, bump, w, h, nCraters, rng);
-
   // Real named features (maria, albedo regions, lineae, polar caps) stamped over
-  // the cratered base — semi-transparent, so the relief still reads through them.
+  // the crater base — semi-transparent, so the relief still reads through them.
   const features = BODY_FEATURES[def.id];
   if (features?.length) paintFeatures(painted, bump, w, h, features, hexToRgb(def.color));
   if (def.id === "europa") paintEuropaWeb(painted, w, h, rng);
 
-  // paintCraters / paintFeatures have drawn the final pixels directly onto the
-  // canvases, so build the textures straight from them (no ImageData re-upload).
+  // Every path has drawn the final pixels straight onto the canvases, so build the
+  // textures from them (no ImageData re-upload).
   return {
     surface: toTexture(painted, maxAniso, true, true),
     bump: bump ? toTexture(bump, maxAniso, false, true) : undefined,
   };
-}
-
-/** Stamp N craters into colour + (optional) bump: a darker floor, a bright raised
- *  rim. Draws directly onto the canvases and leaves the result there. */
-function paintCraters(surf: Painted, bump: Painted | null, w: number, h: number, n: number, rng: () => number): void {
-  const sctx = surf.canvas.getContext("2d")!;
-  const bctx = bump ? bump.canvas.getContext("2d")! : null;
-  sctx.putImageData(surf.data, 0, 0);
-  if (bump && bctx) bctx.putImageData(bump.data, 0, 0);
-
-  const floorStops = (g: CanvasGradient): CanvasGradient => {
-    g.addColorStop(0, "rgba(0,0,0,0.28)");
-    g.addColorStop(0.7, "rgba(0,0,0,0.12)");
-    g.addColorStop(1, "rgba(0,0,0,0)");
-    return g;
-  };
-  const rimStops = (g: CanvasGradient): CanvasGradient => {
-    g.addColorStop(0, "rgba(40,40,40,0.7)");
-    g.addColorStop(0.78, "rgba(40,40,40,0.2)");
-    g.addColorStop(0.92, "rgba(235,235,235,0.7)");
-    g.addColorStop(1, "rgba(128,128,128,0)");
-    return g;
-  };
-  const disc = (ctx: CanvasRenderingContext2D, x: number, y: number, r: number, fill: CanvasGradient): void => {
-    ctx.fillStyle = fill;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-  };
-
-  for (let k = 0; k < n; k++) {
-    const cx = rng() * w;
-    // Bias toward the equator a touch so poles aren't over-stippled at the pinch.
-    const cy = (0.15 + rng() * 0.7) * h;
-    const r = (0.01 + rng() * 0.04) * w;
-
-    // Each gradient is positioned, so stamp at cx and (if it straddles the u=0
-    // seam) at the wrapped copy too.
-    const xs = (cx < r || cx > w - r) ? [cx, cx < r ? cx + w : cx - w] : [cx];
-    for (const x of xs) {
-      disc(sctx, x, cy, r, floorStops(sctx.createRadialGradient(x, cy, 0, x, cy, r)));
-      if (bctx) disc(bctx, x, cy, r, rimStops(bctx.createRadialGradient(x, cy, 0, x, cy, r)));
-    }
-  }
 }
 
 /** Broken-cloud / haze shell texture (white, with alpha from fractal noise).
@@ -778,27 +762,89 @@ function paintCraters(surf: Painted, bump: Painted | null, w: number, h: number,
 function paintClouds(def: BodyDef, fbm: ReturnType<typeof makeFbm>, maxAniso: number): THREE.Texture {
   const w = 512, h = 256;
   const { painted } = makeCanvas(w, h);
-  // Venus/Titan are wrapped in an unbroken haze that hides the surface; Earth gets
-  // broken clouds; Mars only wisps. For the full-cover bodies the alpha must stay
-  // high everywhere (the squared broken-cloud mapping would leave gaps).
-  const fullCover = def.id === "venus" || def.id === "titan";
-  const coverage = 0.45; // fraction of the noise field that stays clear (broken case)
-  for (let y = 0; y < h; y++) {
-    const v = y / h;
-    for (let x = 0; x < w; x++) {
-      const u = x / w;
-      const c = fbm(u + 12.0, v + 7.0, 5, 6);
-      // Full cover: a near-opaque blanket (0.82–1.0) with faint structure.
-      // Broken: only the upper tail of the noise shows cloud, squared for crisp gaps.
-      const broken = clamp01((c - coverage) / (1 - coverage));
-      const alpha = fullCover ? 0.82 + 0.18 * c : broken * broken;
-      const i = (y * w + x) * 4;
-      // Near-white clouds (held just below 1 so the lit limb doesn't blow out);
-      // the shell material tints them with each body's haze colour.
-      setPx(painted.data, i, 0.94, 0.94, 0.94, (clamp01(alpha) * 255) | 0);
+  // Venus and Earth get their own structured cloud fields; Titan stays a near-opaque
+  // organic-haze blanket and everything else (Mars) gets thin broken wisps.
+  if (def.id === "venus") paintVenusClouds(painted, fbm, w, h);
+  else if (def.id === "earth") paintEarthClouds(painted, fbm, w, h);
+  else {
+    const fullCover = def.id === "titan";
+    const coverage = 0.45; // fraction of the noise field that stays clear (broken case)
+    for (let y = 0; y < h; y++) {
+      const v = y / h;
+      for (let x = 0; x < w; x++) {
+        const u = x / w;
+        const c = fbm(u + 12.0, v + 7.0, 5, 6);
+        const broken = clamp01((c - coverage) / (1 - coverage));
+        const alpha = fullCover ? 0.82 + 0.18 * c : broken * broken;
+        // Near-white clouds (held just below 1 so the lit limb doesn't blow out);
+        // the shell material tints them with each body's haze colour.
+        setPx(painted.data, (y * w + x) * 4, 0.94, 0.94, 0.94, (clamp01(alpha) * 255) | 0);
+      }
     }
   }
   return toTexture(painted, maxAniso, true);
+}
+
+/** Venus: a near-opaque sulfuric-acid deck. In the visible it is almost featureless
+ *  creamy gold, but it carries the UV super-rotation structure just discernibly — the
+ *  dark sideways-"Y" wrapping the equator, mid-latitude streaks sheared by the 4-day
+ *  winds, and brighter polar hoods ringed by a darker collar. Kept subtle (the darkest
+ *  marking within ~15% of the base) so it reads as banded Venus, not a false-colour
+ *  poster; the shell material tints the near-neutral values gold. */
+function paintVenusClouds(p: Painted, fbm: ReturnType<typeof makeFbm>, w: number, h: number): void {
+  const lonC = 0.18; // the Y's stem longitude (cosmetic — the deck super-rotates in-sim)
+  for (let y = 0; y < h; y++) {
+    const v = y / h;
+    const lat0 = Math.abs(v - 0.5) * 2; // 0 equator → 1 pole
+    for (let x = 0; x < w; x++) {
+      const u = x / w;
+      // Super-rotation shear: skew longitude by latitude (strongest at the equator)
+      // so the streaks comb into long 4-day curves.
+      const us = u + 0.35 * (1 - lat0) * (v - 0.5);
+      const streak = fbm(us + 3.0, v * 0.35 + 1.0, 5, 10);
+      // The dark sideways-Y: two arms fanning from the equator, low-frequency, softened.
+      let dlon = us - lonC; dlon -= Math.round(dlon);
+      const arm = Math.abs(v - 0.5) - 0.18 * Math.abs(dlon);
+      let ymask = smoothstep(0.22, 0.0, arm) * smoothstep(0.5, 0.15, Math.abs(dlon));
+      ymask *= 0.6 + 0.4 * fbm(u + 5.0, v + 5.0, 3, 3);
+      // Bright polar hood with a slightly darker collar just equatorward of it.
+      const hood = smoothstep(0.80, 0.95, lat0);
+      const collar = smoothstep(0.62, 0.72, lat0) * (1 - smoothstep(0.78, 0.86, lat0));
+      let val = 0.92 * (1 + 0.05 * smoothstep(0.55, 1.0, lat0));
+      val += (streak - 0.5) * 0.08;
+      val *= (1 - 0.15 * ymask) * (1 + 0.08 * hood) * (1 - 0.10 * collar);
+      val = clamp01(val);
+      setPx(p.data, (y * w + x) * 4, val * 0.98, val * 0.98, val * 0.98, ((0.9 + 0.1 * val) * 255) | 0);
+    }
+  }
+}
+
+/** Earth: structured broken cloud instead of uniform stipple — a bright equatorial
+ *  ITCZ band, clear subtropical zones (so the Sahara/Australia read cloud-free), and
+ *  stormy mid-latitude belts whose noise is curled by a low-frequency angle field into
+ *  comma-shaped frontal systems. */
+function paintEarthClouds(p: Painted, fbm: ReturnType<typeof makeFbm>, w: number, h: number): void {
+  for (let y = 0; y < h; y++) {
+    const v = y / h;
+    const lat0 = Math.abs(v - 0.5) * 2;
+    for (let x = 0; x < w; x++) {
+      const u = x / w;
+      // Cyclonic swirl: displace the noise lookup along a slowly-varying angle field,
+      // ramped up through the mid-latitudes, so cloud masses read as fronts not blobs.
+      const ang = (fbm(u + 40.0, v + 40.0, 2, 3) - 0.5) * 6.283;
+      const swirl = 0.06 * smoothstep(0.35, 0.72, lat0);
+      const c = fbm(u + Math.cos(ang) * swirl + 12.0, v + Math.sin(ang) * swirl + 7.0, 5, 7);
+      // Latitude coverage envelope: ITCZ + stormy mid-latitudes, dry subtropics.
+      const itcz = Math.exp(-(((lat0 - 0.06) / 0.07) ** 2));
+      const midlat = smoothstep(0.42, 0.72, lat0);
+      const subtropClear = 1 - Math.exp(-(((lat0 - 0.28) / 0.10) ** 2));
+      let cover = (0.5 * itcz + 0.75 * midlat) * (0.35 + 0.65 * subtropClear);
+      cover = clamp01(cover + 0.15); // a little scattered fair-weather cloud everywhere
+      const broken = clamp01((c - 0.45) / 0.55);
+      const alpha = clamp01(cover * broken * broken * 1.3);
+      setPx(p.data, (y * w + x) * 4, 0.95, 0.95, 0.95, (alpha * 255) | 0);
+    }
+  }
 }
 
 /** Saturn's ring texture: a 1-D radial profile sampled by the RingGeometry —
@@ -830,6 +876,7 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
   // Surface + (where relevant) bump.
   let surface: THREE.Texture;
   let bump: THREE.Texture | undefined;
+  let roughnessMap: THREE.Texture | undefined;
   let roughness = 0.92;
   const metalness = 0;
 
@@ -844,9 +891,10 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
     const e = paintEarth(w, h, fbm, maxAniso);
     surface = e.surface;
     bump = e.bump;
-    roughness = 0.7;
+    roughnessMap = e.roughness;
+    roughness = 1; // the per-pixel map carries the real values (glossy sea, matte land)
   } else {
-    const r = paintRocky(def, w, h, rng, fbm, maxAniso);
+    const r = paintRocky(def, w, h, rng, maxAniso);
     surface = r.surface;
     bump = r.bump;
     // Icy bodies get a slight sheen; dusty rock stays matte. Includes the bright
@@ -865,11 +913,12 @@ export function createBodyTextures(def: BodyDef, maxAniso: number): BodyTextureS
   const set: BodyTextureSet = {
     surface,
     bump,
-    bumpScale: bump ? 0.015 : 0, // gas giants/star carry no bump map
+    bumpScale: bump ? 0.02 : 0, // gas giants/star carry no bump map
     roughness,
     metalness,
     obliquityRad,
   };
+  if (roughnessMap) set.roughnessMap = roughnessMap;
 
   // Atmosphere shell, opacity from real surface pressure (log-scaled).
   if (def.atmosphere) {

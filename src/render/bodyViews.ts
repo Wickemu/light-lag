@@ -275,6 +275,9 @@ export class BodyViews {
         params.bumpMap = tex.bump;
         params.bumpScale = tex.bumpScale;
       }
+      // Per-pixel roughness (Earth's glossy oceans / matte land): the map multiplies
+      // the scalar roughness, which the caller sets to 1 so the map carries it whole.
+      if (tex.roughnessMap) params.roughnessMap = tex.roughnessMap;
       sphereMat = new THREE.MeshStandardMaterial(params);
     }
     const sphere = new THREE.Mesh(sphereGeo, sphereMat);
