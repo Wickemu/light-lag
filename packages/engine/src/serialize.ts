@@ -213,7 +213,12 @@ function qShip(s: Ship): Record<string, unknown> {
 }
 
 function qStation(s: Station) {
-  return { id: s.id, name: s.name, primary: s.primary, elements: qEl(s.elements) };
+  const o: Record<string, unknown> = { id: s.id, name: s.name, primary: s.primary, elements: qEl(s.elements) };
+  // Epoch + depot tank only when present, so an inert station (the golden scenario's
+  // gateways) serializes identically to before the depot model existed (golden hash unmoved).
+  if (s.epoch !== undefined) o.epoch = q(s.epoch);
+  if (s.depot) o.depot = { propMass: q(s.depot.propMass), propCapacity: q(s.depot.propCapacity) };
+  return o;
 }
 
 function qManeuver(m: Maneuver) {

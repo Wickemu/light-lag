@@ -15,9 +15,10 @@ import { hohmann } from "@lightlag/engine/maneuver/hohmann";
 import { orbitRaise } from "@lightlag/engine/maneuver/orbitRaise";
 import { computePorkchopTo, type Porkchop, type PorkGrid } from "@lightlag/engine/maneuver/porkchop";
 import { lagrangeState, lagrangeStateRelative, lagrangeEligible, lagrangeCentral } from "@lightlag/engine/maneuver/lagrange";
-import { shipOsculatingElements, shipRelativeState, shipWorldState, landedRelativeState, buildLaunchLeg, buildDescentLeg, inertialDirToSurface, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "@lightlag/engine/ships";
-import { dockState, isDockable, transferProp, mergeStacks, shipPropAvailable, shipPropHeadroom } from "@lightlag/engine/refuel";
+import { shipOsculatingElements, shipRelativeState, shipWorldState, coastElements, landedRelativeState, buildLaunchLeg, buildDescentLeg, inertialDirToSurface, activeStage, totalMass, dvRemaining, applyImpulsiveDv, NOMINAL_ENTRY_VEHICLE } from "@lightlag/engine/ships";
+import { dockState, isDockable, transferProp, mergeStacks, drainShip, shipPropAvailable, shipPropHeadroom } from "@lightlag/engine/refuel";
 import { bodyHasISRU, isruRate, isruProduced, fillFromISRU, isruStatusOf, type ISRUStatus } from "@lightlag/engine/isru";
+import { stationDockState, depotAvailable, depotHeadroom, loadDepot, unloadDepot } from "@lightlag/engine/depot";
 import { shipHasBoiloff, shipBoiloffStatus, BOILOFF_WINDOW, type BoiloffStatus } from "@lightlag/engine/boiloff";
 import { entryInterfaceCrossing, entryTrajectory, aerocapture } from "@lightlag/engine/maneuver/entry";
 import { aimMoonArrival } from "@lightlag/engine/maneuver/arrival";
@@ -408,6 +409,110 @@ function preemptISRU(sim: Simulation, ship: Ship): void {
   fillFromISRU(ship, isruProduced(ship.isru, sim.world.t));
   ship.isru = undefined;
   sim.events.removeByEntityKind(ship.id, "isru-complete");
+}
+
+// ── Persistent propellant depot stations ─────────────────────────────────────
+
+/** Default depot tank capacity (kg) — a generous fixed store so a deployed depot can
+ *  bank several ship-loads. Constant ⇒ deterministic. */
+export const DEFAULT_DEPOT_CAPACITY = 200_000; // 200 t
+
+export interface DepotCandidate {
+  id: string;
+  name: string;
+  distance: number; // m — relative range
+  relSpeed: number; // m/s — closing speed
+  fill: number; // kg banked in the depot now
+  capacity: number; // kg depot tank capacity
+  headroom: number; // kg free
+}
+
+/**
+ * Depot stations `shipId` is currently DOCKED with — stations sharing its primary,
+ * carrying a `depot` tank, and within rendezvous tolerance (see depot.ts
+ * `stationDockState`). The valid targets for a load/unload. Returns [] if the ship
+ * itself can't dock (lost, landed, thrusting, or committed to a leg).
+ */
+export function depotCandidates(sim: Simulation, shipId: string): DepotCandidate[] {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || !isDockable(ship)) return [];
+  const out: DepotCandidate[] = [];
+  for (const st of sim.world.stations.values()) {
+    if (!st.depot || st.primary !== ship.primary) continue;
+    const d = stationDockState(ship, st, sim.world.t);
+    if (d.docked) out.push({
+      id: st.id, name: st.name, distance: d.distance, relSpeed: d.relSpeed,
+      fill: st.depot.propMass, capacity: st.depot.propCapacity, headroom: depotHeadroom(st.depot),
+    });
+  }
+  return out;
+}
+
+export interface DepotTransferResult {
+  moved: number; // kg moved
+  shipDvAfter: number; // m/s Δv left on the ship
+  depotFillAfter: number; // kg now banked in the depot
+}
+
+/**
+ * Move propellant between a ship and a depot station. `dir === "load"` drains the ship
+ * into the depot; `"unload"` draws the depot down to top the ship up. Gated on the ship
+ * being free-coasting (`isDockable`), sharing the depot's primary, and docked. `amountKg`
+ * omitted ⇒ move as much as the direction's caps (ship propellant/headroom, depot
+ * fill/headroom) allow. Conserves mass exactly. Returns what moved + the ship's new Δv
+ * and the depot's new fill, or null if it can't dock or nothing moves.
+ */
+export function depotTransfer(
+  sim: Simulation, shipId: string, stationId: string, dir: "load" | "unload", amountKg?: number,
+): DepotTransferResult | null {
+  const ship = sim.world.ships.get(shipId);
+  const st = sim.world.stations.get(stationId);
+  if (!ship || !st || !st.depot) return null;
+  if (st.primary !== ship.primary || !isDockable(ship)) return null;
+  if (!stationDockState(ship, st, sim.world.t).docked) return null;
+  const cap = dir === "load"
+    ? Math.min(shipPropAvailable(ship), depotHeadroom(st.depot))
+    : Math.min(depotAvailable(st.depot), shipPropHeadroom(ship));
+  const amount = amountKg ?? cap;
+  const moved = dir === "load" ? loadDepot(ship, st.depot, amount) : unloadDepot(ship, st.depot, amount);
+  if (moved <= 0) return null;
+  return { moved, shipDvAfter: dvRemaining(ship), depotFillAfter: st.depot.propMass };
+}
+
+/** Read-only fill/capacity/headroom of a depot station, or null if it isn't a depot. */
+export function stationDepotStatus(sim: Simulation, stationId: string): { fill: number; capacity: number; headroom: number } | null {
+  const st = sim.world.stations.get(stationId);
+  if (!st || !st.depot) return null;
+  return { fill: st.depot.propMass, capacity: st.depot.propCapacity, headroom: depotHeadroom(st.depot) };
+}
+
+export interface DeployResult {
+  stationId: string; // the new depot station's id
+  seededKg: number; // kg drained from the ship into the new depot
+}
+
+/**
+ * Anchor a NEW persistent depot station co-located with a free-coasting ship: the depot
+ * takes the ship's primary and its live coast conic (so it sits exactly where the ship is
+ * now — an immediate rendezvous), seeded from (and draining) the ship's transferable
+ * propellant, capped at `capacityKg` (default `DEFAULT_DEPOT_CAPACITY`). Mass is conserved
+ * (the ship loses exactly what the depot banks). Gated on `isDockable`. Returns the new
+ * station id + kg seeded, or null if the ship can't deploy.
+ */
+export function deployDepot(sim: Simulation, shipId: string, capacityKg?: number): DeployResult | null {
+  const ship = sim.world.ships.get(shipId);
+  if (!ship || !isDockable(ship)) return null;
+  const capacity = capacityKg ?? DEFAULT_DEPOT_CAPACITY;
+  const t = sim.world.t;
+  const elements = coastElements(ship, t); // the ship's live conic at now
+  const seededKg = drainShip(ship, Math.min(shipPropAvailable(ship), capacity));
+  const n = sim.world.stations.size + 1;
+  const id = `depot-${n}`;
+  sim.world.stations.set(id, {
+    id, name: `Depot ${n}`, primary: ship.primary,
+    elements, epoch: t, depot: { propMass: seededKg, propCapacity: capacity },
+  });
+  return { stationId: id, seededKg };
 }
 
 /**

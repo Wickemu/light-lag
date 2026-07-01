@@ -33,6 +33,9 @@ import {
   stopISRU,
   isruStatus,
   boiloffStatus,
+  depotCandidates,
+  depotTransfer,
+  deployDepot,
 } from "../app/commands.ts";
 import {
   ascentBudget,
@@ -55,6 +58,7 @@ import {
   type TelemetryDoppler,
   primaryMu,
 } from "@lightlag/engine/ships";
+import { isDockable } from "@lightlag/engine/refuel";
 import { summarizeOrbit, periapsisRadius, orbitalPeriod, j2Rates, type OrbitSummary } from "@lightlag/engine/orbit";
 import { bodyPosition, bodyState } from "@lightlag/engine/ephemeris";
 import { selectPerturbers } from "@lightlag/engine/perturbed";
@@ -184,6 +188,15 @@ export class ShipPanel {
   private isruReadout!: HTMLElement;
   private isruMineBtn!: HTMLButtonElement;
   private isruStopBtn!: HTMLButtonElement;
+  private depotEl!: HTMLElement;
+  private depotReadout!: HTMLElement;
+  private depotSelect!: HTMLSelectElement;
+  private depotAmountInput!: HTMLInputElement;
+  private depotLoadBtn!: HTMLButtonElement;
+  private depotUnloadBtn!: HTMLButtonElement;
+  private deployBtn!: HTMLButtonElement;
+  private depotStationId: string | null = null;
+  private lastDepotSig = "";
 
   // Fleet rows, kept persistent so per-frame status pills mutate cheaply.
   private fleetSection!: Collapsible;
@@ -524,6 +537,30 @@ export class ShipPanel {
     this.isruStopBtn.title = "Stop mining now and bank the propellant produced so far.";
     this.isruEl.appendChild(this.isruStopBtn);
     host.appendChild(this.isruEl);
+
+    this.depotEl = el("div", "surface-ops");
+    this.depotEl.appendChild(sectionLabel("DEPOT"));
+    this.depotReadout = el("div", "surface-readout");
+    this.depotEl.appendChild(this.depotReadout);
+    this.depotSelect = document.createElement("select");
+    this.depotSelect.className = "preset-sel";
+    this.depotSelect.onchange = () => { this.depotStationId = this.depotSelect.value || null; };
+    this.depotEl.appendChild(this.depotSelect);
+    const depotRow = el("div", "dv-row");
+    this.depotAmountInput = document.createElement("input");
+    this.depotAmountInput.type = "number";
+    this.depotAmountInput.placeholder = "max";
+    this.depotAmountInput.min = "0";
+    this.depotAmountInput.className = "dv-input";
+    this.depotUnloadBtn = button("Unload", () => this.doDepotTransfer("unload"));
+    this.depotLoadBtn = button("Load", () => this.doDepotTransfer("load"));
+    depotRow.append(el("span", "dv-label", "prop (t)"), this.depotAmountInput, this.depotUnloadBtn, this.depotLoadBtn);
+    this.depotEl.appendChild(depotRow);
+    this.deployBtn = button("Deploy depot", () => this.doDeployDepot());
+    this.deployBtn.className = "wide-btn";
+    this.deployBtn.title = "Anchor a persistent propellant depot here, seeded from this ship's tanks. Other craft can dock and load/unload against it. The depot rides this ship's current orbit; deploying drains the ship into it.";
+    this.depotEl.appendChild(this.deployBtn);
+    host.appendChild(this.depotEl);
   }
 
   /** A stat table filling a tab pane; rows predeclared in order. */
@@ -825,8 +862,9 @@ export class ShipPanel {
     this.updateSurfaceOps(ship);
     this.updateDocking(ship);
     this.updateISRU(ship);
+    this.updateDepot(ship);
     this.updateFidelity(ship, t);
-    const opsVisible = [this.surfaceEl, this.electricEl, this.fidelityEl, this.dockEl, this.isruEl].some((e) => e.style.display !== "none");
+    const opsVisible = [this.surfaceEl, this.electricEl, this.fidelityEl, this.dockEl, this.isruEl, this.depotEl].some((e) => e.style.display !== "none");
     this.detailTabs.setVisible("ops", opsVisible);
     // Settle the tab bar: hide empty tabs, keep an active visible one.
     this.detailTabs.refresh();
@@ -1066,6 +1104,71 @@ export class ShipPanel {
       this.lastDockSig = "";
       if (wasFocused) this.frameShip(this.selectedId);
       this.syncFleet(this.sim.world.t);
+    }
+  }
+
+  /** Depot controls: load/unload against docked depot stations, and deploy a new depot.
+   *  Shown when the ship can deploy (free-coasting with propellant) or is docked with a depot. */
+  private updateDepot(ship: Ship): void {
+    const candidates = depotCandidates(this.sim, ship.id);
+    const me = shipPropStatus(this.sim, ship.id);
+    const canDeploy = isDockable(ship) && !!me && me.available > 1;
+    if (candidates.length === 0 && !canDeploy) {
+      this.depotEl.style.display = "none";
+      this.depotStationId = null;
+      this.lastDepotSig = "";
+      return;
+    }
+    this.depotEl.style.display = "block";
+
+    // Load/unload block only when docked with at least one depot.
+    const hasDepot = candidates.length > 0;
+    this.depotSelect.style.display = hasDepot ? "block" : "none";
+    this.depotUnloadBtn.style.display = hasDepot ? "block" : "none";
+    this.depotLoadBtn.style.display = hasDepot ? "block" : "none";
+    this.depotAmountInput.style.display = hasDepot ? "block" : "none";
+
+    if (hasDepot) {
+      const sig = candidates.map((c) => c.id).join(",");
+      if (sig !== this.lastDepotSig) {
+        this.lastDepotSig = sig;
+        this.depotSelect.innerHTML = "";
+        for (const c of candidates) {
+          const opt = document.createElement("option");
+          opt.value = c.id;
+          opt.textContent = c.name;
+          this.depotSelect.appendChild(opt);
+        }
+      }
+      if (!this.depotStationId || !candidates.some((c) => c.id === this.depotStationId)) {
+        this.depotStationId = candidates[0]!.id;
+      }
+      this.depotSelect.value = this.depotStationId;
+      const depot = candidates.find((c) => c.id === this.depotStationId)!;
+      this.depotReadout.innerHTML =
+        kvAuto("Docked with", `${depot.name} · ${depot.distance.toFixed(0)} m, ${depot.relSpeed.toFixed(2)} m/s`) +
+        kvAuto("Depot", `${(depot.fill / 1000).toFixed(1)} / ${(depot.capacity / 1000).toFixed(0)} t · room ${(depot.headroom / 1000).toFixed(1)} t`) +
+        kvAuto("This ship", `prop ${(me!.available / 1000).toFixed(1)} t · room ${(me!.headroom / 1000).toFixed(1)} t`);
+      setDisabled(this.depotUnloadBtn, !(depot.fill > 1 && me!.headroom > 1), "The depot is empty, or this ship's tanks are full.");
+      setDisabled(this.depotLoadBtn, !(me!.available > 1 && depot.headroom > 1), "This ship has no propellant to give, or the depot is full.");
+    } else {
+      this.depotReadout.innerHTML = kvAuto("Deploy", "anchor a depot on this orbit, seeded from this ship");
+    }
+    this.deployBtn.style.display = canDeploy ? "block" : "none";
+  }
+
+  private doDepotTransfer(dir: "load" | "unload"): void {
+    if (!this.selectedId || !this.depotStationId) return;
+    const raw = this.depotAmountInput.value.trim();
+    const amountKg = raw === "" ? undefined : Math.max(0, Number(raw) * 1000) || undefined;
+    depotTransfer(this.sim, this.selectedId, this.depotStationId, dir, amountKg);
+  }
+
+  private doDeployDepot(): void {
+    if (!this.selectedId) return;
+    if (deployDepot(this.sim, this.selectedId)) {
+      this.lastDepotSig = "";
+      this.depotStationId = null;
     }
   }
 

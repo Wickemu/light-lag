@@ -23,6 +23,7 @@ import { SceneManager } from "../render/SceneManager.ts";
 import { Visibility, LAYER_KEYS } from "../render/visibility.ts";
 import { BodyViews } from "../render/bodyViews.ts";
 import { ShipViews } from "../render/shipViews.ts";
+import { StationViews } from "../render/stationViews.ts";
 import { TrajectoryViews } from "../render/trajectoryViews.ts";
 import { ForceViews } from "../render/forceViews.ts";
 import { StarViews } from "../render/starViews.ts";
@@ -74,6 +75,7 @@ visibility.onChange(() => {
 });
 const views = new BodyViews(sm, visibility);
 const shipViews = new ShipViews(sm, uiRoot, visibility);
+const stationViews = new StationViews(sm, uiRoot);
 const trajectoryViews = new TrajectoryViews(sm, sim, visibility);
 const forceViews = new ForceViews(sm, visibility);
 const starViews = new StarViews(sm, uiRoot, visibility);
@@ -134,6 +136,7 @@ function renderOnce(): void {
   views.update(world.t);
   starViews.update(world.t);
   shipViews.update(world, world.t);
+  stationViews.update(world, world.t);
   trajectoryViews.update(world, world.t);
   forceViews.update(world, world.t);
   commsViews.update(world, world.t);
